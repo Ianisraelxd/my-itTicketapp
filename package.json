@@ -1,0 +1,28 @@
+{
+  "name": "my-react-app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "server": "node server/index.js",
+    "db:init": "mysql -u root -p < server/schema.sql"
+  },
+  "dependencies": {
+    "dotenv": "^18.0.0",
+    "express": "^5.2.1",
+    "mysql2": "^3.24.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.1.0",
+    "oxlint": "^1.79.0",
+    "vite": "^8.2.2"
+  }
+}
