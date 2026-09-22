@@ -19,13 +19,50 @@ app.get("/api/health", wrap(async (_req, res) => {
 // --- Auth -------------------------------------------------------------------
 // NOTE: plaintext password compare to match the prototype. For production,
 // store bcrypt hashes and compare with bcrypt.compare() instead.
+app.post("/api/signup", wrap(async (req, res) => {
+  const { fullName, id, email, userType, password } = req.body ?? {};
+  const trimmedName = fullName?.trim();
+  const trimmedId = id?.trim();
+  const trimmedEmail = email?.trim();
+  const selectedRole = String(userType || "Student").toLowerCase();
+
+  if (!trimmedName || !trimmedId || !trimmedEmail || !password) {
+    return res.status(400).json({
+      error: "full name, ID, email, user type, and password are required.",
+    });
+  }
+
+  const role = selectedRole === "employee" ? "employee" : "student";
+  const roleName = role === "employee" ? "Employee" : "Student";
+
+  const existing = await query(
+    "SELECT user_pk FROM users WHERE id_number = ? AND role = ? LIMIT 1",
+    [trimmedId, role],
+  );
+  if (existing.length > 0) {
+    return res.status(409).json({
+      error: "An account with this ID and role already exists.",
+    });
+  }
+
+  await query(
+    "INSERT INTO users (id_number, password, name, role, role_name, email) VALUES (?, ?, ?, ?, ?, ?)",
+    [trimmedId, password, trimmedName, role, roleName, trimmedEmail],
+  );
+
+  res.status(201).json({
+    ok: true,
+    message: "Account created successfully.",
+  });
+}));
+
 app.post("/api/login", wrap(async (req, res) => {
   const { id, password, role } = req.body ?? {};
   if (!id || !password || !role) {
     return res.status(400).json({ error: "id, password, and role are required." });
   }
   const rows = await query(
-    "SELECT id_number, password, name, role, role_name FROM users WHERE id_number = ? AND role = ? LIMIT 1",
+    "SELECT user_pk, id_number, password, name, role, role_name FROM users WHERE id_number = ? AND role = ? LIMIT 1",
     [id, role],
   );
   const account = rows[0];
@@ -37,6 +74,7 @@ app.post("/api/login", wrap(async (req, res) => {
     [account.name, account.role_name, "Logged into the HelpDesk system"],
   );
   res.json({
+    userId: account.user_pk,
     id: account.id_number,
     name: account.name,
     role: account.role,
@@ -45,15 +83,41 @@ app.post("/api/login", wrap(async (req, res) => {
 }));
 
 // --- Tickets ----------------------------------------------------------------
-app.get("/api/tickets", wrap(async (_req, res) => {
+app.get("/api/tickets", wrap(async (req, res) => {
+  const { mine, userId } = req.query ?? {};
+
+  if (mine === "1" && userId) {
+    const rows = await query(
+      "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.created_by, u.name AS userName, u.role_name AS userRole FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by WHERE t.created_by = ? ORDER BY t.ticket_pk DESC",
+      [userId],
+    );
+    return res.json(rows);
+  }
+
   const rows = await query(
-    "SELECT code AS id, subject, category, priority, status FROM tickets ORDER BY ticket_pk DESC",
+    "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.created_by, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by ORDER BY t.ticket_pk DESC",
   );
   res.json(rows);
 }));
 
+app.patch("/api/tickets/:id/status", wrap(async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body ?? {};
+  if (!status) {
+    return res.status(400).json({ error: "status is required." });
+  }
+
+  const valid = ["Open", "In Progress", "Resolved"];
+  if (!valid.includes(status)) {
+    return res.status(400).json({ error: "status must be Open, In Progress, or Resolved." });
+  }
+
+  await query("UPDATE tickets SET status = ? WHERE code = ?", [status, id]);
+  res.json({ ok: true, id, status });
+}));
+
 app.post("/api/tickets", wrap(async (req, res) => {
-  const { subject, category, priority, location, description } = req.body ?? {};
+  const { subject, category, priority, location, description, createdBy } = req.body ?? {};
   if (!subject?.trim() || !category?.trim() || !priority?.trim()) {
     return res.status(400).json({ error: "subject, category, and priority are required." });
   }
@@ -64,8 +128,8 @@ app.post("/api/tickets", wrap(async (req, res) => {
     const [countRows] = await conn.execute("SELECT COUNT(*) AS n FROM tickets");
     const code = `#HD${String(countRows[0].n + 1).padStart(3, "0")}`;
     await conn.execute(
-      "INSERT INTO tickets (code, subject, category, priority, status, location, description) VALUES (?, ?, ?, ?, 'Open', ?, ?)",
-      [code, subject, category, priority, location ?? null, description ?? null],
+      "INSERT INTO tickets (code, subject, category, priority, status, location, description, created_by) VALUES (?, ?, ?, ?, 'Open', ?, ?, ?)",
+      [code, subject, category, priority, location ?? null, description ?? null, createdBy ?? null],
     );
     await conn.commit();
     res.status(201).json({ id: code, subject, category, priority, status: "Open" });

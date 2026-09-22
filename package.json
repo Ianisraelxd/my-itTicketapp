@@ -9,7 +9,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "server": "node server/index.js",
-    "db:init": "mysql -u root -p < server/schema.sql"
+    "db:init": "\"C:/xampp/mysql/bin/mysql.exe\" -u root -p < server/schema.sql"
   },
   "dependencies": {
     "dotenv": "^18.0.0",

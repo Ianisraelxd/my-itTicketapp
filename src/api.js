@@ -17,10 +17,27 @@ export const api = {
   login: (credentials) =>
     request("/login", { method: "POST", body: JSON.stringify(credentials) }),
 
-  getTickets: () => request("/tickets"),
+  signup: (account) =>
+    request("/signup", { method: "POST", body: JSON.stringify(account) }),
+
+  getTickets: (params = {}) => {
+    const query = new URLSearchParams();
+    if (params.mine && params.userId) {
+      query.set("mine", "1");
+      query.set("userId", String(params.userId));
+    }
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return request(`/tickets${suffix}`);
+  },
 
   createTicket: (ticket) =>
     request("/tickets", { method: "POST", body: JSON.stringify(ticket) }),
+
+  updateTicketStatus: (ticketId, status) =>
+    request(`/tickets/${encodeURIComponent(ticketId)}/status`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
 
   getActivities: () => request("/activities"),
 

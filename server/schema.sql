@@ -62,12 +62,5 @@ INSERT INTO users (id_number, password, name, role, role_name, email) VALUES
   ('2404154', '123456admin',      'Users Admin',  'admin',      'Student / Employee Admin',   'admin@campus.edu'),
   ('2404154', '123456superadmin', 'Super Admin',  'superadmin', 'Super Admin',                'superadmin@campus.edu');
 
-INSERT INTO tickets (code, subject, category, priority, status) VALUES
-  ('#HD001', 'Wi-Fi Connection Problem', 'Network',  'High',   'Open'),
-  ('#HD002', 'Computer Not Starting',    'Hardware', 'Medium', 'In Progress'),
-  ('#HD003', 'Password Reset',           'Account',  'Low',    'Resolved');
-
 INSERT INTO activities (actor_name, actor_role, action, created_at) VALUES
-  ('Super Admin',  'Super Admin', 'Logged into the system',    '2026-08-30 10:30:00'),
-  ('Maria Santos', 'Student',     'Submitted ticket #HD015',   '2026-08-30 10:45:00'),
-  ('Mark Cruz',    'Technician',  'Updated ticket #HD015',     '2026-08-30 11:00:00');
+  ('System', 'System', 'Database initialized', '2026-08-30 10:30:00');

@@ -36,8 +36,19 @@ function App() {
     password: "",
     role: "student",
   });
+  const [signupForm, setSignupForm] = useState({
+    fullName: "",
+    id: "",
+    email: "",
+    userType: "Student",
+    password: "",
+  });
+  const [forgotEmail, setForgotEmail] = useState("");
   const [tickets, setTickets] = useState([]);
+  const [allTickets, setAllTickets] = useState([]);
+  const [allUsers, setAllUsers] = useState([]);
   const [activities, setActivities] = useState([]);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [modal, setModal] = useState(null);
   const [request, setRequest] = useState({
     category: "Hardware",
@@ -71,10 +82,20 @@ function App() {
   useEffect(() => {
     if (!user) return;
     let active = true;
-    Promise.all([api.getTickets(), api.getActivities()])
-      .then(([ticketRows, activityRows]) => {
+    const isPrivateUser =
+      user.role === "student" || user.role === "employee";
+    const needsAdminData = ["technician", "admin", "superadmin"].includes(user.role);
+
+    Promise.all([
+      api.getTickets(isPrivateUser ? { mine: true, userId: user.userId } : {}),
+      api.getActivities(),
+      ...(needsAdminData ? [api.getUsers()] : []),
+    ])
+      .then(([ticketRows, activityRows, userRows]) => {
         if (!active) return;
         setTickets(ticketRows);
+        setAllTickets(ticketRows);
+        if (userRows) setAllUsers(userRows);
         setActivities(activityRows);
       })
       .catch((error) =>
@@ -83,7 +104,9 @@ function App() {
     return () => {
       active = false;
     };
-  }, [user]);
+  }, [user, refreshKey]);
+
+  const refreshData = () => setRefreshKey((value) => value + 1);
 
   async function login(event) {
     event.preventDefault();
@@ -98,6 +121,7 @@ function App() {
       return;
     }
     setUser(account);
+    refreshData();
     const landing =
       account.role === "superadmin"
         ? "superAdminDashboard"
@@ -131,6 +155,7 @@ function App() {
         priority: request.priority,
         location: request.location,
         description: request.description,
+        createdBy: user.userId,
       });
     } catch (error) {
       showMessage(
@@ -140,6 +165,7 @@ function App() {
       return;
     }
     setTickets((items) => [created, ...items]);
+    refreshData();
     addActivity(`Submitted ${created.id}: ${created.subject}`);
     setRequest({
       category: "Hardware",
@@ -164,6 +190,10 @@ function App() {
         setPage={setAuthPage}
         credentials={credentials}
         setCredentials={setCredentials}
+        signupForm={signupForm}
+        setSignupForm={setSignupForm}
+        forgotEmail={forgotEmail}
+        setForgotEmail={setForgotEmail}
         login={login}
         showMessage={showMessage}
         modal={modal}
@@ -217,7 +247,7 @@ function App() {
           <button onClick={logout}>Log out</button>
         </header>
         {page === "userDashboard" && (
-          <UserDashboard setPage={setPage} tickets={tickets} />
+          <UserDashboard setPage={setPage} tickets={tickets} userName={user.name} />
         )}
         {page === "requestPage" && (
           <RequestPage
@@ -230,22 +260,31 @@ function App() {
           <MyRequests tickets={tickets} setPage={setPage} />
         )}
         {page === "technicianDashboard" && (
-          <TechnicianDashboard setPage={setPage} />
+          <TechnicianDashboard setPage={setPage} tickets={allTickets.length ? allTickets : tickets} />
         )}
         {page === "technicianRequestsPage" && (
           <TechnicianRequests
+            tickets={allTickets.length ? allTickets : tickets}
             addActivity={addActivity}
             showMessage={showMessage}
+            refreshData={refreshData}
           />
         )}
         {(page === "adminDashboard" || page === "superAdminDashboard") && (
           <AdminDashboard
             type={page === "superAdminDashboard" ? "super" : "admin"}
             setPage={setPage}
+            tickets={allTickets.length ? allTickets : tickets}
+            users={allUsers}
           />
         )}
         {page === "manageRequestsPage" && (
-          <ManageRequests showMessage={showMessage} />
+          <ManageRequests
+            tickets={allTickets.length ? allTickets : tickets}
+            users={allUsers}
+            showMessage={showMessage}
+            refreshData={refreshData}
+          />
         )}
         {page === "usersPage" && <UsersPage />}
         {page === "activityLogPage" && <ActivityLog activities={activities} />}
@@ -277,6 +316,10 @@ function AuthScreen({
   setPage,
   credentials,
   setCredentials,
+  signupForm,
+  setSignupForm,
+  forgotEmail,
+  setForgotEmail,
   login,
   showMessage,
   modal,
@@ -378,21 +421,76 @@ function AuthScreen({
                 detail="Register as a student or employee."
               />
               <form
-                onSubmit={(event) => {
+                onSubmit={async (event) => {
                   event.preventDefault();
-                  showMessage(
-                    "Account created",
-                    "Prototype account created successfully. You can now return to the login page.",
-                  );
-                  setPage("login");
+                  if (!signupForm.fullName.trim() || !signupForm.id.trim() || !signupForm.email.trim() || !signupForm.password.trim()) {
+                    showMessage("Incomplete form", "Please fill in all signup fields before continuing.");
+                    return;
+                  }
+                  try {
+                    await api.signup({
+                      fullName: signupForm.fullName,
+                      id: signupForm.id,
+                      email: signupForm.email,
+                      userType: signupForm.userType,
+                      password: signupForm.password,
+                    });
+                    showMessage(
+                      "Account created",
+                      "Your account was created successfully. You can now log in.",
+                    );
+                    setSignupForm({
+                      fullName: "",
+                      id: "",
+                      email: "",
+                      userType: "Student",
+                      password: "",
+                    });
+                    setPage("login");
+                  } catch (error) {
+                    showMessage(
+                      "Could not create account",
+                      error.message || "Please try again.",
+                    );
+                  }
                 }}
               >
-                <Field label="Full name" placeholder="Enter your full name" />
-                <Field label="ID number" placeholder="Student / Employee ID" />
-                <Field label="Email" type="email" placeholder="Enter email" />
+                <Field
+                  label="Full name"
+                  placeholder="Enter your full name"
+                  value={signupForm.fullName}
+                  onChange={(value) =>
+                    setSignupForm((current) => ({ ...current, fullName: value }))
+                  }
+                />
+                <Field
+                  label="ID number"
+                  placeholder="Student / Employee ID"
+                  value={signupForm.id}
+                  onChange={(value) =>
+                    setSignupForm((current) => ({ ...current, id: value }))
+                  }
+                />
+                <Field
+                  label="Email"
+                  type="email"
+                  placeholder="Enter email"
+                  value={signupForm.email}
+                  onChange={(value) =>
+                    setSignupForm((current) => ({ ...current, email: value }))
+                  }
+                />
                 <label className="field-label">
                   User type
-                  <select>
+                  <select
+                    value={signupForm.userType}
+                    onChange={(event) =>
+                      setSignupForm((current) => ({
+                        ...current,
+                        userType: event.target.value,
+                      }))
+                    }
+                  >
                     <option>Student</option>
                     <option>Employee</option>
                   </select>
@@ -401,6 +499,10 @@ function AuthScreen({
                   label="Password"
                   type="password"
                   placeholder="Create password"
+                  value={signupForm.password}
+                  onChange={(value) =>
+                    setSignupForm((current) => ({ ...current, password: value }))
+                  }
                 />
                 <button
                   className="button button-primary full-width"
@@ -427,12 +529,15 @@ function AuthScreen({
                     "Reset request sent",
                     "A password reset request has been simulated successfully.",
                   );
+                  setForgotEmail("");
                 }}
               >
                 <Field
                   label="Email address"
                   type="email"
                   placeholder="example@email.com"
+                  value={forgotEmail}
+                  onChange={setForgotEmail}
                 />
                 <button
                   className="button button-primary full-width"
@@ -509,12 +614,12 @@ function StatCard({ label, value, tone = "" }) {
     </div>
   );
 }
-function UserDashboard({ setPage, tickets }) {
+function UserDashboard({ setPage, tickets, userName }) {
   return (
     <>
       <PageHeader
         eyebrow="OVERVIEW / 01"
-        title="Good morning, Student User."
+        title={`Good morning, ${userName}.`}
         description="Here’s what’s happening with your support requests."
         action={
           <button
@@ -582,6 +687,14 @@ function UserDashboard({ setPage, tickets }) {
   );
 }
 function TicketTable({ tickets }) {
+  if (!tickets || tickets.length === 0) {
+    return (
+      <div className="table-wrap empty-state">
+        <p>No requests yet. Submit your first support request to get started.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="table-wrap">
       <table>
@@ -739,20 +852,29 @@ function MyRequests({ tickets, setPage }) {
     </>
   );
 }
-function AdminDashboard({ type, setPage }) {
+function AdminDashboard({ type, setPage, tickets = [], users = [] }) {
+  const totalUsers = users.length;
+  const totalTickets = tickets.length;
+  const resolvedTickets = tickets.filter((ticket) => ticket.status === "Resolved").length;
+  const openTickets = tickets.filter((ticket) => ticket.status === "Open").length;
+  const inProgressTickets = tickets.filter((ticket) => ticket.status === "In Progress").length;
+  const technicianCount = users.filter((user) => /technician/i.test(user.role || "")).length;
+  const studentCount = users.filter((user) => /student/i.test(user.role || "")).length;
+  const employeeCount = users.filter((user) => /employee/i.test(user.role || "")).length;
+
   const stats =
     type === "super"
       ? [
-          ["Total users", "420"],
-          ["Total tickets", "54"],
-          ["Technicians", "8"],
-          ["Resolved tickets", "39"],
+          ["Total users", String(totalUsers)],
+          ["Total tickets", String(totalTickets)],
+          ["Technicians", String(technicianCount)],
+          ["Resolved tickets", String(resolvedTickets)],
         ]
       : [
-          ["Students", "245"],
-          ["Employees", "91"],
-          ["Pending requests", "14"],
-          ["Resolved requests", "31"],
+          ["Students", String(studentCount)],
+          ["Employees", String(employeeCount)],
+          ["Pending requests", String(openTickets + inProgressTickets)],
+          ["Resolved requests", String(resolvedTickets)],
         ];
   return (
     <>
@@ -798,24 +920,28 @@ function AdminDashboard({ type, setPage }) {
     </>
   );
 }
-function TechnicianDashboard({ setPage }) {
+function TechnicianDashboard({ setPage, tickets = [] }) {
+  const open = tickets.filter((ticket) => ticket.status === "Open").length;
+  const inProgress = tickets.filter((ticket) => ticket.status === "In Progress").length;
+  const resolved = tickets.filter((ticket) => ticket.status === "Resolved").length;
+
   return (
     <>
       <PageHeader
         eyebrow="TECHNICIAN / 01"
         title="Your work queue."
-        description="View and manage the support requests assigned to you."
+        description="View and manage the support requests currently in the system."
       />
       <div className="stats-grid">
-        <StatCard label="Assigned tickets" value="9" />
-        <StatCard label="Open" value="3" tone="gold" />
-        <StatCard label="In progress" value="4" tone="blue" />
-        <StatCard label="Completed today" value="2" tone="green" />
+        <StatCard label="Assigned tickets" value={tickets.length} />
+        <StatCard label="Open" value={open} tone="gold" />
+        <StatCard label="In progress" value={inProgress} tone="blue" />
+        <StatCard label="Completed" value={resolved} tone="green" />
       </div>
       <section className="panel empty-action">
         <div className="empty-icon">✓</div>
         <h2>Ready when you are.</h2>
-        <p>There are 9 requests waiting for your attention.</p>
+        <p>{tickets.length} requests are available in the queue.</p>
         <button
           className="button button-primary"
           onClick={() => setPage("technicianRequestsPage")}
@@ -826,14 +952,35 @@ function TechnicianDashboard({ setPage }) {
     </>
   );
 }
-function TechnicianRequests({ addActivity, showMessage }) {
-  const [resolved, setResolved] = useState(false);
+function TechnicianRequests({ tickets = [], addActivity, showMessage, refreshData }) {
+  const [localTickets, setLocalTickets] = useState(tickets);
+
+  useEffect(() => {
+    setLocalTickets(tickets);
+  }, [tickets]);
+
+  const handleResolve = async (ticketId) => {
+    try {
+      await api.updateTicketStatus(ticketId, "Resolved");
+      setLocalTickets((items) =>
+        items.map((ticket) =>
+          ticket.id === ticketId ? { ...ticket, status: "Resolved" } : ticket,
+        ),
+      );
+      addActivity(`Resolved ticket ${ticketId}`);
+      showMessage("Ticket resolved", `Ticket ${ticketId} has been marked as resolved.`);
+      refreshData();
+    } catch (error) {
+      showMessage("Could not resolve ticket", error.message || "Please try again.");
+    }
+  };
+
   return (
     <>
       <PageHeader
         eyebrow="TECHNICIAN / 02"
         title="Assigned requests"
-        description="Technical issues currently assigned to you."
+        description="Technical issues currently waiting for action."
       />
       <section className="panel">
         <div className="panel-heading">
@@ -855,35 +1002,35 @@ function TechnicianRequests({ addActivity, showMessage }) {
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td>
-                  <strong>#HD021</strong>
-                </td>
-                <td>Maria Santos</td>
-                <td>Computer cannot start</td>
-                <td>
-                  <Priority value="High" />
-                </td>
-                <td>
-                  <Status value={resolved ? "Resolved" : "Open"} />
-                </td>
-                <td>
-                  <button
-                    className="table-button"
-                    disabled={resolved}
-                    onClick={() => {
-                      setResolved(true);
-                      addActivity("Resolved ticket #HD021");
-                      showMessage(
-                        "Ticket resolved",
-                        "Ticket #HD021 has been marked as resolved.",
-                      );
-                    }}
-                  >
-                    {resolved ? "Resolved" : "Resolve"}
-                  </button>
-                </td>
-              </tr>
+              {localTickets.length === 0 && (
+                <tr>
+                  <td colSpan="6">No tickets are currently available.</td>
+                </tr>
+              )}
+              {localTickets.map((ticket) => (
+                <tr key={ticket.id}>
+                  <td>
+                    <strong>{ticket.id}</strong>
+                  </td>
+                  <td>{ticket.userName || "Unknown user"}</td>
+                  <td>{ticket.subject}</td>
+                  <td>
+                    <Priority value={ticket.priority} />
+                  </td>
+                  <td>
+                    <Status value={ticket.status} />
+                  </td>
+                  <td>
+                    <button
+                      className="table-button"
+                      disabled={ticket.status === "Resolved"}
+                      onClick={() => handleResolve(ticket.id)}
+                    >
+                      {ticket.status === "Resolved" ? "Resolved" : "Resolve"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -891,7 +1038,17 @@ function TechnicianRequests({ addActivity, showMessage }) {
     </>
   );
 }
-function ManageRequests({ showMessage }) {
+function ManageRequests({ tickets = [], users = [], showMessage, refreshData }) {
+  const handleAssign = async (ticketId) => {
+    try {
+      await api.updateTicketStatus(ticketId, "In Progress");
+      showMessage("Technician assigned", `Ticket ${ticketId} is now in progress.`);
+      refreshData();
+    } catch (error) {
+      showMessage("Could not assign ticket", error.message || "Please try again.");
+    }
+  };
+
   return (
     <>
       <PageHeader
@@ -913,54 +1070,32 @@ function ManageRequests({ showMessage }) {
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td>
-                  <strong>#HD015</strong>
-                </td>
-                <td>Maria Santos</td>
-                <td>Student</td>
-                <td>Wi-Fi problem</td>
-                <td>
-                  <Status value="Open" />
-                </td>
-                <td>
-                  <button
-                    className="table-button"
-                    onClick={() =>
-                      showMessage(
-                        "Technician assigned",
-                        "The ticket was assigned successfully.",
-                      )
-                    }
-                  >
-                    Assign
-                  </button>
-                </td>
-              </tr>
-              <tr>
-                <td>
-                  <strong>#HD016</strong>
-                </td>
-                <td>Jose Reyes</td>
-                <td>Employee</td>
-                <td>Printer error</td>
-                <td>
-                  <Status value="In Progress" />
-                </td>
-                <td>
-                  <button
-                    className="table-button light"
-                    onClick={() =>
-                      showMessage(
-                        "Ticket details",
-                        "This ticket is currently being handled by a technician.",
-                      )
-                    }
-                  >
-                    View
-                  </button>
-                </td>
-              </tr>
+              {tickets.length === 0 && (
+                <tr>
+                  <td colSpan="6">No tickets have been created yet.</td>
+                </tr>
+              )}
+              {tickets.map((ticket) => (
+                <tr key={ticket.id}>
+                  <td>
+                    <strong>{ticket.id}</strong>
+                  </td>
+                  <td>{ticket.userName || "Unknown user"}</td>
+                  <td>{ticket.userRole || "Unassigned"}</td>
+                  <td>{ticket.subject}</td>
+                  <td>
+                    <Status value={ticket.status} />
+                  </td>
+                  <td>
+                    <button
+                      className="table-button"
+                      onClick={() => handleAssign(ticket.id)}
+                    >
+                      {ticket.status === "In Progress" ? "In progress" : "Assign"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -1002,19 +1137,25 @@ function UsersPage() {
               </tr>
             </thead>
             <tbody>
-              {users.map((user, index) => (
-                <tr key={`${user.id}-${index}`}>
-                  <td>
-                    <strong>{user.id}</strong>
-                  </td>
-                  <td>{user.name}</td>
-                  <td>{user.role}</td>
-                  <td>{user.email}</td>
-                  <td>
-                    <Status value="Active" />
-                  </td>
+              {users.length === 0 ? (
+                <tr>
+                  <td colSpan="5">No registered users yet.</td>
                 </tr>
-              ))}
+              ) : (
+                users.map((user, index) => (
+                  <tr key={`${user.id}-${index}`}>
+                    <td>
+                      <strong>{user.id}</strong>
+                    </td>
+                    <td>{user.name}</td>
+                    <td>{user.role}</td>
+                    <td>{user.email}</td>
+                    <td>
+                      <Status value="Active" />
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -1028,7 +1169,7 @@ function ActivityLog({ activities }) {
       <PageHeader
         eyebrow="SYSTEM / 04"
         title="Activity log"
-        description="Recent actions performed inside the prototype."
+        description="Recent actions performed across the HelpDesk system."
       />
       <section className="panel">
         <div className="table-wrap">
