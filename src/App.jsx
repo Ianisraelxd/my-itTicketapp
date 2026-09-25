@@ -27,6 +27,17 @@ const navFor = {
   ],
 };
 
+const ASSIGNMENT_STORAGE_KEY = "helpdesk-ticket-assignments-v1";
+
+function readTicketAssignments() {
+  try {
+    const raw = localStorage.getItem(ASSIGNMENT_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (error) {
+    return {};
+  }
+}
+
 function App() {
   const [authPage, setAuthPage] = useState("login");
   const [user, setUser] = useState(null);
@@ -48,6 +59,7 @@ function App() {
   const [allTickets, setAllTickets] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
   const [activities, setActivities] = useState([]);
+  const [ticketAssignments, setTicketAssignments] = useState(() => readTicketAssignments());
   const [refreshKey, setRefreshKey] = useState(0);
   const [modal, setModal] = useState(null);
   const [request, setRequest] = useState({
@@ -107,6 +119,10 @@ function App() {
   }, [user, refreshKey]);
 
   const refreshData = () => setRefreshKey((value) => value + 1);
+
+  useEffect(() => {
+    localStorage.setItem(ASSIGNMENT_STORAGE_KEY, JSON.stringify(ticketAssignments));
+  }, [ticketAssignments]);
 
   async function login(event) {
     event.preventDefault();
@@ -247,7 +263,12 @@ function App() {
           <button onClick={logout}>Log out</button>
         </header>
         {page === "userDashboard" && (
-          <UserDashboard setPage={setPage} tickets={tickets} userName={user.name} />
+          <UserDashboard
+            setPage={setPage}
+            tickets={tickets}
+            ticketAssignments={ticketAssignments}
+            userName={user.name}
+          />
         )}
         {page === "requestPage" && (
           <RequestPage
@@ -257,7 +278,11 @@ function App() {
           />
         )}
         {page === "myRequestsPage" && (
-          <MyRequests tickets={tickets} setPage={setPage} />
+          <MyRequests
+            tickets={tickets}
+            ticketAssignments={ticketAssignments}
+            setPage={setPage}
+          />
         )}
         {page === "technicianDashboard" && (
           <TechnicianDashboard setPage={setPage} tickets={allTickets.length ? allTickets : tickets} />
@@ -265,6 +290,8 @@ function App() {
         {page === "technicianRequestsPage" && (
           <TechnicianRequests
             tickets={allTickets.length ? allTickets : tickets}
+            ticketAssignments={ticketAssignments}
+            setTicketAssignments={setTicketAssignments}
             addActivity={addActivity}
             showMessage={showMessage}
             refreshData={refreshData}
@@ -282,6 +309,8 @@ function App() {
           <ManageRequests
             tickets={allTickets.length ? allTickets : tickets}
             users={allUsers}
+            ticketAssignments={ticketAssignments}
+            setTicketAssignments={setTicketAssignments}
             showMessage={showMessage}
             refreshData={refreshData}
           />
@@ -614,7 +643,7 @@ function StatCard({ label, value, tone = "" }) {
     </div>
   );
 }
-function UserDashboard({ setPage, tickets, userName }) {
+function UserDashboard({ setPage, tickets, ticketAssignments = {}, userName }) {
   return (
     <>
       <PageHeader
@@ -666,7 +695,14 @@ function UserDashboard({ setPage, tickets, userName }) {
               View all ↗
             </button>
           </div>
-          <TicketTable tickets={tickets.slice(0, 3)} />
+          <TicketTable
+            tickets={tickets.slice(0, 3).map((ticket) => ({
+              ...ticket,
+              assignedTechnician: ticketAssignments[ticket.id]?.assignedTechnician || "",
+              progress: ticketAssignments[ticket.id]?.progress || "Queued",
+            }))}
+            showAssignmentMeta
+          />
         </section>
         <section className="panel quick-panel">
           <span className="eyebrow">NEED A HAND?</span>
@@ -686,7 +722,9 @@ function UserDashboard({ setPage, tickets, userName }) {
     </>
   );
 }
-function TicketTable({ tickets }) {
+function TicketTable({ tickets, showAssignmentMeta = false }) {
+  const hasMeta = showAssignmentMeta || tickets.some((ticket) => ticket.assignedTechnician || ticket.progress);
+
   if (!tickets || tickets.length === 0) {
     return (
       <div className="table-wrap empty-state">
@@ -705,6 +743,8 @@ function TicketTable({ tickets }) {
             <th>Category</th>
             <th>Priority</th>
             <th>Status</th>
+            {hasMeta && <th>Technician</th>}
+            {hasMeta && <th>Progress</th>}
           </tr>
         </thead>
         <tbody>
@@ -721,6 +761,8 @@ function TicketTable({ tickets }) {
               <td>
                 <Status value={ticket.status} />
               </td>
+              {hasMeta && <td>{ticket.assignedTechnician || "Unassigned"}</td>}
+              {hasMeta && <td>{ticket.progress || "Queued"}</td>}
             </tr>
           ))}
         </tbody>
@@ -823,7 +865,7 @@ function SelectField({ label, value, options, onChange }) {
     </label>
   );
 }
-function MyRequests({ tickets, setPage }) {
+function MyRequests({ tickets, ticketAssignments = {}, setPage }) {
   return (
     <>
       <PageHeader
@@ -847,7 +889,14 @@ function MyRequests({ tickets, setPage }) {
           </div>
           <span className="table-count">{tickets.length} total</span>
         </div>
-        <TicketTable tickets={tickets} />
+        <TicketTable
+          tickets={tickets.map((ticket) => ({
+            ...ticket,
+            assignedTechnician: ticketAssignments[ticket.id]?.assignedTechnician || "",
+            progress: ticketAssignments[ticket.id]?.progress || "Queued",
+          }))}
+          showAssignmentMeta
+        />
       </section>
     </>
   );
@@ -898,21 +947,24 @@ function AdminDashboard({ type, setPage, tickets = [], users = [] }) {
           <h2>Keep things moving.</h2>
         </div>
         <div className="admin-actions">
-          <button onClick={() => setPage("manageRequestsPage")}>
+          <button type="button" onClick={() => setPage("manageRequestsPage")}>
             <span>▤</span>
             <strong>Manage requests</strong>
             <small>Review and assign tickets</small>
+            <span className="action-arrow" aria-label="Open requests">↗</span>
           </button>
-          <button onClick={() => setPage("usersPage")}>
+          <button type="button" onClick={() => setPage("usersPage")}>
             <span>♙</span>
             <strong>Manage users</strong>
             <small>View registered users</small>
+            <span className="action-arrow" aria-label="Open users">↗</span>
           </button>
           {type === "super" && (
-            <button onClick={() => setPage("activityLogPage")}>
+            <button type="button" onClick={() => setPage("activityLogPage")}>
               <span>◷</span>
               <strong>Activity logs</strong>
               <small>See recent system actions</small>
+              <span className="action-arrow" aria-label="Open activity logs">↗</span>
             </button>
           )}
         </div>
@@ -952,7 +1004,14 @@ function TechnicianDashboard({ setPage, tickets = [] }) {
     </>
   );
 }
-function TechnicianRequests({ tickets = [], addActivity, showMessage, refreshData }) {
+function TechnicianRequests({
+  tickets = [],
+  ticketAssignments = {},
+  setTicketAssignments,
+  addActivity,
+  showMessage,
+  refreshData,
+}) {
   const [localTickets, setLocalTickets] = useState(tickets);
 
   useEffect(() => {
@@ -962,6 +1021,13 @@ function TechnicianRequests({ tickets = [], addActivity, showMessage, refreshDat
   const handleResolve = async (ticketId) => {
     try {
       await api.updateTicketStatus(ticketId, "Resolved");
+      setTicketAssignments((current) => ({
+        ...current,
+        [ticketId]: {
+          ...(current[ticketId] || {}),
+          progress: "Resolved",
+        },
+      }));
       setLocalTickets((items) =>
         items.map((ticket) =>
           ticket.id === ticketId ? { ...ticket, status: "Resolved" } : ticket,
@@ -998,39 +1064,46 @@ function TechnicianRequests({ tickets = [], addActivity, showMessage, refreshDat
                 <th>Issue</th>
                 <th>Priority</th>
                 <th>Status</th>
+                <th>Technician</th>
+                <th>Progress</th>
                 <th>Action</th>
               </tr>
             </thead>
             <tbody>
               {localTickets.length === 0 && (
                 <tr>
-                  <td colSpan="6">No tickets are currently available.</td>
+                  <td colSpan="8">No tickets are currently available.</td>
                 </tr>
               )}
-              {localTickets.map((ticket) => (
-                <tr key={ticket.id}>
-                  <td>
-                    <strong>{ticket.id}</strong>
-                  </td>
-                  <td>{ticket.userName || "Unknown user"}</td>
-                  <td>{ticket.subject}</td>
-                  <td>
-                    <Priority value={ticket.priority} />
-                  </td>
-                  <td>
-                    <Status value={ticket.status} />
-                  </td>
-                  <td>
-                    <button
-                      className="table-button"
-                      disabled={ticket.status === "Resolved"}
-                      onClick={() => handleResolve(ticket.id)}
-                    >
-                      {ticket.status === "Resolved" ? "Resolved" : "Resolve"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {localTickets.map((ticket) => {
+                const assignment = ticketAssignments[ticket.id] || {};
+                return (
+                  <tr key={ticket.id}>
+                    <td>
+                      <strong>{ticket.id}</strong>
+                    </td>
+                    <td>{ticket.userName || "Unknown user"}</td>
+                    <td>{ticket.subject}</td>
+                    <td>
+                      <Priority value={ticket.priority} />
+                    </td>
+                    <td>
+                      <Status value={ticket.status} />
+                    </td>
+                    <td>{assignment.assignedTechnician || "Pending assignment"}</td>
+                    <td>{assignment.progress || "Queued"}</td>
+                    <td>
+                      <button
+                        className="table-button"
+                        disabled={ticket.status === "Resolved"}
+                        onClick={() => handleResolve(ticket.id)}
+                      >
+                        {ticket.status === "Resolved" ? "Resolved" : "Resolve"}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -1038,12 +1111,54 @@ function TechnicianRequests({ tickets = [], addActivity, showMessage, refreshDat
     </>
   );
 }
-function ManageRequests({ tickets = [], users = [], showMessage, refreshData }) {
+function ManageRequests({
+  tickets = [],
+  users = [],
+  ticketAssignments = {},
+  setTicketAssignments,
+  showMessage,
+  refreshData,
+}) {
+  const [assignDialog, setAssignDialog] = useState(null);
+  const [viewDialog, setViewDialog] = useState(null);
+  const technicians = users.filter((user) =>
+    /technician/i.test(user.role || ""),
+  );
+
   const handleAssign = async (ticketId) => {
+    const ticket = tickets.find((item) => item.id === ticketId);
+    if (!ticket) return;
+    setAssignDialog({ ticketId, subject: ticket.subject });
+  };
+
+  const handleView = (ticketId) => {
+    const ticket = tickets.find((item) => item.id === ticketId);
+    if (!ticket) return;
+    setViewDialog({
+      ...ticket,
+      assignment: ticketAssignments[ticket.id] || {},
+    });
+  };
+
+  const confirmAssign = async (ticketId, technician, slot) => {
     try {
       await api.updateTicketStatus(ticketId, "In Progress");
-      showMessage("Technician assigned", `Ticket ${ticketId} is now in progress.`);
+      setTicketAssignments((current) => ({
+        ...current,
+        [ticketId]: {
+          ...(current[ticketId] || {}),
+          assignedTechnician: technician.name,
+          technicianId: technician.id,
+          assignedTime: slot,
+          progress: "Technician assigned",
+        },
+      }));
+      showMessage(
+        "Technician assigned",
+        `${technician.name} is available at ${slot} for ticket ${ticketId}.`,
+      );
       refreshData();
+      setAssignDialog(null);
     } catch (error) {
       showMessage("Could not assign ticket", error.message || "Please try again.");
     }
@@ -1066,45 +1181,112 @@ function ManageRequests({ tickets = [], users = [], showMessage, refreshData }) 
                 <th>Role</th>
                 <th>Issue</th>
                 <th>Status</th>
+                <th>Technician</th>
+                <th>Progress</th>
                 <th>Action</th>
               </tr>
             </thead>
             <tbody>
               {tickets.length === 0 && (
                 <tr>
-                  <td colSpan="6">No tickets have been created yet.</td>
+                  <td colSpan="8">No tickets have been created yet.</td>
                 </tr>
               )}
-              {tickets.map((ticket) => (
-                <tr key={ticket.id}>
-                  <td>
-                    <strong>{ticket.id}</strong>
-                  </td>
-                  <td>{ticket.userName || "Unknown user"}</td>
-                  <td>{ticket.userRole || "Unassigned"}</td>
-                  <td>{ticket.subject}</td>
-                  <td>
-                    <Status value={ticket.status} />
-                  </td>
-                  <td>
-                    <button
-                      className="table-button"
-                      onClick={() => handleAssign(ticket.id)}
-                    >
-                      {ticket.status === "In Progress" ? "In progress" : "Assign"}
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {tickets.map((ticket) => {
+                const assignment = ticketAssignments[ticket.id] || {};
+                return (
+                  <tr key={ticket.id}>
+                    <td>
+                      <strong>{ticket.id}</strong>
+                    </td>
+                    <td>{ticket.userName || "Unknown user"}</td>
+                    <td>{ticket.userRole || "Unassigned"}</td>
+                    <td>{ticket.subject}</td>
+                    <td>
+                      <Status value={ticket.status} />
+                    </td>
+                    <td>{assignment.assignedTechnician || "Unassigned"}</td>
+                    <td>{assignment.progress || "Queued"}</td>
+                    <td>
+                      <div className="inline-actions">
+                        <button
+                          className="table-button light"
+                          onClick={() => handleView(ticket.id)}
+                        >
+                          View
+                        </button>
+                        <button
+                          className="table-button"
+                          onClick={() => handleAssign(ticket.id)}
+                        >
+                          {ticket.status === "In Progress" ? "In progress" : "Assign"}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       </section>
+      {assignDialog && (
+        <div className="modal-backdrop" onClick={() => setAssignDialog(null)}>
+          <div className="modal-box assignment-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-icon">✓</div>
+            <h3>Available technicians</h3>
+            <p>
+              Assign support for <strong>{assignDialog.subject}</strong>.
+            </p>
+            <div className="assignment-list">
+              {technicians.length === 0 ? (
+                <div className="empty-assignment">No technicians are currently available.</div>
+              ) : (
+                technicians.map((technician, index) => {
+                  const slot = ["9:00 AM - 11:00 AM", "1:00 PM - 3:00 PM", "4:00 PM - 6:00 PM"][index % 3];
+                  return (
+                    <button
+                      key={technician.id}
+                      className="assignment-card"
+                      onClick={() => confirmAssign(assignDialog.ticketId, technician, slot)}
+                    >
+                      <span className="assignment-name">{technician.name}</span>
+                      <span className="assignment-slot">Available: {slot}</span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+            <button className="text-button" onClick={() => setAssignDialog(null)}>
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+      {viewDialog && (
+        <div className="modal-backdrop" onClick={() => setViewDialog(null)}>
+          <div className="modal-box details-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-icon">i</div>
+            <h3>{viewDialog.id}</h3>
+            <p>{viewDialog.subject}</p>
+            <div className="detail-stack">
+              <div><strong>Technician:</strong> {viewDialog.assignment.assignedTechnician || "Not assigned"}</div>
+              <div><strong>Availability:</strong> {viewDialog.assignment.assignedTime || "Awaiting schedule"}</div>
+              <div><strong>Progress:</strong> {viewDialog.assignment.progress || "Queued"}</div>
+              <div><strong>Status:</strong> {viewDialog.status}</div>
+            </div>
+            <button className="button button-primary" onClick={() => setViewDialog(null)}>
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </>
   );
 }
 function UsersPage() {
   const [users, setUsers] = useState([]);
+  const [selectedType, setSelectedType] = useState("student");
 
   useEffect(() => {
     let active = true;
@@ -1117,6 +1299,11 @@ function UsersPage() {
     };
   }, []);
 
+  const filteredUsers = users.filter((user) => {
+    if (!selectedType) return true;
+    return (user.role || "").toLowerCase() === selectedType.toLowerCase();
+  });
+
   return (
     <>
       <PageHeader
@@ -1125,6 +1312,25 @@ function UsersPage() {
         description="Registered users across the HelpDesk system."
       />
       <section className="panel">
+        <div className="panel-heading user-filter-panel">
+          <div>
+            <span className="eyebrow">FILTER USERS</span>
+            <h2>Choose a user type</h2>
+          </div>
+          <label className="field-label compact-field">
+            User type
+            <select
+              value={selectedType}
+              onChange={(event) => setSelectedType(event.target.value)}
+            >
+              <option value="student">Student</option>
+              <option value="employee">Employee</option>
+              <option value="technician">Technician</option>
+              <option value="admin">Admin</option>
+              <option value="superadmin">Super Admin</option>
+            </select>
+          </label>
+        </div>
         <div className="table-wrap">
           <table>
             <thead>
@@ -1137,12 +1343,12 @@ function UsersPage() {
               </tr>
             </thead>
             <tbody>
-              {users.length === 0 ? (
+              {filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan="5">No registered users yet.</td>
+                  <td colSpan="5">No registered {selectedType} users yet.</td>
                 </tr>
               ) : (
-                users.map((user, index) => (
+                filteredUsers.map((user, index) => (
                   <tr key={`${user.id}-${index}`}>
                     <td>
                       <strong>{user.id}</strong>

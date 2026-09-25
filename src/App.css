@@ -553,16 +553,21 @@ td strong {
 }
 
 .admin-actions button {
+    position: relative;
     text-align: left;
     border: 1px solid var(--line);
     background: #fff;
     padding: 15px;
     color: var(--ink);
-    border-radius: 3px
+    border-radius: 3px;
+    cursor: pointer;
+    transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease
 }
 
 .admin-actions button:hover {
-    border-color: var(--green)
+    border-color: var(--green);
+    transform: translateY(-2px);
+    box-shadow: 0 10px 22px rgba(17, 64, 52, .08)
 }
 
 .admin-actions span {
@@ -585,6 +590,82 @@ td strong {
     color: var(--muted);
     margin-top: 4px;
     font-size: 9px
+}
+
+.action-arrow {
+    position: absolute;
+    right: 15px;
+    bottom: 14px;
+    font-size: 16px;
+    color: var(--green);
+    font-weight: 700
+}
+
+.inline-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center
+}
+
+.assignment-modal {
+    width: min(100%, 440px)
+}
+
+.assignment-list {
+    display: grid;
+    gap: 10px;
+    margin: 18px 0 12px
+}
+
+.assignment-card {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #f7faf8;
+    padding: 12px 14px;
+    text-align: left;
+    display: grid;
+    gap: 4px;
+    cursor: pointer
+}
+
+.assignment-card:hover {
+    border-color: var(--green)
+}
+
+.assignment-name {
+    font-weight: 700;
+    color: var(--ink)
+}
+
+.assignment-slot {
+    color: var(--muted);
+    font-size: 10px
+}
+
+.empty-assignment {
+    padding: 12px;
+    border: 1px dashed var(--line);
+    border-radius: 6px;
+    color: var(--muted);
+    font-size: 11px
+}
+
+.detail-stack {
+    display: grid;
+    gap: 10px;
+    margin: 18px 0 20px;
+    text-align: left;
+    color: var(--ink);
+    font-size: 12px
+}
+
+.compact-field {
+    min-width: 170px;
+    margin: 0
+}
+
+.user-filter-panel {
+    align-items: end
 }
 
 .empty-action {
@@ -800,6 +881,15 @@ td strong {
     .quick-panel {
         min-height: 250px
     }
+
+    .user-filter-panel {
+        display: block
+    }
+
+    .compact-field {
+        width: 100%;
+        margin-top: 14px
+    }
 }
 
 @media(max-width:640px) {
@@ -886,6 +976,15 @@ td strong {
     .admin-actions {
         grid-template-columns: 1fr;
         margin-top: 24px
+    }
+
+    .inline-actions {
+        flex-direction: column;
+        align-items: stretch
+    }
+
+    .inline-actions .table-button {
+        width: 100%
     }
 
     .visual-meta {
