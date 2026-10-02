@@ -27,6 +27,16 @@ const navFor = {
   ],
 };
 
+// Played when the Sign in / Create account button is pressed.
+function playAuthSound() {
+  try {
+    const audio = new Audio("/login-sound.mp3");
+    audio.play().catch(() => {});
+  } catch {
+    // Audio unavailable; ignore.
+  }
+}
+
 const ASSIGNMENT_STORAGE_KEY = "helpdesk-ticket-assignments-v1";
 
 function readTicketAssignments() {
@@ -586,6 +596,7 @@ function AuthScreen({
                 <button
                   className="button button-primary full-width"
                   type="submit"
+                  onClick={playAuthSound}
                 >
                   Sign in <span>→</span>
                 </button>
@@ -689,6 +700,7 @@ function AuthScreen({
                 <button
                   className="button button-primary full-width"
                   type="submit"
+                  onClick={playAuthSound}
                 >
                   Create account <span>→</span>
                 </button>
