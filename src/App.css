@@ -1322,3 +1322,288 @@ button.sidebar-user:focus-visible {
         margin-bottom: 65px
     }
 }
+/* Centered avatar letters (override .sidebar-user span display:block) */
+.sidebar-user .avatar {
+    display: grid;
+    place-items: center;
+    flex: none;
+    line-height: 1;
+    font-size: 13px;
+    color: var(--green-dark);
+    margin: 0
+}
+
+.profile-avatar {
+    line-height: 1
+}
+
+/* Superadmin dashboard + report manager */
+.dash-split {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr;
+    gap: 14px;
+    margin-bottom: 25px
+}
+
+.kpi-panel {
+    padding: 22px
+}
+
+.kpi-big {
+    font: 800 54px Manrope, sans-serif;
+    color: var(--green);
+    margin: 8px 0
+}
+
+.kpi-meter {
+    height: 8px;
+    background: var(--mint);
+    border-radius: 99px;
+    overflow: hidden
+}
+
+.kpi-meter span {
+    display: block;
+    height: 100%;
+    background: var(--green)
+}
+
+.recent-list {
+    list-style: none;
+    margin: 0;
+    padding: 0
+}
+
+.recent-list li {
+    padding: 9px 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 13px
+}
+
+.recent-list small {
+    display: block;
+    color: var(--muted);
+    font-size: 11px
+}
+
+.link-button {
+    background: none;
+    border: 0;
+    color: var(--green);
+    font-weight: 700;
+    cursor: pointer
+}
+
+.report-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    align-items: flex-end;
+    padding: 16px 20px;
+    margin-bottom: 18px
+}
+
+.report-filters label {
+    display: grid;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--muted)
+}
+
+.report-filters select,
+.report-filters input {
+    min-width: 170px;
+    padding: 9px 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font: inherit;
+    color: var(--ink);
+    background: #fff
+}
+
+.filter-count {
+    margin-left: auto;
+    color: var(--muted);
+    font-size: 12px
+}
+
+.report-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px
+}
+
+.report-card {
+    padding: 18px 20px
+}
+
+.report-card.wide {
+    grid-column: 1 / -1
+}
+
+.report-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 14px
+}
+
+.report-card-head h3 {
+    margin: 0;
+    font-size: 14px
+}
+
+.report-card-head small,
+.report-empty {
+    color: var(--muted);
+    font-size: 12px
+}
+
+.bar-list {
+    display: grid;
+    gap: 10px
+}
+
+.bar-row {
+    display: grid;
+    grid-template-columns: 110px 1fr 32px;
+    gap: 10px;
+    align-items: center;
+    font-size: 12px
+}
+
+.bar-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap
+}
+
+.bar-track {
+    height: 10px;
+    background: var(--mint);
+    border-radius: 99px;
+    overflow: hidden
+}
+
+.bar-fill {
+    display: block;
+    height: 100%;
+    background: var(--green)
+}
+
+.bar-fill.gold {
+    background: var(--gold)
+}
+
+.bar-fill.blue {
+    background: var(--blue)
+}
+
+.donut-wrap {
+    display: flex;
+    align-items: center;
+    gap: 24px
+}
+
+.donut {
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    position: relative
+}
+
+.donut::after {
+    content: "";
+    position: absolute;
+    inset: 24px;
+    background: #fff;
+    border-radius: 50%
+}
+
+.donut span {
+    position: relative;
+    z-index: 1;
+    font: 800 22px Manrope, sans-serif
+}
+
+.legend {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 8px;
+    font-size: 12px
+}
+
+.legend i {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    margin-right: 8px
+}
+
+.column-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    height: 180px;
+    overflow-x: auto
+}
+
+.column {
+    flex: 1 0 18px;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 3px
+}
+
+.column span {
+    width: 100%;
+    background: var(--green);
+    border-radius: 3px 3px 0 0;
+    min-height: 2px
+}
+
+.column b {
+    font-size: 10px
+}
+
+.column small {
+    font-size: 9px;
+    color: var(--muted)
+}
+
+.heat-map {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 8px
+}
+
+.heat-cell {
+    padding: 14px 12px;
+    border-radius: 8px;
+    display: grid;
+    gap: 4px
+}
+
+.heat-cell strong {
+    font: 800 20px Manrope, sans-serif
+}
+
+.heat-cell span {
+    font-size: 11px
+}
+
+@media (max-width: 800px) {
+    .dash-split,
+    .report-grid {
+        grid-template-columns: 1fr
+    }
+}

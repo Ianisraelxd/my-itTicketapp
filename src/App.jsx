@@ -22,10 +22,8 @@ const navFor = {
   ],
   superadmin: [
     ["superAdminDashboard", "◈", "Dashboard"],
-    ["usersPage", "♙", "Manage Users"],
-    ["manageRequestsPage", "▤", "Manage Requests"],
-    ["passwordRequestsPage", "🔑", "Password Requests"],
-    ["activityLogPage", "◷", "Activity Logs"],
+    ["reportManagerPage", "▥", "Report Manager"],
+    ["activityLogPage", "◷", "Activity Log Reports"],
   ],
 };
 
@@ -403,10 +401,23 @@ function App() {
             refreshData={refreshData}
           />
         )}
-        {(page === "adminDashboard" || page === "superAdminDashboard") && (
+        {page === "adminDashboard" && (
           <AdminDashboard
-            type={page === "superAdminDashboard" ? "super" : "admin"}
             setPage={setPage}
+            tickets={allTickets.length ? allTickets : tickets}
+            users={allUsers}
+          />
+        )}
+        {page === "superAdminDashboard" && (
+          <SuperAdminDashboard
+            setPage={setPage}
+            tickets={allTickets.length ? allTickets : tickets}
+            users={allUsers}
+            activities={activities}
+          />
+        )}
+        {page === "reportManagerPage" && (
+          <ReportManager
             tickets={allTickets.length ? allTickets : tickets}
             users={allUsers}
           />
@@ -1254,40 +1265,25 @@ function MyRequests({ tickets, ticketAssignments = {}, setPage }) {
     </>
   );
 }
-function AdminDashboard({ type, setPage, tickets = [], users = [] }) {
-  const totalUsers = users.length;
-  const totalTickets = tickets.length;
+function AdminDashboard({ setPage, tickets = [], users = [] }) {
   const resolvedTickets = tickets.filter((ticket) => ticket.status === "Resolved").length;
   const openTickets = tickets.filter((ticket) => ticket.status === "Open").length;
   const inProgressTickets = tickets.filter((ticket) => ticket.status === "In Progress").length;
-  const technicianCount = users.filter((user) => /technician/i.test(user.role || "")).length;
   const studentCount = users.filter((user) => /student/i.test(user.role || "")).length;
   const employeeCount = users.filter((user) => /employee/i.test(user.role || "")).length;
 
-  const stats =
-    type === "super"
-      ? [
-          ["Total users", String(totalUsers)],
-          ["Total tickets", String(totalTickets)],
-          ["Technicians", String(technicianCount)],
-          ["Resolved tickets", String(resolvedTickets)],
-        ]
-      : [
-          ["Students", String(studentCount)],
-          ["Employees", String(employeeCount)],
-          ["Pending requests", String(openTickets + inProgressTickets)],
-          ["Resolved requests", String(resolvedTickets)],
-        ];
+  const stats = [
+    ["Students", String(studentCount)],
+    ["Employees", String(employeeCount)],
+    ["Pending requests", String(openTickets + inProgressTickets)],
+    ["Resolved requests", String(resolvedTickets)],
+  ];
   return (
     <>
       <PageHeader
-        eyebrow={type === "super" ? "SYSTEM / 01" : "ADMIN / 01"}
-        title={type === "super" ? "System overview." : "Users administration."}
-        description={
-          type === "super"
-            ? "A pulse check across the entire HelpDesk system."
-            : "Manage student and employee requests from one place."
-        }
+        eyebrow="ADMIN / 01"
+        title="Users administration."
+        description="Manage student and employee requests from one place."
       />
       <div className="stats-grid">
         {stats.map(([label, value]) => (
@@ -1318,14 +1314,6 @@ function AdminDashboard({ type, setPage, tickets = [], users = [] }) {
             <small>Accept or decline change requests</small>
             <span className="action-arrow" aria-label="Open password requests">↗</span>
           </button>
-          {type === "super" && (
-            <button type="button" onClick={() => setPage("activityLogPage")}>
-              <span>◷</span>
-              <strong>Activity logs</strong>
-              <small>See recent system actions</small>
-              <span className="action-arrow" aria-label="Open activity logs">↗</span>
-            </button>
-          )}
         </div>
       </section>
     </>
@@ -1905,14 +1893,328 @@ function UsersPage() {
     </>
   );
 }
-function ActivityLog({ activities }) {
+const pct = (part, whole) => (whole ? Math.round((part / whole) * 100) : 0);
+
+function countBy(items, getKey) {
+  const map = new Map();
+  items.forEach((item) => {
+    const key = getKey(item) || "Unspecified";
+    map.set(key, (map.get(key) || 0) + 1);
+  });
+  return [...map.entries()].sort((a, b) => b[1] - a[1]);
+}
+
+function BarList({ rows, tone = "" }) {
+  const max = Math.max(1, ...rows.map(([, n]) => n));
+  if (!rows.length) return <p className="report-empty">No data for this filter.</p>;
+  return (
+    <div className="bar-list">
+      {rows.map(([label, n]) => (
+        <div className="bar-row" key={label}>
+          <span className="bar-label" title={label}>{label}</span>
+          <span className="bar-track">
+            <span className={`bar-fill ${tone}`} style={{ width: `${(n / max) * 100}%` }}></span>
+          </span>
+          <b>{n}</b>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ReportCard({ title, note, children, wide = false }) {
+  return (
+    <section className={`panel report-card ${wide ? "wide" : ""}`}>
+      <div className="report-card-head">
+        <h3>{title}</h3>
+        {note && <small>{note}</small>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function SuperAdminDashboard({ setPage, tickets = [], users = [], activities = [] }) {
+  const total = tickets.length;
+  const resolved = tickets.filter((t) => t.status === "Resolved").length;
+  const open = tickets.filter((t) => t.status === "Open").length;
+  const inProgress = tickets.filter((t) => t.status === "In Progress").length;
+  const technicians = users.filter((u) => /technician/i.test(u.role || "")).length;
+  const resolutionRate = pct(resolved, total);
+  const recent = activities.slice(0, 5);
+
+  const summaries = [
+    ["Total users", String(users.length), `${technicians} technicians`],
+    ["Total tickets", String(total), `${open} open · ${inProgress} in progress`],
+    ["Resolved tickets", String(resolved), `${total - resolved} still active`],
+    ["System activity", String(activities.length), "logged actions"],
+  ];
+
   return (
     <>
       <PageHeader
-        eyebrow="SYSTEM / 04"
-        title="Activity log"
-        description="Recent actions performed across the HelpDesk system."
+        eyebrow="SYSTEM / 01"
+        title="System overview."
+        description="A pulse check across the entire HelpDesk system."
       />
+      <div className="stats-grid">
+        {summaries.map(([label, value, hint]) => (
+          <div className="stat-card" key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+            <small>{hint}</small>
+          </div>
+        ))}
+      </div>
+      <div className="dash-split">
+        <section className="panel kpi-panel">
+          <span className="eyebrow">KPI · RESOLUTION RATE</span>
+          <div className="kpi-big">{resolutionRate}%</div>
+          <div className="kpi-meter"><span style={{ width: `${resolutionRate}%` }}></span></div>
+          <p>{resolved} of {total} tickets resolved. Target: 80%.</p>
+          <button type="button" className="button button-primary" onClick={() => setPage("reportManagerPage")}>
+            Open Report Manager
+          </button>
+        </section>
+        <section className="panel">
+          <div className="report-card-head">
+            <h3>Latest activity</h3>
+            <button type="button" className="link-button" onClick={() => setPage("activityLogPage")}>
+              View all
+            </button>
+          </div>
+          {recent.length ? (
+            <ul className="recent-list">
+              {recent.map((a, i) => (
+                <li key={i}>
+                  <strong>{a[1]}</strong> <span>{a[3]}</span>
+                  <small>{a[0]}</small>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="report-empty">No activity yet.</p>
+          )}
+        </section>
+      </div>
+    </>
+  );
+}
+
+const TIME_RANGES = [
+  ["7", "Last 7 days"],
+  ["30", "Last 30 days"],
+  ["90", "Last 90 days"],
+  ["all", "All time"],
+];
+
+function ReportManager({ tickets = [], users = [] }) {
+  const [category, setCategory] = useState("all");
+  const [range, setRange] = useState("all");
+  const [role, setRole] = useState("all");
+
+  const categories = [...new Set(tickets.map((t) => t.category).filter(Boolean))].sort();
+  const roles = [...new Set(tickets.map((t) => t.userRole).filter(Boolean))].sort();
+
+  const cutoff = range === "all" ? 0 : Date.now() - Number(range) * 86400000;
+  const filtered = tickets.filter(
+    (t) =>
+      (category === "all" || t.category === category) &&
+      (role === "all" || t.userRole === role) &&
+      (!cutoff || (t.createdAt && new Date(t.createdAt).getTime() >= cutoff)),
+  );
+
+  const total = filtered.length;
+  const resolved = filtered.filter((t) => t.status === "Resolved").length;
+  const backlog = total - resolved;
+  const high = filtered.filter((t) => t.priority === "High").length;
+  const statusRows = ["Open", "In Progress", "Resolved"].map((s) => [
+    s,
+    filtered.filter((t) => t.status === s).length,
+  ]);
+  const statusColors = ["#bd8128", "#39759d", "#1c6b56"];
+  let acc = 0;
+  const donut = statusRows
+    .map(([, n], i) => {
+      const start = acc;
+      acc += total ? (n / total) * 100 : 0;
+      return `${statusColors[i]} ${start}% ${acc}%`;
+    })
+    .join(", ");
+
+  const dayKey = (d) => d.toISOString().slice(0, 10);
+  const trend = (() => {
+    const dated = filtered.filter((t) => t.createdAt);
+    const buckets = new Map();
+    if (range === "all") {
+      dated.forEach((t) => {
+        const k = dayKey(new Date(t.createdAt)).slice(0, 7);
+        buckets.set(k, (buckets.get(k) || 0) + 1);
+      });
+      return [...buckets.entries()].sort();
+    }
+    const days = Number(range);
+    for (let i = days - 1; i >= 0; i--) buckets.set(dayKey(new Date(Date.now() - i * 86400000)), 0);
+    dated.forEach((t) => {
+      const k = dayKey(new Date(t.createdAt));
+      if (buckets.has(k)) buckets.set(k, buckets.get(k) + 1);
+    });
+    return [...buckets.entries()].map(([k, n]) => [k.slice(5), n]);
+  })();
+  const trendMax = Math.max(1, ...trend.map(([, n]) => n));
+
+  const locationRows = countBy(filtered, (t) => t.location).slice(0, 12);
+  const locMax = Math.max(1, ...locationRows.map(([, n]) => n));
+  const userRoleRows = countBy(users, (u) => u.role);
+
+  const kpis = [
+    ["Resolution rate", `${pct(resolved, total)}%`],
+    ["Open backlog", String(backlog)],
+    ["High-priority share", `${pct(high, total)}%`],
+    ["Tickets in view", String(total)],
+  ];
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="SYSTEM / 02"
+        title="Report manager"
+        description="Graphs, maps and KPIs across the system. Filter by category, time range and role."
+      />
+      <section className="panel report-filters">
+        <label>
+          Category
+          <select value={category} onChange={(e) => setCategory(e.target.value)}>
+            <option value="all">All categories</option>
+            {categories.map((c) => <option key={c}>{c}</option>)}
+          </select>
+        </label>
+        <label>
+          Time range
+          <select value={range} onChange={(e) => setRange(e.target.value)}>
+            {TIME_RANGES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+        </label>
+        <label>
+          Requester role
+          <select value={role} onChange={(e) => setRole(e.target.value)}>
+            <option value="all">All roles</option>
+            {roles.map((r) => <option key={r}>{r}</option>)}
+          </select>
+        </label>
+        <button
+          type="button"
+          className="button"
+          onClick={() => { setCategory("all"); setRange("all"); setRole("all"); }}
+        >
+          Reset
+        </button>
+      </section>
+      <div className="stats-grid">
+        {kpis.map(([label, value]) => (
+          <div className="stat-card" key={label}>
+            <span>KPI · {label}</span>
+            <strong>{value}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="report-grid">
+        <ReportCard title="1 · Tickets by status" note="Donut chart">
+          <div className="donut-wrap">
+            <div className="donut" style={{ background: total ? `conic-gradient(${donut})` : "#e2e8e4" }}>
+              <span>{total}</span>
+            </div>
+            <ul className="legend">
+              {statusRows.map(([s, n], i) => (
+                <li key={s}><i style={{ background: statusColors[i] }}></i>{s} <b>{n}</b></li>
+              ))}
+            </ul>
+          </div>
+        </ReportCard>
+        <ReportCard title="2 · Tickets by category" note="Bar graph">
+          <BarList rows={countBy(filtered, (t) => t.category)} />
+        </ReportCard>
+        <ReportCard title="3 · Tickets by priority" note="Bar graph">
+          <BarList
+            rows={["High", "Medium", "Low"].map((p) => [p, filtered.filter((t) => t.priority === p).length])}
+            tone="gold"
+          />
+        </ReportCard>
+        <ReportCard title="4 · Requests by requester role" note="Bar graph">
+          <BarList rows={countBy(filtered, (t) => t.userRole)} tone="blue" />
+        </ReportCard>
+        <ReportCard title="5 · Ticket volume over time" note={range === "all" ? "Per month" : "Per day"} wide>
+          {trend.length ? (
+            <div className="column-chart">
+              {trend.map(([label, n]) => (
+                <div className="column" key={label} title={`${label}: ${n}`}>
+                  <b>{n || ""}</b>
+                  <span style={{ height: `${(n / trendMax) * 100}%` }}></span>
+                  <small>{label}</small>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="report-empty">No data for this filter.</p>
+          )}
+        </ReportCard>
+        <ReportCard title="6 · Campus location map" note="Heat map of where requests come from" wide>
+          {locationRows.length ? (
+            <div className="heat-map">
+              {locationRows.map(([loc, n]) => (
+                <div
+                  className="heat-cell"
+                  key={loc}
+                  style={{ background: `rgba(28, 107, 86, ${0.12 + (n / locMax) * 0.88})`, color: n / locMax > 0.45 ? "#fff" : "var(--ink)" }}
+                >
+                  <strong>{n}</strong>
+                  <span>{loc}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="report-empty">No data for this filter.</p>
+          )}
+        </ReportCard>
+        <ReportCard title="7 · Registered users by role" note="Not affected by filters">
+          <BarList rows={userRoleRows} tone="blue" />
+        </ReportCard>
+      </div>
+    </>
+  );
+}
+
+function ActivityLog({ activities }) {
+  const [search, setSearch] = useState("");
+  const [role, setRole] = useState("all");
+  const roles = [...new Set(activities.map((a) => a[2]).filter(Boolean))].sort();
+  const term = search.trim().toLowerCase();
+  const rows = activities.filter(
+    (a) =>
+      (role === "all" || a[2] === role) &&
+      (!term || a.some((cell) => String(cell).toLowerCase().includes(term))),
+  );
+  return (
+    <>
+      <PageHeader
+        eyebrow="SYSTEM / 03"
+        title="Activity log reports"
+        description="Every action performed by every user inside the HelpDesk system."
+      />
+      <section className="panel report-filters">
+        <label>
+          Search
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="User or activity" />
+        </label>
+        <label>
+          Role
+          <select value={role} onChange={(e) => setRole(e.target.value)}>
+            <option value="all">All roles</option>
+            {roles.map((r) => <option key={r}>{r}</option>)}
+          </select>
+        </label>
+        <span className="filter-count">{rows.length} of {activities.length} entries</span>
+      </section>
       <section className="panel">
         <div className="table-wrap">
           <table>
@@ -1925,13 +2227,16 @@ function ActivityLog({ activities }) {
               </tr>
             </thead>
             <tbody>
-              {activities.map((activity, index) => (
+              {rows.map((activity, index) => (
                 <tr key={`${activity[0]}-${index}`}>
-                  {activity.map((item) => (
-                    <td key={item}>{item}</td>
+                  {activity.map((item, i) => (
+                    <td key={i}>{item}</td>
                   ))}
                 </tr>
               ))}
+              {!rows.length && (
+                <tr><td colSpan={4}>No matching activity.</td></tr>
+              )}
             </tbody>
           </table>
         </div>
