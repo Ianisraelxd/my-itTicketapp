@@ -2105,7 +2105,7 @@ function ReportManager({ tickets = [], users = [] }) {
         </label>
         <button
           type="button"
-          className="button"
+          className="button button-primary"
           onClick={() => { setCategory("all"); setRange("all"); setRole("all"); }}
         >
           Reset
