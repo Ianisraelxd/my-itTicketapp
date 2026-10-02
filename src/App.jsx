@@ -27,7 +27,7 @@ const navFor = {
   ],
 };
 
-// Played when the Sign in / Create account button is pressed.
+// Played after a successful login or signup (including via the Enter key).
 function playAuthSound() {
   try {
     const audio = new Audio("/login-sound.mp3");
@@ -195,6 +195,7 @@ function App() {
       );
       return;
     }
+    playAuthSound();
     setUser(account);
     refreshData();
     const landing =
@@ -596,7 +597,6 @@ function AuthScreen({
                 <button
                   className="button button-primary full-width"
                   type="submit"
-                  onClick={playAuthSound}
                 >
                   Sign in <span>→</span>
                 </button>
@@ -628,6 +628,7 @@ function AuthScreen({
                       userType: signupForm.userType,
                       password: signupForm.password,
                     });
+                    playAuthSound();
                     showMessage(
                       "Account created",
                       "Your account was created successfully. You can now log in.",
@@ -700,7 +701,6 @@ function AuthScreen({
                 <button
                   className="button button-primary full-width"
                   type="submit"
-                  onClick={playAuthSound}
                 >
                   Create account <span>→</span>
                 </button>
