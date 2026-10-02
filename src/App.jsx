@@ -27,6 +27,16 @@ const navFor = {
   ],
 };
 
+// Played after a successful login or signup (including via the Enter key).
+function playAuthSound() {
+  try {
+    const audio = new Audio("/login-sound.mp3");
+    audio.play().catch(() => {});
+  } catch {
+    // Audio unavailable; ignore.
+  }
+}
+
 const ASSIGNMENT_STORAGE_KEY = "helpdesk-ticket-assignments-v1";
 
 function readTicketAssignments() {
@@ -185,6 +195,7 @@ function App() {
       );
       return;
     }
+    playAuthSound();
     setUser(account);
     refreshData();
     const landing =
@@ -617,6 +628,7 @@ function AuthScreen({
                       userType: signupForm.userType,
                       password: signupForm.password,
                     });
+                    playAuthSound();
                     showMessage(
                       "Account created",
                       "Your account was created successfully. You can now log in.",
