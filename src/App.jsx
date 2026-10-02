@@ -366,6 +366,7 @@ function App() {
           </button>
           <button className="mobile-logout" onClick={logout}>Log out</button>
         </header>
+        <div className="page" key={page}>
         {page === "userDashboard" && (
           <UserDashboard
             setPage={setPage}
@@ -442,7 +443,20 @@ function App() {
           />
         )}
         {page === "activityLogPage" && <ActivityLog activities={activities} />}
+        </div>
       </main>
+      <nav className="bottom-nav" aria-label="Main navigation">
+        {navFor[roleType].map(([id, icon, label]) => (
+          <button
+            className={page === id ? "active" : ""}
+            key={id}
+            onClick={() => setPage(id)}
+          >
+            <span>{icon}</span>
+            <small>{label}</small>
+          </button>
+        ))}
+      </nav>
       {profileOpen && (
         <ProfileModal
           user={user}
@@ -996,11 +1010,38 @@ function PageHeader({ eyebrow, title, description, action }) {
     </div>
   );
 }
+// Counts a numeric value (optionally with a % suffix) up from zero on mount.
+function CountUp({ value }) {
+  const match = /^(\d+)(%?)$/.exec(String(value));
+  const isNumber = match !== null;
+  const target = isNumber ? Number(match[1]) : 0;
+  const suffix = isNumber ? match[2] : "";
+  const reduceMotion =
+    typeof window !== "undefined" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const [shown, setShown] = useState(reduceMotion ? target : 0);
+
+  useEffect(() => {
+    if (!isNumber || reduceMotion) return;
+    let frame;
+    const start = performance.now();
+    const tick = (now) => {
+      const t = Math.min(1, (now - start) / 700);
+      setShown(Math.round(target * (1 - Math.pow(1 - t, 3))));
+      if (t < 1) frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [target, isNumber, reduceMotion]);
+
+  if (!isNumber) return value;
+  return `${reduceMotion ? target : shown}${suffix}`;
+}
 function StatCard({ label, value, tone = "" }) {
   return (
     <div className={`stat-card ${tone}`}>
       <span>{label}</span>
-      <strong>{value}</strong>
+      <strong><CountUp value={value} /></strong>
       <small>
         Compared with last month <b>↗</b>
       </small>
@@ -1961,7 +2002,7 @@ function SuperAdminDashboard({ setPage, tickets = [], users = [], activities = [
         {summaries.map(([label, value, hint]) => (
           <div className="stat-card" key={label}>
             <span>{label}</span>
-            <strong>{value}</strong>
+            <strong><CountUp value={value} /></strong>
             <small>{hint}</small>
           </div>
         ))}
@@ -2115,7 +2156,7 @@ function ReportManager({ tickets = [], users = [] }) {
         {kpis.map(([label, value]) => (
           <div className="stat-card" key={label}>
             <span>KPI · {label}</span>
-            <strong>{value}</strong>
+            <strong><CountUp value={value} /></strong>
           </div>
         ))}
       </div>
