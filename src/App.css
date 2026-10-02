@@ -1555,6 +1555,7 @@ button.sidebar-user:focus-visible {
 }
 
 .column {
+    max-width: 80px;
     flex: 1 0 18px;
     height: 100%;
     display: flex;
@@ -1565,6 +1566,7 @@ button.sidebar-user:focus-visible {
 }
 
 .column span {
+    max-width: 56px;
     width: 100%;
     background: var(--green);
     border-radius: 3px 3px 0 0;

@@ -33,7 +33,7 @@ function readTicketAssignments() {
   try {
     const raw = localStorage.getItem(ASSIGNMENT_STORAGE_KEY);
     return raw ? JSON.parse(raw) : {};
-  } catch (error) {
+  } catch {
     return {};
   }
 }
@@ -2009,6 +2009,7 @@ const TIME_RANGES = [
 ];
 
 function ReportManager({ tickets = [], users = [] }) {
+  const [now] = useState(() => Date.now());
   const [category, setCategory] = useState("all");
   const [range, setRange] = useState("all");
   const [role, setRole] = useState("all");
@@ -2016,7 +2017,7 @@ function ReportManager({ tickets = [], users = [] }) {
   const categories = [...new Set(tickets.map((t) => t.category).filter(Boolean))].sort();
   const roles = [...new Set(tickets.map((t) => t.userRole).filter(Boolean))].sort();
 
-  const cutoff = range === "all" ? 0 : Date.now() - Number(range) * 86400000;
+  const cutoff = range === "all" ? 0 : now - Number(range) * 86400000;
   const filtered = tickets.filter(
     (t) =>
       (category === "all" || t.category === category) &&
@@ -2054,7 +2055,7 @@ function ReportManager({ tickets = [], users = [] }) {
       return [...buckets.entries()].sort();
     }
     const days = Number(range);
-    for (let i = days - 1; i >= 0; i--) buckets.set(dayKey(new Date(Date.now() - i * 86400000)), 0);
+    for (let i = days - 1; i >= 0; i--) buckets.set(dayKey(new Date(now - i * 86400000)), 0);
     dated.forEach((t) => {
       const k = dayKey(new Date(t.createdAt));
       if (buckets.has(k)) buckets.set(k, buckets.get(k) + 1);
@@ -2104,7 +2105,7 @@ function ReportManager({ tickets = [], users = [] }) {
         </label>
         <button
           type="button"
-          className="button"
+          className="button button-primary"
           onClick={() => { setCategory("all"); setRange("all"); setRole("all"); }}
         >
           Reset
