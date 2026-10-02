@@ -17,12 +17,14 @@ const navFor = {
   admin: [
     ["adminDashboard", "◈", "Dashboard"],
     ["manageRequestsPage", "▤", "Manage Requests"],
+    ["passwordRequestsPage", "🔑", "Password Requests"],
     ["usersPage", "♙", "Users"],
   ],
   superadmin: [
     ["superAdminDashboard", "◈", "Dashboard"],
     ["usersPage", "♙", "Manage Users"],
     ["manageRequestsPage", "▤", "Manage Requests"],
+    ["passwordRequestsPage", "🔑", "Password Requests"],
     ["activityLogPage", "◷", "Activity Logs"],
   ],
 };
@@ -62,6 +64,13 @@ function App() {
   const [ticketAssignments, setTicketAssignments] = useState(() => readTicketAssignments());
   const [refreshKey, setRefreshKey] = useState(0);
   const [modal, setModal] = useState(null);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileView, setProfileView] = useState("details");
+  const [profile, setProfile] = useState(null);
+  const [myPwRequests, setMyPwRequests] = useState([]);
+  const [pwRequests, setPwRequests] = useState([]);
+  const [pwForm, setPwForm] = useState({ newPassword: "", confirm: "", reason: "" });
+  const [pwSubmitting, setPwSubmitting] = useState(false);
   const [request, setRequest] = useState({
     category: "Hardware",
     priority: "Medium",
@@ -78,6 +87,7 @@ function App() {
         : user?.role === "technician"
           ? "technician"
           : "user";
+  const latestPwRequest = myPwRequests[0] || null;
   const addActivity = (activity) => {
     // Optimistically show it, then persist to the database.
     setActivities((items) => [
@@ -119,6 +129,47 @@ function App() {
   }, [user, refreshKey]);
 
   const refreshData = () => setRefreshKey((value) => value + 1);
+
+  // Load the signed-in account details when the profile panel opens.
+  useEffect(() => {
+    if (!user || !profileOpen) return;
+    let active = true;
+    api
+      .getProfile(user.userId)
+      .then((row) => active && setProfile(row))
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [user, profileOpen]);
+
+  // Keep password change requests fresh so users see approval/rejection while
+  // they wait, and admins see new requests without reloading the page.
+  useEffect(() => {
+    if (!user) return;
+    let active = true;
+    const canReview = ["admin", "superadmin"].includes(user.role);
+
+    const load = () => {
+      Promise.all([
+        api.getPasswordRequests({ userId: user.userId }),
+        canReview ? api.getPasswordRequests() : Promise.resolve(null),
+      ])
+        .then(([ownRows, allRows]) => {
+          if (!active) return;
+          setMyPwRequests(ownRows);
+          if (allRows) setPwRequests(allRows);
+        })
+        .catch(() => {});
+    };
+
+    load();
+    const timer = setInterval(load, 5000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [user, refreshKey]);
 
   useEffect(() => {
     localStorage.setItem(ASSIGNMENT_STORAGE_KEY, JSON.stringify(ticketAssignments));
@@ -193,10 +244,53 @@ function App() {
     showMessage("Request submitted", `${created.id} was created successfully.`);
   }
 
+  function openProfile() {
+    setProfileView("details");
+    setProfileOpen(true);
+  }
+
+  async function submitPasswordChange(event) {
+    event.preventDefault();
+    if (pwForm.newPassword.length < 6) {
+      showMessage("Password too short", "Use at least 6 characters for the new password.");
+      return;
+    }
+    if (pwForm.newPassword !== pwForm.confirm) {
+      showMessage("Passwords do not match", "Re-type the new password so both fields match.");
+      return;
+    }
+    setPwSubmitting(true);
+    try {
+      const created = await api.requestPasswordChange({
+        userId: user.userId,
+        newPassword: pwForm.newPassword,
+        reason: pwForm.reason,
+      });
+      setPwForm({ newPassword: "", confirm: "", reason: "" });
+      setProfileView("details");
+      refreshData();
+      addActivity(`Filed ${created.id}: Password change request`);
+      showMessage(
+        "Request sent",
+        `${created.id} was sent to the admin. Your profile will show whether it is accepted.`,
+      );
+    } catch (error) {
+      showMessage("Could not submit request", error.message || "Please try again.");
+    } finally {
+      setPwSubmitting(false);
+    }
+  }
+
   function logout() {
     setUser(null);
     setAuthPage("login");
     setCredentials({ id: "", password: "", role: "student" });
+    setProfileOpen(false);
+    setProfileView("details");
+    setProfile(null);
+    setMyPwRequests([]);
+    setPwRequests([]);
+    setPwForm({ newPassword: "", confirm: "", reason: "" });
   }
 
   if (!user)
@@ -228,13 +322,22 @@ function App() {
             <strong>HelpDesk</strong>
           </span>
         </div>
-        <div className="sidebar-user">
+        <button
+          type="button"
+          className="sidebar-user"
+          onClick={openProfile}
+          title="View profile"
+        >
           <span className="avatar">{user.name.charAt(0)}</span>
           <div>
             <strong>{user.name}</strong>
             <span>{user.roleName}</span>
           </div>
-        </div>
+          <span className="profile-chevron" aria-hidden="true">›</span>
+          {latestPwRequest?.status === "Pending" && (
+            <span className="profile-dot" title="Password change request pending"></span>
+          )}
+        </button>
         <nav className="nav-list">
           {navFor[roleType].map(([id, icon, label]) => (
             <button
@@ -260,7 +363,10 @@ function App() {
         <header className="mobile-header">
           <span className="brand-mark">+</span>
           <strong>Campus HelpDesk</strong>
-          <button onClick={logout}>Log out</button>
+          <button className="mobile-profile" onClick={openProfile}>
+            {user.name.split(" ")[0]} · {user.roleName} ›
+          </button>
+          <button className="mobile-logout" onClick={logout}>Log out</button>
         </header>
         {page === "userDashboard" && (
           <UserDashboard
@@ -316,8 +422,31 @@ function App() {
           />
         )}
         {page === "usersPage" && <UsersPage />}
+        {page === "passwordRequestsPage" && (
+          <PasswordRequestsPage
+            requests={pwRequests}
+            currentUser={user}
+            showMessage={showMessage}
+            refreshData={refreshData}
+          />
+        )}
         {page === "activityLogPage" && <ActivityLog activities={activities} />}
       </main>
+      {profileOpen && (
+        <ProfileModal
+          user={user}
+          profile={profile}
+          view={profileView}
+          setView={setProfileView}
+          requests={myPwRequests}
+          pwForm={pwForm}
+          setPwForm={setPwForm}
+          submitting={pwSubmitting}
+          onSubmitRequest={submitPasswordChange}
+          onClose={() => setProfileOpen(false)}
+          onLogout={logout}
+        />
+      )}
       {modal && <Modal modal={modal} setModal={setModal} />}
     </div>
   );
@@ -403,9 +532,8 @@ function AuthScreen({
                     setCredentials({ ...credentials, id: value })
                   }
                 />
-                <Field
+                <PasswordField
                   label="Password"
-                  type="password"
                   placeholder="Enter your password"
                   value={credentials.password}
                   onChange={(value) =>
@@ -618,6 +746,231 @@ function Field({ label, type = "text", placeholder, value, onChange }) {
         required
       />
     </label>
+  );
+}
+function EyeButton({ visible, onToggle }) {
+  return (
+    <button
+      type="button"
+      className="eye-button"
+      onClick={onToggle}
+      aria-label={visible ? "Hide password" : "Show password"}
+      title={visible ? "Hide password" : "Show password"}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z" />
+        <circle cx="12" cy="12" r="3" />
+        {!visible && <line x1="4" y1="20" x2="20" y2="4" />}
+      </svg>
+    </button>
+  );
+}
+function PasswordField({ label, placeholder, value, onChange }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <label className="field-label">
+      {label}
+      <span className="password-input">
+        <input
+          type={visible ? "text" : "password"}
+          placeholder={placeholder}
+          value={value ?? ""}
+          onChange={(event) => onChange?.(event.target.value)}
+          required
+        />
+        <EyeButton visible={visible} onToggle={() => setVisible((v) => !v)} />
+      </span>
+    </label>
+  );
+}
+function RequestStatusBanner({ latest }) {
+  if (!latest) {
+    return (
+      <div className="pw-banner pw-banner-none">
+        No password change request yet. Choose <strong>Change password</strong> to
+        file one for the admin.
+      </div>
+    );
+  }
+  if (latest.status === "Pending") {
+    return (
+      <div className="pw-banner pw-banner-pending">
+        <strong>{latest.id} is pending.</strong> Waiting for the admin to accept
+        or decline your password change request.
+      </div>
+    );
+  }
+  if (latest.status === "Approved") {
+    return (
+      <div className="pw-banner pw-banner-approved">
+        <strong>{latest.id} accepted.</strong> Your password was changed
+        {latest.reviewedAt ? ` on ${latest.reviewedAt}` : ""}. Use the new
+        password the next time you log in.
+      </div>
+    );
+  }
+  return (
+    <div className="pw-banner pw-banner-rejected">
+      <strong>{latest.id} declined.</strong>
+      {latest.reviewNote
+        ? ` Reason: ${latest.reviewNote}`
+        : " The admin declined this password change request."}
+    </div>
+  );
+}
+function ChangePasswordForm({ pwForm, setPwForm, submitting, onSubmitRequest, onBack }) {
+  return (
+    <form className="profile-form" onSubmit={onSubmitRequest}>
+      <button type="button" className="text-button profile-back" onClick={onBack}>
+        ← Back to profile
+      </button>
+      <div className="modal-icon">🔑</div>
+      <h3>Change password</h3>
+      <p>
+        File a password change request. The admin will review it before your
+        password is updated.
+      </p>
+      <PasswordField
+        label="New password"
+        placeholder="At least 6 characters"
+        value={pwForm.newPassword}
+        onChange={(value) => setPwForm((current) => ({ ...current, newPassword: value }))}
+      />
+      <PasswordField
+        label="Confirm new password"
+        placeholder="Re-type the new password"
+        value={pwForm.confirm}
+        onChange={(value) => setPwForm((current) => ({ ...current, confirm: value }))}
+      />
+      <label className="field-label">
+        Reason (optional)
+        <textarea
+          placeholder="Why do you need a password change?"
+          value={pwForm.reason}
+          onChange={(event) =>
+            setPwForm((current) => ({ ...current, reason: event.target.value }))
+          }
+        />
+      </label>
+      <button
+        className="button button-primary full-width"
+        type="submit"
+        disabled={submitting}
+      >
+        {submitting ? "Submitting..." : "Send request to admin"} <span>→</span>
+      </button>
+    </form>
+  );
+}
+function ProfileModal({
+  user,
+  profile,
+  view,
+  setView,
+  requests,
+  pwForm,
+  setPwForm,
+  submitting,
+  onSubmitRequest,
+  onClose,
+  onLogout,
+}) {
+  const [showPassword, setShowPassword] = useState(false);
+  const latest = requests[0] || null;
+  const isPending = latest?.status === "Pending";
+  const password = profile?.password || "••••••";
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal-box profile-modal"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          type="button"
+          className="modal-close"
+          onClick={onClose}
+          aria-label="Close profile"
+        >
+          ×
+        </button>
+        {view === "details" ? (
+          <>
+            <div className="profile-avatar">{user.name.charAt(0)}</div>
+            <h3>{profile?.name || user.name}</h3>
+            <span className="profile-role">{user.roleName}</span>
+            <div className="profile-details">
+              <div>
+                <span>ID number</span>
+                <strong>{profile?.id || user.id}</strong>
+              </div>
+              <div>
+                <span>Email</span>
+                <strong>{profile?.email || "Not provided"}</strong>
+              </div>
+              <div className="profile-password">
+                <span>Password</span>
+                <strong className="profile-password-value">
+                  {showPassword ? password : "••••••••"}
+                </strong>
+                <EyeButton
+                  visible={showPassword}
+                  onToggle={() => setShowPassword((value) => !value)}
+                />
+              </div>
+            </div>
+            <RequestStatusBanner latest={latest} />
+            <div className="profile-actions">
+              <button
+                type="button"
+                className="button button-primary full-width"
+                onClick={() => setView("changePassword")}
+                disabled={isPending}
+              >
+                {isPending ? "Request pending approval" : "Change password"}
+              </button>
+              <button
+                type="button"
+                className="button button-outline full-width"
+                onClick={onLogout}
+              >
+                Log out
+              </button>
+            </div>
+            {requests.length > 0 && (
+              <div className="profile-history">
+                <span className="eyebrow">PASSWORD REQUEST HISTORY</span>
+                <ul>
+                  {requests.slice(0, 4).map((item) => (
+                    <li key={item.id}>
+                      <strong>{item.id}</strong>
+                      <span>{item.requestedAt}</span>
+                      <Status value={item.status} />
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </>
+        ) : (
+          <ChangePasswordForm
+            pwForm={pwForm}
+            setPwForm={setPwForm}
+            submitting={submitting}
+            onSubmitRequest={onSubmitRequest}
+            onBack={() => setView("details")}
+          />
+        )}
+      </div>
+    </div>
   );
 }
 function PageHeader({ eyebrow, title, description, action }) {
@@ -959,6 +1312,12 @@ function AdminDashboard({ type, setPage, tickets = [], users = [] }) {
             <small>View registered users</small>
             <span className="action-arrow" aria-label="Open users">↗</span>
           </button>
+          <button type="button" onClick={() => setPage("passwordRequestsPage")}>
+            <span>🔑</span>
+            <strong>Password requests</strong>
+            <small>Accept or decline change requests</small>
+            <span className="action-arrow" aria-label="Open password requests">↗</span>
+          </button>
           {type === "super" && (
             <button type="button" onClick={() => setPage("activityLogPage")}>
               <span>◷</span>
@@ -1278,6 +1637,183 @@ function ManageRequests({
             <button className="button button-primary" onClick={() => setViewDialog(null)}>
               Close
             </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+function PasswordRequestsPage({ requests = [], currentUser, showMessage, refreshData }) {
+  const [action, setAction] = useState(null);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const pendingCount = requests.filter((item) => item.status === "Pending").length;
+
+  function openAction(mode, request) {
+    setNote("");
+    setAction({ mode, id: request.id, userName: request.userName });
+  }
+
+  async function confirmAction() {
+    if (!action || busy) return;
+    setBusy(true);
+    try {
+      await api.resolvePasswordRequest(action.id, {
+        status: action.mode === "approve" ? "Approved" : "Rejected",
+        note,
+        reviewedBy: currentUser.userId,
+      });
+      showMessage(
+        action.mode === "approve" ? "Request accepted" : "Request declined",
+        action.mode === "approve"
+          ? `${action.id} was accepted and the account password was updated.`
+          : `${action.id} was declined. The user can file a new request.`,
+      );
+      setAction(null);
+      setNote("");
+      refreshData();
+    } catch (error) {
+      showMessage("Could not update request", error.message || "Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="SECURITY / 04"
+        title="Password requests"
+        description="Accept or decline password change requests filed by students and employees."
+        action={<span className="table-count">{pendingCount} pending</span>}
+      />
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <span className="eyebrow">CHANGE PASSWORD</span>
+            <h2>Request queue</h2>
+          </div>
+          <span className="table-count">{requests.length} total</span>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Request</th>
+                <th>User</th>
+                <th>ID</th>
+                <th>Role</th>
+                <th>Reason</th>
+                <th>Requested</th>
+                <th>Status</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {requests.length === 0 && (
+                <tr>
+                  <td colSpan="8">No password change requests yet.</td>
+                </tr>
+              )}
+              {requests.map((item) => (
+                <tr key={item.id}>
+                  <td>
+                    <strong>{item.id}</strong>
+                  </td>
+                  <td>{item.userName}</td>
+                  <td>{item.userNumber}</td>
+                  <td>{item.userRole}</td>
+                  <td className="cell-note" title={item.reason || ""}>
+                    {item.reason || "—"}
+                  </td>
+                  <td>{item.requestedAt}</td>
+                  <td>
+                    <Status value={item.status} />
+                    {item.reviewNote && (
+                      <div className="review-note">Note: {item.reviewNote}</div>
+                    )}
+                    {item.reviewedBy && item.reviewedAt && (
+                      <div className="review-note">
+                        {item.reviewedBy} · {item.reviewedAt}
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    <div className="inline-actions">
+                      <button
+                        className="table-button"
+                        disabled={item.status !== "Pending"}
+                        onClick={() => openAction("approve", item)}
+                      >
+                        {item.status === "Approved" ? "Accepted" : "Accept"}
+                      </button>
+                      <button
+                        className="table-button light"
+                        disabled={item.status !== "Pending"}
+                        onClick={() => openAction("decline", item)}
+                      >
+                        {item.status === "Rejected" ? "Declined" : "Decline"}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {action && (
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            if (!busy) setAction(null);
+          }}
+        >
+          <div
+            className="modal-box"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-icon">{action.mode === "approve" ? "✓" : "!"}</div>
+            <h3>{action.mode === "approve" ? "Accept request?" : "Decline request?"}</h3>
+            <p>
+              {action.mode === "approve"
+                ? `Accept ${action.id} from ${action.userName}? Their account password will be updated immediately.`
+                : `Decline ${action.id} from ${action.userName}? They can file a new request afterwards.`}
+            </p>
+            {action.mode === "decline" && (
+              <label className="field-label dialog-note">
+                Note for the user (optional)
+                <input
+                  type="text"
+                  placeholder="e.g. Visit the IT office for verification"
+                  value={note}
+                  onChange={(event) => setNote(event.target.value)}
+                />
+              </label>
+            )}
+            <div className="dialog-actions">
+              <button
+                type="button"
+                className="button button-primary"
+                disabled={busy}
+                onClick={confirmAction}
+              >
+                {busy
+                  ? "Working..."
+                  : action.mode === "approve"
+                    ? "Accept request"
+                    : "Decline request"}
+              </button>
+              <button
+                type="button"
+                className="text-button"
+                disabled={busy}
+                onClick={() => setAction(null)}
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         </div>
       )}

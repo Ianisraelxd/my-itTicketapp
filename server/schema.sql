@@ -13,6 +13,7 @@ USE helpdesk;
 
 -- Drop in dependency order so re-running the script is safe.
 DROP TABLE IF EXISTS activities;
+DROP TABLE IF EXISTS password_requests;
 DROP TABLE IF EXISTS tickets;
 DROP TABLE IF EXISTS users;
 
@@ -49,6 +50,27 @@ CREATE TABLE activities (
   actor_role  VARCHAR(120) NOT NULL,
   action      VARCHAR(255) NOT NULL,
   created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Users file a "ticket" asking an admin to change their password. The admin
+-- approves or declines it; on approval the account password is updated.
+-- NOTE: new_password is stored in plaintext to match the users.password
+-- prototype above. Hash it (bcrypt) before any real deployment.
+CREATE TABLE password_requests (
+  request_pk   INT AUTO_INCREMENT PRIMARY KEY,
+  code         VARCHAR(16)  NOT NULL UNIQUE,      -- e.g. #PW001
+  user_pk      INT          NOT NULL,
+  new_password VARCHAR(255) NOT NULL,
+  reason       VARCHAR(500) NULL,
+  status       VARCHAR(20)  NOT NULL DEFAULT 'Pending', -- Pending | Approved | Rejected
+  review_note  VARCHAR(500) NULL,
+  reviewed_by  INT NULL,
+  created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  reviewed_at  TIMESTAMP NULL,
+  CONSTRAINT fk_pwreq_user FOREIGN KEY (user_pk)
+    REFERENCES users(user_pk) ON DELETE CASCADE,
+  CONSTRAINT fk_pwreq_reviewer FOREIGN KEY (reviewed_by)
+    REFERENCES users(user_pk) ON DELETE SET NULL
 );
 
 -- ---------------------------------------------------------------------------

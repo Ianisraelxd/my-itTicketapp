@@ -848,6 +848,329 @@ td strong {
     line-height: 1.6
 }
 
+/* --- Clickable profile panel + password change --------------------------- */
+button.sidebar-user {
+    width: 100%;
+    position: relative;
+    border-left: 0;
+    border-right: 0;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background .2s
+}
+
+button.sidebar-user:hover {
+    background: #ffffff1a
+}
+
+button.sidebar-user:focus-visible {
+    outline: 2px solid #bbd887;
+    outline-offset: -2px
+}
+
+.sidebar-user .profile-chevron {
+    margin-left: auto;
+    font-size: 18px;
+    line-height: 1;
+    color: #9bb8ad
+}
+
+.sidebar-user .profile-dot {
+    position: absolute;
+    top: 9px;
+    right: 9px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #d89e38;
+    box-shadow: 0 0 0 2px var(--green-dark)
+}
+
+.mobile-header .mobile-profile {
+    margin-left: auto;
+    color: var(--green-dark)
+}
+
+.mobile-header .mobile-logout {
+    margin-left: 14px
+}
+
+.profile-modal {
+    position: relative;
+    width: min(100%, 395px);
+    padding: 34px 30px 30px
+}
+
+.modal-close {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--muted);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer
+}
+
+.modal-close:hover {
+    background: var(--mint);
+    color: var(--green)
+}
+
+.profile-avatar {
+    width: 64px;
+    height: 64px;
+    display: grid;
+    place-items: center;
+    margin: 0 auto 14px;
+    border-radius: 50%;
+    background: var(--mint);
+    color: var(--green);
+    font: 700 25px Manrope, sans-serif
+}
+
+.profile-modal h3 {
+    margin: 0 0 7px
+}
+
+.profile-role {
+    display: inline-block;
+    padding: 4px 11px;
+    margin-bottom: 18px;
+    border-radius: 999px;
+    background: var(--mint);
+    color: var(--green);
+    font: 700 9px Manrope, sans-serif;
+    letter-spacing: 1px;
+    text-transform: uppercase
+}
+
+.profile-details {
+    text-align: left;
+    border-top: 1px solid var(--line);
+    margin-bottom: 16px
+}
+
+.profile-details > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 11px 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 12px
+}
+
+.profile-details span {
+    color: var(--muted);
+    font-size: 11px;
+    flex: 0 0 auto
+}
+
+.profile-details strong {
+    color: var(--ink);
+    font-weight: 600;
+    text-align: right;
+    word-break: break-word
+}
+
+.profile-password .profile-password-value {
+    margin-left: auto;
+    letter-spacing: 2px
+}
+
+.profile-password .eye-button {
+    flex: 0 0 auto
+}
+
+.pw-banner {
+    padding: 11px 13px;
+    margin-bottom: 16px;
+    border-radius: 6px;
+    text-align: left;
+    font-size: 11px;
+    line-height: 1.55
+}
+
+.pw-banner-none {
+    background: #f0f4f1;
+    color: var(--muted)
+}
+
+.pw-banner-pending {
+    background: #fbf2e0;
+    color: #8a6420
+}
+
+.pw-banner-approved {
+    background: #e6f2ea;
+    color: #2c6b41
+}
+
+.pw-banner-rejected {
+    background: #fbeae7;
+    color: #a4472f
+}
+
+.profile-actions {
+    display: grid;
+    gap: 10px
+}
+
+.button-outline {
+    background: #fff;
+    color: var(--ink);
+    border: 1px solid var(--line)
+}
+
+.button-outline:hover {
+    background: #f0f4f1
+}
+
+.button:disabled {
+    background: #cfd8d3;
+    color: #7b8a83;
+    border-color: transparent;
+    cursor: not-allowed;
+    transform: none
+}
+
+.profile-history {
+    margin-top: 20px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+    text-align: left
+}
+
+.profile-history ul {
+    list-style: none;
+    margin: 10px 0 0;
+    padding: 0;
+    display: grid;
+    gap: 8px
+}
+
+.profile-history li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 11px;
+    color: var(--muted)
+}
+
+.profile-history li strong {
+    color: var(--ink)
+}
+
+.profile-history li span {
+    margin-right: auto
+}
+
+.profile-form h3 {
+    margin: 0 0 8px
+}
+
+.profile-form p {
+    margin: 0 0 18px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.6
+}
+
+.profile-form textarea {
+    min-height: 78px
+}
+
+.profile-back {
+    display: block;
+    margin: 0 0 16px
+}
+
+.password-input {
+    display: block;
+    position: relative;
+    margin-top: 8px
+}
+
+.password-input input {
+    margin-top: 0;
+    padding-right: 42px
+}
+
+.eye-button {
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: #eef3f0;
+    color: #55645d;
+    cursor: pointer;
+    transition: background .2s, color .2s
+}
+
+.eye-button:hover {
+    background: var(--mint);
+    color: var(--green)
+}
+
+.eye-button svg {
+    width: 15px;
+    height: 15px
+}
+
+.password-input .eye-button {
+    position: absolute;
+    top: 50%;
+    right: 8px;
+    transform: translateY(-50%)
+}
+
+.status-approved i {
+    background: #6ea373
+}
+
+.status-rejected i {
+    background: #d08374
+}
+
+.cell-note {
+    max-width: 190px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis
+}
+
+.review-note {
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 10px
+}
+
+.dialog-note {
+    text-align: left
+}
+
+.dialog-actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px
+}
+
+.dialog-actions .text-button {
+    margin-top: 0
+}
+
 @media(max-width:920px) {
     .auth-page {
         grid-template-columns: 1fr

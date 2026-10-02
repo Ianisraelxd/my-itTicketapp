@@ -45,4 +45,23 @@ export const api = {
     request("/activities", { method: "POST", body: JSON.stringify(activity) }),
 
   getUsers: () => request("/users"),
+
+  getProfile: (userId) =>
+    request(`/profile/${encodeURIComponent(userId)}`),
+
+  getPasswordRequests: (params = {}) => {
+    const query = new URLSearchParams();
+    if (params.userId) query.set("userId", String(params.userId));
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return request(`/password-requests${suffix}`);
+  },
+
+  requestPasswordChange: (payload) =>
+    request("/password-requests", { method: "POST", body: JSON.stringify(payload) }),
+
+  resolvePasswordRequest: (code, payload) =>
+    request(`/password-requests/${encodeURIComponent(code)}/status`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
 };
