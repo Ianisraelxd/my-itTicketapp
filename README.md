@@ -40,11 +40,12 @@ The project ships in two forms:
 - **Activity log** — records logins and ticket actions, persisted server-side.
 - **Technician skills & recommendations** — admins assign skills (Hardware, Software, Network / Internet, Account / Login, Printer) to each technician. A technician's queue lists matching tickets first with a "Recommended" badge; out-of-skill tickets still show, but resolving one asks for confirmation with an "at your own risk" warning.
 - **Required ticket category** — requesters must pick the problem type (e.g. Hardware or Software) when submitting.
-- **Ticket chat & smart cancellation** — requesters and technicians can talk inside a ticket. Requesters can cancel directly while a ticket is waiting; once it is In Progress they send a cancellation request into the chat for the technician to handle.
+- **Ticket chat & cancellation requests** — requesters and technicians can talk inside a ticket. Requesters can't cancel on their own: they send a cancellation request with a reason, and an admin accepts or rejects it from Manage Requests.
+- **Notifications** — a Notifications page (with an unread badge and pop-up toasts) tells requesters when a technician is assigned or their problem is fixed, tells technicians about assignments, messages and cancelled tickets, and tells admins about new requests, cancellation requests and password requests.
 - **Admin / technician chat** — a Facebook-style chat dock (bottom-right) lets admins and technicians message each other. Every message shows the sender's name and role. Other roles can't use it.
 - **Super Admin reporting** — Dashboard with KPIs, a Report Manager (charts, location heat map, filters by category, time range and role) and full Activity Log Reports.
 - **Responsive layout** — sidebar on desktop, icon rail on tablets, bottom tab bar on phones, with animations that respect reduced-motion settings.
-- **Login sound** — plays after a successful login or signup.
+- **Sound effects** — login, signup, message sent, message received and new-notification sounds (helper in `src/sounds.js`, files in `public/sounds/`).
 
 ---
 
@@ -64,7 +65,7 @@ The project ships in two forms:
 
 ```
 my-react-app/
-├─ public/                 # Static assets served as-is (incl. login-sound.mp3)
+├─ public/                 # Static assets served as-is (sound effects in sounds/)
 ├─ server/                 # Express + MySQL backend
 │  ├─ db.js                # MySQL connection pool + query helper
 │  ├─ index.js             # API server and routes
@@ -172,8 +173,13 @@ Base path: `/api` (proxied to `http://localhost:3001` in development).
 | GET | `/api/tickets` | List tickets (newest first); `?mine=1&userId=` limits to one requester. Includes `location` and `createdAt`. |
 | POST | `/api/tickets` | Create a ticket. Body: `{ subject, category, priority, location?, description?, createdBy? }`. |
 | PATCH | `/api/tickets/:id/status` | Set status to Open, In Progress or Resolved. |
-| PUT | `/api/tickets/:id/cancel` | Owner cancels their own ticket; only while Open/Pending/Approved/Assigned (409 otherwise). Body: `{ userId }`. |
-| GET / POST | `/api/tickets/:id/messages` | Ticket conversation. POST body: `{ userId, text, kind? }`; `kind: "cancellation_request"` is for In Progress tickets (owner only). |
+| PATCH | `/api/tickets/:id/assign` | Admin only. Body: `{ actorId, technicianId }`; sets the technician and moves the ticket to In Progress. |
+| GET / POST | `/api/tickets/:id/messages` | Ticket conversation. POST body: `{ userId, text }`. |
+| POST / GET | `/api/tickets/:id/cancellation-requests` | Owner files a cancellation request (`{ userId, reason }`) / lists the ticket's requests. |
+| GET | `/api/cancellation-requests?userId=` | Admin queue of all cancellation requests. |
+| PATCH | `/api/cancellation-requests/:code/status` | Admin accepts (ticket becomes Cancelled) or rejects. Body: `{ actorId, status, note? }`. |
+| GET | `/api/notifications?userId=` | Latest notifications and unread count. |
+| POST | `/api/notifications/read` | Mark notifications read. Body: `{ userId, ids? }` (all when `ids` is omitted). |
 | GET / POST | `/api/activities` | List or add activity log entries. |
 | GET | `/api/users` | List users, including each technician's `skills`. |
 | PATCH | `/api/users/:userId/skills` | Admin only. Body: `{ actorId, skills: [...] }`. |
@@ -191,16 +197,18 @@ All queries use parameterized statements to guard against SQL injection.
 
 ## Database schema
 
-The `helpdesk` database contains six tables (see `server/schema.sql` for full definitions):
+The `helpdesk` database contains eight tables (see `server/schema.sql` for full definitions):
 
 - **`users`** — accounts with `id_number`, `password`, `name`, `role`, `role_name`, `email`, and `skills` (comma-separated ticket categories, used for technicians).
 - **`tickets`** — support requests with a unique `code` (e.g. `#HD001`), `subject`, `category`, `priority`, `status`, and optional `location`/`description`. Links back to `users` via `created_by`.
 - **`activities`** — audit log of actor name, role, action, and timestamp.
 - **`password_requests`** — password-change requests awaiting admin approval.
 - **`ticket_messages`** — per-ticket conversation, including cancellation requests (`kind`).
+- **`cancellation_requests`** — requester-initiated cancellation requests awaiting an admin decision.
+- **`notifications`** — per-user in-app notifications with a read timestamp.
 - **`messages`** — chat messages between admins and technicians, with a read timestamp.
 
-Re-running `schema.sql` drops and recreates the tables, restoring the seed data. If you already have a database from an earlier version, add the new pieces by hand instead (an `ALTER TABLE users ADD COLUMN skills ...` and the `messages` table from `schema.sql`) to avoid losing data.
+Re-running `schema.sql` drops and recreates the tables, restoring the seed data. If you already have a database from an earlier version, add the new pieces by hand instead (`ALTER TABLE users ADD COLUMN skills ...`, `ALTER TABLE tickets ADD COLUMN assigned_to ...`, and the `messages`, `ticket_messages`, `cancellation_requests` and `notifications` tables from `schema.sql`) to avoid losing data.
 
 ---
 

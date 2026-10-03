@@ -12,6 +12,8 @@ CREATE DATABASE IF NOT EXISTS helpdesk
 USE helpdesk;
 
 -- Drop in dependency order so re-running the script is safe.
+DROP TABLE IF EXISTS notifications;
+DROP TABLE IF EXISTS cancellation_requests;
 DROP TABLE IF EXISTS ticket_messages;
 DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS activities;
@@ -42,6 +44,7 @@ CREATE TABLE tickets (
   location    VARCHAR(160) NULL,
   description TEXT NULL,
   created_by  INT NULL,
+  assigned_to INT NULL,                      -- technician assigned by an admin
   created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_ticket_user FOREIGN KEY (created_by)
     REFERENCES users(user_pk) ON DELETE SET NULL
@@ -117,9 +120,40 @@ CREATE TABLE ticket_messages (
   ticket_pk    INT NOT NULL,
   sender_pk    INT NOT NULL,
   message_text VARCHAR(1000) NOT NULL,
-  kind         VARCHAR(24)   NOT NULL DEFAULT 'chat',  -- chat | cancellation_request
+  kind         VARCHAR(24)   NOT NULL DEFAULT 'chat',  -- chat | cancellation_request | cancellation_decision
   created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   KEY idx_ticket_msg (ticket_pk, message_pk),
   CONSTRAINT fk_tmsg_ticket FOREIGN KEY (ticket_pk) REFERENCES tickets(ticket_pk) ON DELETE CASCADE,
   CONSTRAINT fk_tmsg_sender FOREIGN KEY (sender_pk) REFERENCES users(user_pk) ON DELETE CASCADE
+);
+
+-- Requesters cannot cancel directly; they file a request an admin approves or rejects.
+CREATE TABLE cancellation_requests (
+  request_pk   INT AUTO_INCREMENT PRIMARY KEY,
+  code         VARCHAR(16)  NOT NULL UNIQUE,      -- e.g. #CR001
+  ticket_pk    INT NOT NULL,
+  requested_by INT NOT NULL,
+  reason       VARCHAR(500) NOT NULL,
+  status       VARCHAR(20)  NOT NULL DEFAULT 'Pending', -- Pending | Approved | Rejected
+  review_note  VARCHAR(500) NULL,
+  reviewed_by  INT NULL,
+  created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  reviewed_at  TIMESTAMP NULL,
+  CONSTRAINT fk_cr_ticket FOREIGN KEY (ticket_pk) REFERENCES tickets(ticket_pk) ON DELETE CASCADE,
+  CONSTRAINT fk_cr_requester FOREIGN KEY (requested_by) REFERENCES users(user_pk) ON DELETE CASCADE,
+  CONSTRAINT fk_cr_reviewer FOREIGN KEY (reviewed_by) REFERENCES users(user_pk) ON DELETE SET NULL
+);
+
+-- In-app notifications (ticket updates, assignments, cancellation decisions, ...).
+CREATE TABLE notifications (
+  notification_pk INT AUTO_INCREMENT PRIMARY KEY,
+  user_pk         INT NOT NULL,
+  type            VARCHAR(32)  NOT NULL,
+  title           VARCHAR(160) NOT NULL,
+  body            VARCHAR(400) NOT NULL,
+  ticket_code     VARCHAR(16)  NULL,
+  created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  read_at         TIMESTAMP NULL,
+  KEY idx_notif_user (user_pk, notification_pk),
+  CONSTRAINT fk_notif_user FOREIGN KEY (user_pk) REFERENCES users(user_pk) ON DELETE CASCADE
 );

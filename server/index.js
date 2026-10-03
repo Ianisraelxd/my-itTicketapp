@@ -10,6 +10,26 @@ const PORT = Number(process.env.PORT) || 3001;
 // Wrap async route handlers so thrown errors reach the error middleware.
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
+// Notifications never break the action that triggered them.
+async function notify(userIds, { type, title, body, ticketCode = null }) {
+  const targets = [...new Set((userIds || []).filter(Boolean))];
+  for (const userId of targets) {
+    try {
+      await query(
+        "INSERT INTO notifications (user_pk, type, title, body, ticket_code) VALUES (?, ?, ?, ?, ?)",
+        [userId, type, title, body, ticketCode],
+      );
+    } catch (err) {
+      console.error("notify failed", err.message);
+    }
+  }
+}
+
+async function adminIds() {
+  const rows = await query("SELECT user_pk FROM users WHERE role = 'admin'");
+  return rows.map((row) => row.user_pk);
+}
+
 // --- Health check ----------------------------------------------------------
 app.get("/api/health", wrap(async (_req, res) => {
   await query("SELECT 1");
@@ -88,21 +108,21 @@ app.get("/api/tickets", wrap(async (req, res) => {
 
   if (mine === "1" && userId) {
     const rows = await query(
-      "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.created_at AS createdAt, t.created_by, u.name AS userName, u.role_name AS userRole FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by WHERE t.created_by = ? ORDER BY t.ticket_pk DESC",
+      "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, u.name AS userName, u.role_name AS userRole FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by WHERE t.created_by = ? ORDER BY t.ticket_pk DESC",
       [userId],
     );
     return res.json(rows);
   }
 
   const rows = await query(
-    "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.created_at AS createdAt, t.created_by, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by ORDER BY t.ticket_pk DESC",
+    "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by ORDER BY t.ticket_pk DESC",
   );
   res.json(rows);
 }));
 
 app.patch("/api/tickets/:id/status", wrap(async (req, res) => {
   const { id } = req.params;
-  const { status } = req.body ?? {};
+  const { status, actorId } = req.body ?? {};
   if (!status) {
     return res.status(400).json({ error: "status is required." });
   }
@@ -112,7 +132,36 @@ app.patch("/api/tickets/:id/status", wrap(async (req, res) => {
     return res.status(400).json({ error: "status must be Open, In Progress, or Resolved." });
   }
 
-  await query("UPDATE tickets SET status = ? WHERE code = ?", [status, id]);
+  const tickets = await query(
+    "SELECT ticket_pk, code, subject, status, created_by FROM tickets WHERE code = ? LIMIT 1",
+    [id],
+  );
+  const ticket = tickets[0];
+  if (!ticket) return res.status(404).json({ error: "Ticket not found." });
+  if (ticket.status === "Cancelled") {
+    return res.status(409).json({ error: "This ticket was cancelled and cannot be changed." });
+  }
+
+  await query("UPDATE tickets SET status = ? WHERE ticket_pk = ?", [status, ticket.ticket_pk]);
+
+  // Keep the requester in the loop.
+  if (ticket.status !== status && ticket.created_by !== actorId) {
+    if (status === "Resolved") {
+      await notify([ticket.created_by], {
+        type: "resolved",
+        title: "Your problem has been fixed",
+        body: `${ticket.code}: ${ticket.subject} was marked as resolved.`,
+        ticketCode: ticket.code,
+      });
+    } else {
+      await notify([ticket.created_by], {
+        type: "status",
+        title: `Request is now ${status}`,
+        body: `${ticket.code}: ${ticket.subject}`,
+        ticketCode: ticket.code,
+      });
+    }
+  }
   res.json({ ok: true, id, status });
 }));
 
@@ -132,6 +181,13 @@ app.post("/api/tickets", wrap(async (req, res) => {
       [code, subject, category, priority, location ?? null, description ?? null, createdBy ?? null],
     );
     await conn.commit();
+    const submitters = await query("SELECT name FROM users WHERE user_pk = ?", [createdBy ?? 0]);
+    await notify(await adminIds(), {
+      type: "new_ticket",
+      title: "New request submitted",
+      body: `${submitters[0]?.name || "A user"} filed ${code} (${category}): ${subject}`,
+      ticketCode: code,
+    });
     res.status(201).json({ id: code, subject, category, priority, status: "Open" });
   } catch (err) {
     await conn.rollback();
@@ -141,15 +197,13 @@ app.post("/api/tickets", wrap(async (req, res) => {
   }
 }));
 
-// --- Ticket cancellation + in-ticket messaging ---------------------------------
-// The app's "new" status is 'Open', which plays the role of Pending here.
-const DIRECT_CANCEL_STATUSES = ["Pending", "Approved", "Assigned", "Open"];
+// --- Ticket assignment, messaging, and cancellation requests -------------------
 const CLOSED_STATUSES = ["Resolved", "Done", "Closed", "Cancelled"];
 const TICKET_STAFF_ROLES = ["technician", "admin", "superadmin"];
 
 async function ticketAccess(code, userId) {
   const tickets = await query(
-    "SELECT ticket_pk, code, status, created_by FROM tickets WHERE code = ? LIMIT 1",
+    "SELECT ticket_pk, code, subject, status, created_by, assigned_to FROM tickets WHERE code = ? LIMIT 1",
     [code],
   );
   const users = await query(
@@ -167,36 +221,57 @@ async function ticketAccess(code, userId) {
   return { ticket, user, isOwner };
 }
 
-// Direct cancellation. The status condition lives in the UPDATE itself so two
-// concurrent requests (e.g. cancel vs. technician picking it up) cannot both win.
-app.put("/api/tickets/:id/cancel", wrap(async (req, res) => {
-  const access = await ticketAccess(req.params.id, req.body?.userId);
-  if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
-  const { ticket, user, isOwner } = access;
-  if (!isOwner) {
-    return res.status(403).json({ error: "Only the person who submitted the ticket can cancel it." });
-  }
-  const placeholders = DIRECT_CANCEL_STATUSES.map(() => "?").join(", ");
+async function requireAdmin(userId) {
+  const rows = await query(
+    "SELECT user_pk, name, role, role_name FROM users WHERE user_pk = ? LIMIT 1",
+    [userId ?? 0],
+  );
+  return rows[0] && rows[0].role === "admin" ? rows[0] : null;
+}
+
+// Admin assigns a technician: records who, and moves the ticket to In Progress.
+app.patch("/api/tickets/:id/assign", wrap(async (req, res) => {
+  const { actorId, technicianId } = req.body ?? {};
+  const admin = await requireAdmin(actorId);
+  if (!admin) return res.status(403).json({ error: "Only admins can assign tickets." });
+  const technicians = await query(
+    "SELECT user_pk, name FROM users WHERE user_pk = ? AND role = 'technician' LIMIT 1",
+    [technicianId ?? 0],
+  );
+  const technician = technicians[0];
+  if (!technician) return res.status(404).json({ error: "Technician not found." });
+  const tickets = await query(
+    "SELECT ticket_pk, code, subject, created_by FROM tickets WHERE code = ? LIMIT 1",
+    [req.params.id],
+  );
+  const ticket = tickets[0];
+  if (!ticket) return res.status(404).json({ error: "Ticket not found." });
+
+  const placeholders = CLOSED_STATUSES.map(() => "?").join(", ");
   const [result] = await pool.execute(
-    `UPDATE tickets SET status = 'Cancelled' WHERE ticket_pk = ? AND created_by = ? AND status IN (${placeholders})`,
-    [ticket.ticket_pk, user.user_pk, ...DIRECT_CANCEL_STATUSES],
+    `UPDATE tickets SET assigned_to = ?, status = 'In Progress' WHERE ticket_pk = ? AND status NOT IN (${placeholders})`,
+    [technician.user_pk, ticket.ticket_pk, ...CLOSED_STATUSES],
   );
   if (result.affectedRows === 0) {
-    const latest = await query("SELECT status FROM tickets WHERE ticket_pk = ?", [ticket.ticket_pk]);
-    const status = latest[0]?.status;
-    return res.status(409).json({
-      error:
-        status === "In Progress"
-          ? "This ticket is already in progress. Send a cancellation request instead."
-          : `This ticket is ${status} and can no longer be cancelled.`,
-      status,
-    });
+    return res.status(409).json({ error: "This ticket is already finished and cannot be assigned." });
   }
+  await notify([technician.user_pk], {
+    type: "assigned",
+    title: "New ticket assigned to you",
+    body: `${ticket.code}: ${ticket.subject}`,
+    ticketCode: ticket.code,
+  });
+  await notify([ticket.created_by], {
+    type: "in_progress",
+    title: "A technician is on your request",
+    body: `${technician.name} was assigned to ${ticket.code}: ${ticket.subject}`,
+    ticketCode: ticket.code,
+  });
   await query(
     "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
-    [user.name, user.role_name, `Cancelled ticket ${ticket.code}`],
+    [admin.name, admin.role_name, `Assigned ${ticket.code} to ${technician.name}`],
   );
-  res.json({ ok: true, id: ticket.code, status: "Cancelled" });
+  res.json({ ok: true, id: ticket.code, status: "In Progress", assignedTo: technician.user_pk });
 }));
 
 app.get("/api/tickets/:id/messages", wrap(async (req, res) => {
@@ -213,39 +288,228 @@ app.get("/api/tickets/:id/messages", wrap(async (req, res) => {
 }));
 
 app.post("/api/tickets/:id/messages", wrap(async (req, res) => {
-  const { userId, text, kind } = req.body ?? {};
-  const access = await ticketAccess(req.params.id, userId);
+  const access = await ticketAccess(req.params.id, req.body?.userId);
   if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
   const { ticket, user, isOwner } = access;
-  const body = String(text ?? "").trim().slice(0, 1000);
+  const body = String(req.body?.text ?? "").trim().slice(0, 1000);
   if (!body) return res.status(400).json({ error: "Message cannot be empty." });
-
-  const messageKind = kind === "cancellation_request" ? "cancellation_request" : "chat";
-  if (messageKind === "cancellation_request") {
-    if (!isOwner) {
-      return res.status(403).json({ error: "Only the ticket owner can request cancellation." });
-    }
-    if (ticket.status !== "In Progress") {
-      return res.status(409).json({
-        error: "Cancellation requests are only for tickets that are in progress.",
-        status: ticket.status,
-      });
-    }
-  } else if (CLOSED_STATUSES.includes(ticket.status)) {
+  if (CLOSED_STATUSES.includes(ticket.status)) {
     return res.status(409).json({ error: `This ticket is ${ticket.status}; the chat is closed.` });
   }
-
   const [result] = await pool.execute(
-    "INSERT INTO ticket_messages (ticket_pk, sender_pk, message_text, kind) VALUES (?, ?, ?, ?)",
-    [ticket.ticket_pk, user.user_pk, body, messageKind],
+    "INSERT INTO ticket_messages (ticket_pk, sender_pk, message_text, kind) VALUES (?, ?, ?, 'chat')",
+    [ticket.ticket_pk, user.user_pk, body],
   );
-  if (messageKind === "cancellation_request") {
-    await query(
-      "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
-      [user.name, user.role_name, `Requested cancellation of ticket ${ticket.code}`],
-    );
-  }
+  // Tell the other side: the requester hears from staff, staff hear from the requester.
+  const recipient = isOwner ? ticket.assigned_to : ticket.created_by;
+  await notify([recipient], {
+    type: "message",
+    title: `New message on ${ticket.code}`,
+    body: `${user.name}: ${body.slice(0, 90)}`,
+    ticketCode: ticket.code,
+  });
   res.status(201).json({ ok: true, id: result.insertId });
+}));
+
+// Requesters never cancel directly: they file a request and an admin decides.
+app.post("/api/tickets/:id/cancellation-requests", wrap(async (req, res) => {
+  const access = await ticketAccess(req.params.id, req.body?.userId);
+  if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
+  const { ticket, user, isOwner } = access;
+  if (!isOwner) {
+    return res.status(403).json({ error: "Only the person who submitted the ticket can request cancellation." });
+  }
+  const reason = String(req.body?.reason ?? "").trim().slice(0, 500);
+  if (!reason) return res.status(400).json({ error: "Please give a reason." });
+  if (CLOSED_STATUSES.includes(ticket.status)) {
+    return res.status(409).json({ error: `This ticket is ${ticket.status} and can no longer be cancelled.` });
+  }
+  const pending = await query(
+    "SELECT code FROM cancellation_requests WHERE ticket_pk = ? AND status = 'Pending' LIMIT 1",
+    [ticket.ticket_pk],
+  );
+  if (pending.length > 0) {
+    return res.status(409).json({ error: `A cancellation request (${pending[0].code}) is already waiting for an admin.` });
+  }
+
+  const conn = await pool.getConnection();
+  let code;
+  try {
+    await conn.beginTransaction();
+    const [countRows] = await conn.execute("SELECT COUNT(*) AS n FROM cancellation_requests");
+    code = `#CR${String(countRows[0].n + 1).padStart(3, "0")}`;
+    await conn.execute(
+      "INSERT INTO cancellation_requests (code, ticket_pk, requested_by, reason) VALUES (?, ?, ?, ?)",
+      [code, ticket.ticket_pk, user.user_pk, reason],
+    );
+    await conn.execute(
+      "INSERT INTO ticket_messages (ticket_pk, sender_pk, message_text, kind) VALUES (?, ?, ?, 'cancellation_request')",
+      [ticket.ticket_pk, user.user_pk, `Cancellation Requested: ${reason}`],
+    );
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+
+  await notify(await adminIds(), {
+    type: "cancellation_requested",
+    title: "Cancellation request needs review",
+    body: `${user.name} asked to cancel ${ticket.code}: ${reason.slice(0, 80)}`,
+    ticketCode: ticket.code,
+  });
+  await notify([ticket.assigned_to], {
+    type: "cancellation_requested",
+    title: "Requester asked to cancel",
+    body: `${ticket.code} has a cancellation request awaiting an admin decision.`,
+    ticketCode: ticket.code,
+  });
+  await query(
+    "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
+    [user.name, user.role_name, `Requested cancellation of ticket ${ticket.code}`],
+  );
+  res.status(201).json({ ok: true, id: code, status: "Pending" });
+}));
+
+app.get("/api/tickets/:id/cancellation-requests", wrap(async (req, res) => {
+  const access = await ticketAccess(req.params.id, req.query.userId);
+  if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
+  const rows = await query(
+    `SELECT code AS id, status, reason, review_note AS reviewNote, created_at AS createdAt
+     FROM cancellation_requests WHERE ticket_pk = ? ORDER BY request_pk DESC`,
+    [access.ticket.ticket_pk],
+  );
+  res.json(rows);
+}));
+
+// Admin queue of all cancellation requests (pending first).
+app.get("/api/cancellation-requests", wrap(async (req, res) => {
+  const admin = await requireAdmin(req.query.userId);
+  if (!admin) return res.status(403).json({ error: "Only admins can review cancellation requests." });
+  const rows = await query(
+    `SELECT c.code AS id, c.status, c.reason, c.review_note AS reviewNote, c.created_at AS createdAt,
+       t.code AS ticketId, t.subject, t.status AS ticketStatus,
+       u.name AS requesterName, u.role_name AS requesterRole
+     FROM cancellation_requests c
+     JOIN tickets t ON t.ticket_pk = c.ticket_pk
+     JOIN users u ON u.user_pk = c.requested_by
+     ORDER BY c.status = 'Pending' DESC, c.request_pk DESC LIMIT 100`,
+  );
+  res.json(rows);
+}));
+
+app.patch("/api/cancellation-requests/:code/status", wrap(async (req, res) => {
+  const { actorId, status, note } = req.body ?? {};
+  const admin = await requireAdmin(actorId);
+  if (!admin) return res.status(403).json({ error: "Only admins can review cancellation requests." });
+  if (!["Approved", "Rejected"].includes(status)) {
+    return res.status(400).json({ error: "status must be Approved or Rejected." });
+  }
+  const rows = await query(
+    `SELECT c.request_pk, c.status, c.requested_by, t.ticket_pk, t.code AS ticketCode, t.subject, t.assigned_to
+     FROM cancellation_requests c JOIN tickets t ON t.ticket_pk = c.ticket_pk
+     WHERE c.code = ? LIMIT 1`,
+    [req.params.code],
+  );
+  const request = rows[0];
+  if (!request) return res.status(404).json({ error: "Cancellation request not found." });
+  if (request.status !== "Pending") {
+    return res.status(409).json({ error: `This request was already ${request.status.toLowerCase()}.` });
+  }
+  const cleanNote = String(note ?? "").trim().slice(0, 500) || null;
+
+  let finalStatus = status;
+  let finalNote = cleanNote;
+  let blocked = false;
+  if (status === "Approved") {
+    const placeholders = CLOSED_STATUSES.map(() => "?").join(", ");
+    const [result] = await pool.execute(
+      `UPDATE tickets SET status = 'Cancelled' WHERE ticket_pk = ? AND status NOT IN (${placeholders})`,
+      [request.ticket_pk, ...CLOSED_STATUSES],
+    );
+    if (result.affectedRows === 0) {
+      // The ticket finished while the request was waiting; nothing left to cancel.
+      finalStatus = "Rejected";
+      finalNote = "The ticket was already finished.";
+      blocked = true;
+    }
+  }
+  await query(
+    "UPDATE cancellation_requests SET status = ?, review_note = ?, reviewed_by = ?, reviewed_at = NOW() WHERE request_pk = ?",
+    [finalStatus, finalNote, admin.user_pk, request.request_pk],
+  );
+  const approved = finalStatus === "Approved";
+  await query(
+    "INSERT INTO ticket_messages (ticket_pk, sender_pk, message_text, kind) VALUES (?, ?, ?, 'cancellation_decision')",
+    [
+      request.ticket_pk,
+      admin.user_pk,
+      `Cancellation request ${approved ? "approved" : "declined"} by ${admin.name}${finalNote ? `: ${finalNote}` : "."}`,
+    ],
+  );
+  await notify([request.requested_by], {
+    type: approved ? "cancellation_approved" : "cancellation_rejected",
+    title: approved ? "Cancellation approved" : "Cancellation declined",
+    body: approved
+      ? `${request.ticketCode} has been cancelled.`
+      : `${request.ticketCode} stays open.${finalNote ? ` Admin note: ${finalNote}` : ""}`,
+    ticketCode: request.ticketCode,
+  });
+  await notify([request.assigned_to], {
+    type: approved ? "cancellation_approved" : "cancellation_rejected",
+    title: approved ? "Ticket cancelled" : "Cancellation declined",
+    body: approved
+      ? `${request.ticketCode} was cancelled at the requester's request. You can stop working on it.`
+      : `${request.ticketCode} was not cancelled. Please continue working on it.`,
+    ticketCode: request.ticketCode,
+  });
+  await query(
+    "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
+    [admin.name, admin.role_name, `${finalStatus} cancellation request ${req.params.code} for ${request.ticketCode}`],
+  );
+  if (blocked) {
+    return res.status(409).json({ error: "That ticket was already finished, so the request was closed.", status: finalStatus });
+  }
+  res.json({ ok: true, id: req.params.code, status: finalStatus });
+}));
+
+// --- Notifications -----------------------------------------------------------
+app.get("/api/notifications", wrap(async (req, res) => {
+  const userId = Number(req.query.userId);
+  if (!userId) return res.status(400).json({ error: "userId is required." });
+  const items = await query(
+    `SELECT notification_pk AS id, type, title, body, ticket_code AS ticketCode,
+       created_at AS createdAt, read_at IS NOT NULL AS \`read\`
+     FROM notifications WHERE user_pk = ? ORDER BY notification_pk DESC LIMIT 50`,
+    [userId],
+  );
+  const counts = await query(
+    "SELECT COUNT(*) AS n FROM notifications WHERE user_pk = ? AND read_at IS NULL",
+    [userId],
+  );
+  res.json({
+    unread: Number(counts[0].n),
+    items: items.map((item) => ({ ...item, read: Boolean(item.read) })),
+  });
+}));
+
+// Marks the given notifications (or all of them when ids is omitted) as read.
+app.post("/api/notifications/read", wrap(async (req, res) => {
+  const userId = Number(req.body?.userId);
+  if (!userId) return res.status(400).json({ error: "userId is required." });
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Boolean) : null;
+  if (ids && ids.length > 0) {
+    const placeholders = ids.map(() => "?").join(", ");
+    await pool.execute(
+      `UPDATE notifications SET read_at = NOW() WHERE user_pk = ? AND read_at IS NULL AND notification_pk IN (${placeholders})`,
+      [userId, ...ids],
+    );
+  } else if (!ids) {
+    await query("UPDATE notifications SET read_at = NOW() WHERE user_pk = ? AND read_at IS NULL", [userId]);
+  }
+  res.json({ ok: true });
 }));
 
 // --- Activities -------------------------------------------------------------
@@ -318,6 +582,11 @@ app.patch("/api/users/:userId/skills", wrap(async (req, res) => {
       `Set skills for ${targets[0].name}: ${clean.join(", ") || "none"}`,
     ],
   );
+  await notify([targets[0].user_pk], {
+    type: "skills",
+    title: "Your skills were updated",
+    body: clean.length ? `You are now matched to: ${clean.join(", ")}.` : "You currently have no skills assigned.",
+  });
   res.json({ ok: true, skills: clean });
 }));
 
@@ -365,6 +634,11 @@ app.patch("/api/users/:userId/role", wrap(async (req, res) => {
     "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
     [actor.name, actor.role_name, `Changed ${target.name} from ${target.role} to ${role}`],
   );
+  await notify([target.user_pk], {
+    type: "role",
+    title: "Your account type changed",
+    body: `An admin changed your account to ${roleName}. Log in again as a ${roleName} to continue.`,
+  });
   res.json({ ok: true, role, roleName });
 }));
 
@@ -509,6 +783,11 @@ app.post("/api/password-requests", wrap(async (req, res) => {
       [code, userId, String(newPassword), reason?.trim() || null],
     );
     await conn.commit();
+    await notify(await adminIds(), {
+      type: "password_request",
+      title: "Password change request",
+      body: `${accounts[0].name} asked to change their password (${code}).`,
+    });
     res.status(201).json({
       id: code,
       status: "Pending",
@@ -571,6 +850,15 @@ app.patch("/api/password-requests/:id/status", wrap(async (req, res) => {
       `${status} password change request ${id} for ${requestRow.userName}`,
     ],
   );
+
+  await notify([requestRow.user_pk], {
+    type: status === "Approved" ? "password_approved" : "password_rejected",
+    title: status === "Approved" ? "Password change approved" : "Password change declined",
+    body:
+      status === "Approved"
+        ? "Your new password is active. Use it the next time you log in."
+        : `Your password change request was declined.${note?.trim() ? ` Admin note: ${note.trim()}` : ""}`,
+  });
 
   res.json({ ok: true, id, status });
 }));
