@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "./api";
 import ChatInput from "./ChatInput";
+import { SettingsModal } from "./SettingsModal";
+import { APP_VERSION } from "./settings";
 import { playSound } from "./sounds";
 import { TicketDetailsModal } from "./TicketChat";
 
@@ -91,6 +93,7 @@ function App() {
   const seenNotifications = useRef(null);
   const [modal, setModal] = useState(null);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileView, setProfileView] = useState("details");
   const [profile, setProfile] = useState(null);
   const [myPwRequests, setMyPwRequests] = useState([]);
@@ -399,7 +402,9 @@ function App() {
 
   if (!user)
     return (
+      <>
       <AuthScreen
+        onOpenSettings={() => setSettingsOpen(true)}
         page={authPage}
         setPage={setAuthPage}
         credentials={credentials}
@@ -413,6 +418,8 @@ function App() {
         modal={modal}
         setModal={setModal}
       />
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+      </>
     );
 
   return (
@@ -457,11 +464,14 @@ function App() {
             </button>
           ))}
         </nav>
+        <button className="logout-button settings-button" onClick={() => setSettingsOpen(true)}>
+          <span>⚙</span>Settings
+        </button>
         <button className="logout-button" onClick={logout}>
           <span>↪</span>Log out
         </button>
         <div className="sidebar-footer">
-          HELPDESK v1.0
+          HELPDESK {APP_VERSION}
           <br />
           <span>Support that keeps you moving.</span>
         </div>
@@ -472,6 +482,13 @@ function App() {
           <strong>Campus HelpDesk</strong>
           <button className="mobile-profile" onClick={openProfile}>
             {user.name.split(" ")[0]} · {user.roleName} ›
+          </button>
+          <button
+            className="mobile-settings"
+            aria-label="Settings"
+            onClick={() => setSettingsOpen(true)}
+          >
+            ⚙
           </button>
           <button className="mobile-logout" onClick={logout}>Log out</button>
         </header>
@@ -602,6 +619,7 @@ function App() {
           onLogout={logout}
         />
       )}
+      {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       <ToastStack toasts={toasts} onDismiss={dismissToast} onOpen={openNotification} />
       {modal && <Modal modal={modal} setModal={setModal} />}
     </div>
@@ -626,6 +644,7 @@ function Modal({ modal, setModal }) {
   );
 }
 function AuthScreen({
+  onOpenSettings,
   page,
   setPage,
   credentials,
@@ -643,6 +662,15 @@ function AuthScreen({
   const isForgot = page === "forgot";
   return (
     <div className="auth-page">
+      <button
+        type="button"
+        className="auth-settings"
+        aria-label="Settings"
+        title="Settings"
+        onClick={onOpenSettings}
+      >
+        ⚙
+      </button>
       <div className="auth-visual">
         <div className="visual-grid"></div>
         <div className="visual-copy">
