@@ -38,7 +38,12 @@ The project ships in two forms:
 - **Dashboards** — per-role overview cards summarizing ticket counts and activity.
 - **User directory** — admins can view registered users pulled from the database.
 - **Activity log** — records logins and ticket actions, persisted server-side.
-- **Responsive layout** — adapts from desktop to mobile.
+- **Technician skills & recommendations** — admins assign skills (Hardware, Software, Network / Internet, Account / Login, Printer) to each technician. A technician's queue lists matching tickets first with a "Recommended" badge; out-of-skill tickets still show, but resolving one asks for confirmation with an "at your own risk" warning.
+- **Required ticket category** — requesters must pick the problem type (e.g. Hardware or Software) when submitting.
+- **Admin / technician chat** — a Facebook-style chat dock (bottom-right) lets admins and technicians message each other. Every message shows the sender's name and role. Other roles can't use it.
+- **Super Admin reporting** — Dashboard with KPIs, a Report Manager (charts, location heat map, filters by category, time range and role) and full Activity Log Reports.
+- **Responsive layout** — sidebar on desktop, icon rail on tablets, bottom tab bar on phones, with animations that respect reduced-motion settings.
+- **Login sound** — plays after a successful login or signup.
 
 ---
 
@@ -58,7 +63,7 @@ The project ships in two forms:
 
 ```
 my-react-app/
-├─ public/                 # Static assets served as-is
+├─ public/                 # Static assets served as-is (incl. login-sound.mp3)
 ├─ server/                 # Express + MySQL backend
 │  ├─ db.js                # MySQL connection pool + query helper
 │  ├─ index.js             # API server and routes
@@ -70,7 +75,7 @@ my-react-app/
 │  ├─ App.css              # Application styles
 │  ├─ index.css            # Base styles
 │  └─ main.jsx             # React entry point
-├─ presentation.html       # Standalone localStorage demo (no backend)
+├─ presentation/index.html  # Standalone localStorage demo (no backend)
 ├─ vite.config.js          # Vite config incl. /api dev proxy
 └─ package.json
 ```
@@ -140,13 +145,15 @@ Open the Vite URL shown in the terminal (default `http://localhost:5173`). API r
 
 ## Demo accounts
 
-All seed accounts share the ID `2404154`. Select the matching role on the login screen.
+Most seed accounts share the ID `2404154`; select the matching role on the login screen. The two extra technicians exist so skill recommendations can be tried out.
 
 | Role                       | ID        | Password            |
 | -------------------------- | --------- | ------------------- |
 | Student                    | `2404154` | `123456student`     |
 | Employee                   | `2404154` | `123456employee`    |
-| Technician                 | `2404154` | `123456technician`  |
+| Technician (Hardware, Printer) | `2404154` | `123456technician` |
+| Software Technician (Software, Account / Login) | `2404155` | `123456technician` |
+| Network Technician (Network / Internet) | `2404156` | `123456technician` |
 | Student / Employee Admin   | `2404154` | `123456admin`       |
 | Super Admin                | `2404154` | `123456superadmin`  |
 
@@ -156,15 +163,23 @@ All seed accounts share the ID `2404154`. Select the matching role on the login 
 
 Base path: `/api` (proxied to `http://localhost:3001` in development).
 
-| Method | Endpoint          | Description                                   |
-| ------ | ----------------- | --------------------------------------------- |
-| GET    | `/api/health`     | Health check; verifies the DB connection.     |
-| POST   | `/api/login`      | Authenticate. Body: `{ id, password, role }`. |
-| GET    | `/api/tickets`    | List all tickets (newest first).              |
-| POST   | `/api/tickets`    | Create a ticket. Body: `{ subject, category, priority, location?, description? }`. |
-| GET    | `/api/activities` | List activity log entries (newest first).     |
-| POST   | `/api/activities` | Add an activity. Body: `{ name, roleName, action }`. |
-| GET    | `/api/users`      | List registered users.                        |
+| Method | Endpoint | Description |
+| ------ | -------- | ----------- |
+| GET | `/api/health` | Health check; verifies the DB connection. |
+| POST | `/api/login` | Authenticate. Body: `{ id, password, role }`. |
+| POST | `/api/signup` | Create a student or employee account. |
+| GET | `/api/tickets` | List tickets (newest first); `?mine=1&userId=` limits to one requester. Includes `location` and `createdAt`. |
+| POST | `/api/tickets` | Create a ticket. Body: `{ subject, category, priority, location?, description?, createdBy? }`. |
+| PATCH | `/api/tickets/:id/status` | Set status to Open, In Progress or Resolved. |
+| GET / POST | `/api/activities` | List or add activity log entries. |
+| GET | `/api/users` | List users, including each technician's `skills`. |
+| PATCH | `/api/users/:userId/skills` | Admin only. Body: `{ actorId, skills: [...] }`. |
+| GET | `/api/profile/:userId` | Account details for the profile panel. |
+| GET / POST | `/api/password-requests` | List or file password-change requests. |
+| PATCH | `/api/password-requests/:code/status` | Approve or reject a password-change request. |
+| GET | `/api/messages/contacts?userId=` | Chat contacts with last message and unread count (admins and technicians only). |
+| GET | `/api/messages?userId=&withId=` | Conversation with one contact; marks their messages read. |
+| POST | `/api/messages` | Send a message. Body: `{ senderId, recipientId, body }`. |
 
 All queries use parameterized statements to guard against SQL injection.
 
@@ -172,23 +187,25 @@ All queries use parameterized statements to guard against SQL injection.
 
 ## Database schema
 
-The `helpdesk` database contains three tables (see `server/schema.sql` for full definitions):
+The `helpdesk` database contains five tables (see `server/schema.sql` for full definitions):
 
-- **`users`** — accounts with `id_number`, `password`, `name`, `role`, `role_name`, and `email`.
+- **`users`** — accounts with `id_number`, `password`, `name`, `role`, `role_name`, `email`, and `skills` (comma-separated ticket categories, used for technicians).
 - **`tickets`** — support requests with a unique `code` (e.g. `#HD001`), `subject`, `category`, `priority`, `status`, and optional `location`/`description`. Links back to `users` via `created_by`.
 - **`activities`** — audit log of actor name, role, action, and timestamp.
+- **`password_requests`** — password-change requests awaiting admin approval.
+- **`messages`** — chat messages between admins and technicians, with a read timestamp.
 
-Re-running `schema.sql` drops and recreates the tables, restoring the seed data.
+Re-running `schema.sql` drops and recreates the tables, restoring the seed data. If you already have a database from an earlier version, add the new pieces by hand instead (an `ALTER TABLE users ADD COLUMN skills ...` and the `messages` table from `schema.sql`) to avoid losing data.
 
 ---
 
 ## Presentation build (no database)
 
-`presentation.html` is a single self-contained file that runs the entire app in the browser with **no backend and no build step**. It uses React and Babel from a CDN, and replaces the API with a `localStorage`-backed store seeded with the same demo data.
+`presentation/index.html` is a single self-contained file that runs the entire app in the browser with **no backend and no build step**. It uses React and Babel from a CDN, and replaces the API with a `localStorage`-backed store seeded with the same demo data.
 
 To use it:
 
-1. Open `presentation.html` in any modern browser.
+1. Open `presentation/index.html` in any modern browser.
 2. Log in with any [demo account](#demo-accounts).
 3. Submit tickets and perform actions — everything persists in `localStorage` across page refreshes.
 
@@ -216,7 +233,9 @@ This is a prototype. Before any real deployment:
 - **Passwords are stored in plaintext** to keep the demo simple. Hash them with bcrypt and compare hashes in the `/api/login` route.
 - Add session/token-based authentication and authorization checks on protected endpoints.
 - Never commit `server/.env` — it is gitignored by default.
-- Some views (technician queue, manage-requests table) still use static demo data and are not yet wired to the database.
+- Technician assignments are stored in the browser (`localStorage`), not the database.
+- The messaging and skills endpoints trust the user IDs sent by the client; they need real session checks before production.
+- The presentation build does not include the skills or chat features.
 
 ---
 
