@@ -2745,3 +2745,259 @@ td .fit-badge-match { margin-left: 0 }
     .ticket-duo-close { top: -4px; right: -4px }
     .ticket-info { padding: 20px 18px }
 }
+
+/* ==========================================================================
+   Notifications, toasts, cancellation queue
+   ========================================================================== */
+.nav-badge {
+    min-width: 20px;
+    height: 20px;
+    margin-left: auto;
+    padding: 0 6px;
+    display: inline-grid;
+    place-items: center;
+    border-radius: 999px;
+    background: #d9534f;
+    color: #fff;
+    font: 700 11px Manrope, sans-serif;
+    animation: pop .4s var(--spring) both
+}
+
+.notif-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 8px
+}
+
+.notif-list li { animation: rise .45s var(--ease) both }
+.notif-list li:nth-child(2) { animation-delay: .04s }
+.notif-list li:nth-child(3) { animation-delay: .08s }
+.notif-list li:nth-child(4) { animation-delay: .12s }
+.notif-list li:nth-child(n+5) { animation-delay: .16s }
+
+.notif-item {
+    position: relative;
+    width: 100%;
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 14px 16px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: #fff;
+    text-align: left;
+    transition: transform .25s var(--ease), box-shadow .25s, border-color .2s, background .2s
+}
+
+.notif-item:hover {
+    transform: translateY(-2px);
+    border-color: #bfd2c7;
+    box-shadow: var(--shadow-sm)
+}
+
+.notif-item:active { transform: scale(.985) }
+
+.notif-item.unread {
+    background: #f3faf6;
+    border-color: #cfe5d8
+}
+
+.notif-icon {
+    width: 38px;
+    height: 38px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    font-size: 15px;
+    font-weight: 800;
+    line-height: 1
+}
+
+.notif-good { background: #e3f2e0; color: #2c6b41 }
+.notif-info { background: #e1edf5; color: var(--blue) }
+.notif-warn { background: #fbf2e0; color: #8a6420 }
+.notif-muted { background: #eef1ef; color: #6b7a73 }
+
+.notif-text {
+    min-width: 0;
+    flex: 1;
+    display: grid;
+    gap: 3px
+}
+
+.notif-text strong { font-size: 13.5px; color: var(--ink) }
+.notif-text span { font-size: 12.5px; color: #55645d; line-height: 1.45 }
+.notif-text small { font-size: 11px; color: var(--muted) }
+
+.notif-dot {
+    width: 10px;
+    height: 10px;
+    flex: none;
+    margin-top: 6px;
+    border-radius: 50%;
+    background: var(--green);
+    animation: pulse-dot 1.8s infinite
+}
+
+.notif-empty {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    padding: 40px 10px;
+    text-align: center
+}
+
+.notif-empty .empty-icon { margin-bottom: 8px }
+
+.toast-stack {
+    position: fixed;
+    top: 18px;
+    right: 18px;
+    z-index: 70;
+    width: min(380px, calc(100vw - 36px));
+    display: grid;
+    gap: 10px;
+    pointer-events: none
+}
+
+.toast {
+    pointer-events: auto;
+    display: flex;
+    align-items: stretch;
+    border-radius: 16px;
+    background: #fff;
+    box-shadow: var(--shadow-lg);
+    border-left: 4px solid var(--green);
+    animation: toast-in .5s var(--spring) both
+}
+
+@keyframes toast-in {
+    from { opacity: 0; transform: translateX(40px) scale(.95) }
+    to { opacity: 1; transform: none }
+}
+
+.toast-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    gap: 12px;
+    padding: 12px 8px 12px 14px;
+    border: 0;
+    background: transparent;
+    text-align: left
+}
+
+.toast-close {
+    width: 34px;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 20px;
+    transition: color .2s
+}
+
+.toast-close:hover { color: var(--ink) }
+
+.cancel-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 10px
+}
+
+.cancel-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 16px;
+    border: 1px solid #ecd49c;
+    border-radius: 14px;
+    background: #fffaf0;
+    animation: rise .45s var(--ease) both
+}
+
+.cancel-list li > div:first-child { min-width: 0; display: grid; gap: 3px }
+.cancel-list strong { font-size: 13px }
+.cancel-list span { color: var(--muted); font-size: 12px }
+
+.cancel-list p {
+    margin: 4px 0 0;
+    color: #6f4f12;
+    font-size: 12.5px;
+    font-style: italic
+}
+
+.cancel-history {
+    display: grid;
+    gap: 6px;
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line)
+}
+
+.cancel-history > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 12px;
+    color: var(--muted)
+}
+
+.ticket-chat-note {
+    flex: none;
+    margin: 0;
+    padding: 9px 16px;
+    background: #fbf2e0;
+    color: #8a6420;
+    font-size: 12px
+}
+
+.chat-system {
+    align-self: center;
+    max-width: 90%;
+    margin: 8px 0;
+    padding: 7px 12px;
+    border-radius: 999px;
+    background: #eef1ef;
+    color: #55645d;
+    font-size: 11.5px;
+    text-align: center;
+    animation: rise .3s var(--ease) both
+}
+
+.chat-system time { display: block; margin-top: 1px; font-size: 9px; opacity: .65 }
+
+.bottom-nav button { position: relative }
+
+.bottom-nav .nav-badge {
+    position: absolute;
+    top: 2px;
+    right: calc(50% - 22px);
+    min-width: 17px;
+    height: 17px;
+    font-size: 10px
+}
+
+@media (max-width: 1100px) and (min-width: 641px) {
+    .nav-list .nav-badge {
+        position: absolute;
+        top: 6px;
+        right: 12px;
+        margin: 0;
+        font-size: 10px;
+        min-width: 17px;
+        height: 17px
+    }
+}
+
+@media (max-width: 640px) {
+    .toast-stack { top: 74px; right: 12px; left: 12px; width: auto }
+    .cancel-list li { flex-direction: column; align-items: stretch }
+    .cancel-list .inline-actions { flex-direction: row }
+    .cancel-list .inline-actions .table-button { flex: 1 }
+}

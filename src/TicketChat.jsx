@@ -2,8 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "./api";
 
-// "Open" is the status new tickets start in, so it counts as Pending here.
-const DIRECT_CANCEL_STATUSES = ["Pending", "Approved", "Assigned", "Open"];
 const CLOSED_STATUSES = ["Resolved", "Done", "Closed", "Cancelled"];
 
 function formatTime(value) {
@@ -18,37 +16,39 @@ function formatTime(value) {
 }
 
 /**
- * In-ticket conversation plus the smart cancel control.
+ * In-ticket conversation plus the cancellation-request control.
  *
- * - Pending / Approved / Assigned (Open): ticket owner gets a direct "Cancel ticket".
- * - In Progress: owner gets "Request cancellation", which posts a message
- *   for the technician instead of changing the status.
- * - Resolved / Done / Closed / Cancelled: no cancel control and the chat is read-only.
+ * Requesters never cancel a ticket themselves. While a ticket is still open
+ * they can send a cancellation request (with a reason); an admin approves or
+ * declines it. Finished tickets hide the control and make the chat read-only.
  */
 export default function TicketChat({ ticket, me, onChanged, showMessage }) {
   const [messages, setMessages] = useState([]);
+  const [requests, setRequests] = useState([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
-  const [dialog, setDialog] = useState(null); // "cancel" | "request" | null
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const scroller = useRef(null);
 
   const isOwner = ticket.created_by === me.userId;
   const closed = CLOSED_STATUSES.includes(ticket.status);
-  const canCancelDirectly = isOwner && DIRECT_CANCEL_STATUSES.includes(ticket.status);
-  const canRequestCancel = isOwner && ticket.status === "In Progress";
-  const alreadyRequested = messages.some((message) => message.kind === "cancellation_request");
+  const pending = requests.find((request) => request.status === "Pending");
+  const lastDeclined = !pending && requests[0]?.status === "Rejected" ? requests[0] : null;
 
   const load = useCallback(
     () =>
-      api
-        .getTicketMessages(ticket.id, me.userId)
-        .then((rows) =>
+      Promise.all([
+        api.getTicketMessages(ticket.id, me.userId),
+        api.getTicketCancellations(ticket.id, me.userId),
+      ])
+        .then(([rows, cancellations]) => {
           setMessages((prev) =>
             prev.length === rows.length && prev.at(-1)?.id === rows.at(-1)?.id ? prev : rows,
-          ),
-        )
+          );
+          setRequests(cancellations);
+        })
         .catch(() => {}),
     [ticket.id, me.userId],
   );
@@ -80,41 +80,22 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
     }
   }
 
-  async function cancelTicket() {
-    setBusy(true);
-    try {
-      await api.cancelTicket(ticket.id, me.userId);
-      setDialog(null);
-      showMessage("Ticket cancelled", `${ticket.id} has been cancelled.`);
-    } catch (error) {
-      setDialog(null);
-      showMessage("Could not cancel", error.message || "Please try again.");
-    } finally {
-      setBusy(false);
-      onChanged();
-    }
-  }
-
-  async function requestCancellation(event) {
+  async function submitRequest(event) {
     event.preventDefault();
     const trimmed = reason.trim();
     if (!trimmed) return;
     setBusy(true);
     try {
-      await api.sendTicketMessage(ticket.id, {
-        userId: me.userId,
-        kind: "cancellation_request",
-        text: `Cancellation Requested: ${trimmed}`,
-      });
-      setDialog(null);
+      await api.requestCancellation(ticket.id, { userId: me.userId, reason: trimmed });
+      setDialogOpen(false);
       setReason("");
       await load();
       showMessage(
         "Request sent",
-        "The technician has been notified of your cancellation request.",
+        "An admin will review your cancellation request. You will be notified of the decision.",
       );
     } catch (error) {
-      setDialog(null);
+      setDialogOpen(false);
       showMessage("Could not send request", error.message || "Please try again.");
       onChanged();
     } finally {
@@ -126,22 +107,23 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
     <div className="ticket-chat">
       <div className="ticket-chat-head">
         <strong>Conversation</strong>
-        {canCancelDirectly && (
-          <button type="button" className="table-button danger" onClick={() => setDialog("cancel")}>
-            Cancel ticket
-          </button>
-        )}
-        {canRequestCancel && (
+        {isOwner && !closed && (
           <button
             type="button"
             className="table-button danger"
-            disabled={alreadyRequested}
-            onClick={() => setDialog("request")}
+            disabled={Boolean(pending)}
+            onClick={() => setDialogOpen(true)}
           >
-            {alreadyRequested ? "Cancellation requested" : "Request cancellation"}
+            {pending ? "Awaiting admin decision" : "Request cancellation"}
           </button>
         )}
       </div>
+      {isOwner && lastDeclined && !closed && (
+        <p className="ticket-chat-note">
+          Your last cancellation request was declined
+          {lastDeclined.reviewNote ? `: ${lastDeclined.reviewNote}` : "."}
+        </p>
+      )}
 
       <div className="ticket-chat-messages" ref={scroller}>
         {messages.length === 0 && (
@@ -150,6 +132,14 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
           </p>
         )}
         {messages.map((message, index) => {
+          if (message.kind === "cancellation_decision") {
+            return (
+              <div className="chat-system" key={message.id}>
+                {message.text}
+                <time>{formatTime(message.createdAt)}</time>
+              </div>
+            );
+          }
           const mine = message.senderId === me.userId;
           const newSender = messages[index - 1]?.senderId !== message.senderId;
           return (
@@ -195,42 +185,18 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
         </form>
       )}
 
-      {dialog === "cancel" && (
-        <div className="modal-backdrop" onClick={() => setDialog(null)}>
-          <div className="modal-box" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-icon warn-icon">!</div>
-            <h3>Cancel this ticket?</h3>
-            <p>
-              <strong>{ticket.id}</strong> will be marked as cancelled. This cannot be undone.
-            </p>
-            <div className="dialog-actions">
-              <button
-                className="button button-outline"
-                disabled={busy}
-                onClick={() => setDialog(null)}
-              >
-                Keep ticket
-              </button>
-              <button className="button button-primary" disabled={busy} onClick={cancelTicket}>
-                Yes, cancel it
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {dialog === "request" && (
-        <div className="modal-backdrop" onClick={() => setDialog(null)}>
+      {dialogOpen && (
+        <div className="modal-backdrop" onClick={() => setDialogOpen(false)}>
           <form
             className="modal-box"
             onClick={(event) => event.stopPropagation()}
-            onSubmit={requestCancellation}
+            onSubmit={submitRequest}
           >
             <div className="modal-icon warn-icon">!</div>
             <h3>Request cancellation</h3>
             <p>
-              A technician is already working on <strong>{ticket.id}</strong>, so it can&rsquo;t be
-              cancelled directly. Tell them why and they will handle it.
+              <strong>{ticket.id}</strong> will stay open until an admin accepts your request.
+              Tell them why you want it cancelled.
             </p>
             <label className="field-label dialog-note">
               Reason
@@ -248,7 +214,7 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
                 type="button"
                 className="button button-outline"
                 disabled={busy}
-                onClick={() => setDialog(null)}
+                onClick={() => setDialogOpen(false)}
               >
                 Back
               </button>

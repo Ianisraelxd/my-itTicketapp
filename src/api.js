@@ -33,10 +33,10 @@ export const api = {
   createTicket: (ticket) =>
     request("/tickets", { method: "POST", body: JSON.stringify(ticket) }),
 
-  updateTicketStatus: (ticketId, status) =>
+  updateTicketStatus: (ticketId, status, actorId) =>
     request(`/tickets/${encodeURIComponent(ticketId)}/status`, {
       method: "PATCH",
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status, actorId }),
     }),
 
   getActivities: () => request("/activities"),
@@ -77,10 +77,39 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
-  cancelTicket: (ticketId, userId) =>
-    request(`/tickets/${encodeURIComponent(ticketId)}/cancel`, {
-      method: "PUT",
-      body: JSON.stringify({ userId }),
+  assignTicket: (ticketId, payload) =>
+    request(`/tickets/${encodeURIComponent(ticketId)}/assign`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  requestCancellation: (ticketId, payload) =>
+    request(`/tickets/${encodeURIComponent(ticketId)}/cancellation-requests`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  getTicketCancellations: (ticketId, userId) =>
+    request(
+      `/tickets/${encodeURIComponent(ticketId)}/cancellation-requests?userId=${encodeURIComponent(userId)}`,
+    ),
+
+  getCancellationRequests: (userId) =>
+    request(`/cancellation-requests?userId=${encodeURIComponent(userId)}`),
+
+  reviewCancellation: (code, payload) =>
+    request(`/cancellation-requests/${encodeURIComponent(code)}/status`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  getNotifications: (userId) =>
+    request(`/notifications?userId=${encodeURIComponent(userId)}`),
+
+  markNotificationsRead: (userId, ids) =>
+    request("/notifications/read", {
+      method: "POST",
+      body: JSON.stringify({ userId, ids }),
     }),
 
   getTicketMessages: (ticketId, userId) =>

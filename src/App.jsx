@@ -10,16 +10,19 @@ const navFor = {
     ["userDashboard", "◈", "Dashboard"],
     ["requestPage", "+", "Submit Request"],
     ["myRequestsPage", "▤", "My Requests"],
+    ["notificationsPage", "🔔", "Notifications"],
   ],
   technician: [
     ["technicianDashboard", "◈", "Dashboard"],
     ["technicianRequestsPage", "▤", "Assigned Requests"],
+    ["notificationsPage", "🔔", "Notifications"],
   ],
   admin: [
     ["adminDashboard", "◈", "Dashboard"],
     ["manageRequestsPage", "▤", "Manage Requests"],
     ["passwordRequestsPage", "🔑", "Password Requests"],
     ["usersPage", "♙", "Users"],
+    ["notificationsPage", "🔔", "Notifications"],
   ],
   superadmin: [
     ["superAdminDashboard", "◈", "Dashboard"],
@@ -91,6 +94,9 @@ function App() {
   const [activities, setActivities] = useState([]);
   const [ticketAssignments, setTicketAssignments] = useState(() => readTicketAssignments());
   const [refreshKey, setRefreshKey] = useState(0);
+  const [notifications, setNotifications] = useState({ unread: 0, items: [] });
+  const [toasts, setToasts] = useState([]);
+  const seenNotifications = useRef(null);
   const [modal, setModal] = useState(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileView, setProfileView] = useState("details");
@@ -127,6 +133,37 @@ function App() {
       .catch(() => {});
   };
   const showMessage = (title, message) => setModal({ title, message });
+
+  // Poll for notifications. Anything new pops up as a toast and refreshes the
+  // ticket data so statuses stay current without a manual reload.
+  useEffect(() => {
+    if (!user || user.role === "superadmin") return;
+    let active = true;
+    seenNotifications.current = null;
+    const load = () =>
+      api
+        .getNotifications(user.userId)
+        .then((data) => {
+          if (!active) return;
+          setNotifications(data);
+          const seen = seenNotifications.current;
+          if (seen) {
+            const fresh = data.items.filter((item) => !item.read && !seen.has(item.id));
+            if (fresh.length > 0) {
+              setToasts((current) => [...fresh.slice(0, 3), ...current].slice(0, 4));
+              setRefreshKey((value) => value + 1);
+            }
+          }
+          seenNotifications.current = new Set(data.items.map((item) => item.id));
+        })
+        .catch(() => {});
+    load();
+    const timer = setInterval(load, 8000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [user]);
 
   // Load tickets and activities from the database once a user is signed in.
   useEffect(() => {
@@ -327,7 +364,44 @@ function App() {
     setMyPwRequests([]);
     setPwRequests([]);
     setPwForm({ newPassword: "", confirm: "", reason: "" });
+    setNotifications({ unread: 0, items: [] });
+    setToasts([]);
   }
+
+  async function markNotificationsRead(ids) {
+    try {
+      await api.markNotificationsRead(user.userId, ids || undefined);
+    } catch {
+      return;
+    }
+    setNotifications((current) => {
+      const newlyRead = current.items.filter((item) => !item.read && (!ids || ids.includes(item.id))).length;
+      return {
+        unread: ids ? Math.max(0, current.unread - newlyRead) : 0,
+        items: current.items.map((item) =>
+          !ids || ids.includes(item.id) ? { ...item, read: true } : item,
+        ),
+      };
+    });
+  }
+
+  // Tapping a notification marks it read and jumps to the page it is about.
+  function openNotification(item) {
+    markNotificationsRead([item.id]);
+    setToasts((current) => current.filter((toast) => toast.id !== item.id));
+    if (item.type.startsWith("password_")) {
+      setPage(user.role === "admin" ? "passwordRequestsPage" : page);
+      return;
+    }
+    if (user.role === "admin") setPage("manageRequestsPage");
+    else if (user.role === "technician") setPage("technicianRequestsPage");
+    else setPage("myRequestsPage");
+  }
+
+  const dismissToast = useCallback(
+    (id) => setToasts((current) => current.filter((toast) => toast.id !== id)),
+    [],
+  );
 
   if (!user)
     return (
@@ -383,6 +457,9 @@ function App() {
             >
               <span>{icon}</span>
               {label}
+              {id === "notificationsPage" && notifications.unread > 0 && (
+                <b className="nav-badge">{notifications.unread}</b>
+              )}
             </button>
           ))}
         </nav>
@@ -468,6 +545,7 @@ function App() {
         )}
         {page === "manageRequestsPage" && (
           <ManageRequests
+            me={user}
             tickets={allTickets.length ? allTickets : tickets}
             users={allUsers}
             ticketAssignments={ticketAssignments}
@@ -488,6 +566,13 @@ function App() {
           />
         )}
         {page === "activityLogPage" && <ActivityLog activities={activities} />}
+        {page === "notificationsPage" && (
+          <NotificationsPage
+            data={notifications}
+            onRead={markNotificationsRead}
+            onOpen={openNotification}
+          />
+        )}
         </div>
       </main>
       {(user.role === "admin" || user.role === "technician") && (
@@ -502,6 +587,9 @@ function App() {
           >
             <span>{icon}</span>
             <small>{label}</small>
+            {id === "notificationsPage" && notifications.unread > 0 && (
+              <b className="nav-badge">{notifications.unread}</b>
+            )}
           </button>
         ))}
       </nav>
@@ -520,6 +608,7 @@ function App() {
           onLogout={logout}
         />
       )}
+      <ToastStack toasts={toasts} onDismiss={dismissToast} onOpen={openNotification} />
       {modal && <Modal modal={modal} setModal={setModal} />}
     </div>
   );
@@ -1502,7 +1591,7 @@ function TechnicianRequests({
 
   const handleResolve = async (ticketId) => {
     try {
-      await api.updateTicketStatus(ticketId, "Resolved");
+      await api.updateTicketStatus(ticketId, "Resolved", me.userId);
       setTicketAssignments((current) => ({
         ...current,
         [ticketId]: {
@@ -1701,6 +1790,7 @@ function TechnicianRequests({
   );
 }
 function ManageRequests({
+  me,
   tickets = [],
   users = [],
   ticketAssignments = {},
@@ -1731,7 +1821,7 @@ function ManageRequests({
 
   const confirmAssign = async (ticketId, technician, slot) => {
     try {
-      await api.updateTicketStatus(ticketId, "In Progress");
+      await api.assignTicket(ticketId, { actorId: me.userId, technicianId: technician.userId });
       setTicketAssignments((current) => ({
         ...current,
         [ticketId]: {
@@ -1760,6 +1850,7 @@ function ManageRequests({
         title="Request management"
         description="Review, assign, and monitor submitted tickets."
       />
+      <CancellationQueue me={me} showMessage={showMessage} refreshData={refreshData} />
       <section className="panel">
         <div className="table-wrap">
           <table>
@@ -2490,6 +2581,298 @@ function ChatDock({ me }) {
     </div>
   );
 }
+const NOTIFICATION_STYLES = {
+  resolved: ["✓", "good"],
+  assigned: ["➜", "info"],
+  in_progress: ["◔", "info"],
+  status: ["•", "info"],
+  message: ["✉", "info"],
+  new_ticket: ["+", "warn"],
+  cancellation_requested: ["!", "warn"],
+  cancellation_approved: ["✕", "muted"],
+  cancellation_rejected: ["↺", "info"],
+  password_request: ["🔑", "warn"],
+  password_approved: ["🔑", "good"],
+  password_rejected: ["🔑", "muted"],
+  skills: ["★", "good"],
+  role: ["⇄", "info"],
+};
+
+function timeAgo(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+  if (seconds < 60) return "Just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ago`;
+  if (seconds < 604800) return `${Math.floor(seconds / 86400)} d ago`;
+  return date.toLocaleDateString();
+}
+
+function NotificationIcon({ type }) {
+  const [symbol, tone] = NOTIFICATION_STYLES[type] || ["•", "info"];
+  return <span className={`notif-icon notif-${tone}`}>{symbol}</span>;
+}
+
+function NotificationsPage({ data, onRead, onOpen }) {
+  const [filter, setFilter] = useState("all");
+  const items = filter === "unread" ? data.items.filter((item) => !item.read) : data.items;
+  return (
+    <>
+      <PageHeader
+        eyebrow="UPDATES / 05"
+        title="Notifications"
+        description="Everything that changed on your requests and account, in one place."
+        action={
+          <button
+            className="button button-primary"
+            disabled={data.unread === 0}
+            onClick={() => onRead(null)}
+          >
+            Mark all as read
+          </button>
+        }
+      />
+      <section className="panel">
+        <div className="panel-heading">
+          <div>
+            <span className="eyebrow">{data.unread} UNREAD</span>
+            <h2>Latest updates</h2>
+          </div>
+          <div className="segmented" role="tablist" aria-label="Notification filter">
+            <button
+              type="button"
+              className={filter === "all" ? "active" : ""}
+              onClick={() => setFilter("all")}
+            >
+              All
+            </button>
+            <button
+              type="button"
+              className={filter === "unread" ? "active" : ""}
+              onClick={() => setFilter("unread")}
+            >
+              Unread
+            </button>
+          </div>
+        </div>
+        {items.length === 0 ? (
+          <div className="notif-empty">
+            <span className="empty-icon">🔔</span>
+            <strong>{filter === "unread" ? "You are all caught up." : "No notifications yet."}</strong>
+            <p>Updates about your requests will show up here.</p>
+          </div>
+        ) : (
+          <ul className="notif-list">
+            {items.map((item) => (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  className={`notif-item ${item.read ? "" : "unread"}`}
+                  onClick={() => onOpen(item)}
+                >
+                  <NotificationIcon type={item.type} />
+                  <span className="notif-text">
+                    <strong>{item.title}</strong>
+                    <span>{item.body}</span>
+                    <small>{timeAgo(item.createdAt)}</small>
+                  </span>
+                  {!item.read && <i className="notif-dot" aria-label="Unread"></i>}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </>
+  );
+}
+
+// Slide-in alerts for notifications that arrive while the app is open.
+function ToastStack({ toasts, onDismiss, onOpen }) {
+  return (
+    <div className="toast-stack" aria-live="polite">
+      {toasts.map((toast) => (
+        <Toast key={toast.id} toast={toast} onDismiss={onDismiss} onOpen={onOpen} />
+      ))}
+    </div>
+  );
+}
+
+function Toast({ toast, onDismiss, onOpen }) {
+  useEffect(() => {
+    const timer = setTimeout(() => onDismiss(toast.id), 7000);
+    return () => clearTimeout(timer);
+  }, [toast.id, onDismiss]);
+  return (
+    <div className="toast" role="status">
+      <button type="button" className="toast-body" onClick={() => onOpen(toast)}>
+        <NotificationIcon type={toast.type} />
+        <span className="notif-text">
+          <strong>{toast.title}</strong>
+          <span>{toast.body}</span>
+        </span>
+      </button>
+      <button type="button" className="toast-close" aria-label="Dismiss" onClick={() => onDismiss(toast.id)}>
+        ×
+      </button>
+    </div>
+  );
+}
+
+// Admin queue: requesters ask to cancel, an admin accepts or declines.
+function CancellationQueue({ me, showMessage, refreshData }) {
+  const [requests, setRequests] = useState([]);
+  const [review, setReview] = useState(null); // { request, status }
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(
+    () =>
+      api
+        .getCancellationRequests(me.userId)
+        .then(setRequests)
+        .catch(() => {}),
+    [me.userId],
+  );
+
+  useEffect(() => {
+    load();
+    const timer = setInterval(load, 8000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  const pending = requests.filter((request) => request.status === "Pending");
+  const history = requests.filter((request) => request.status !== "Pending").slice(0, 5);
+
+  async function submitReview(event) {
+    event.preventDefault();
+    if (!review || busy) return;
+    setBusy(true);
+    try {
+      await api.reviewCancellation(review.request.id, {
+        actorId: me.userId,
+        status: review.status,
+        note,
+      });
+      showMessage(
+        review.status === "Approved" ? "Cancellation approved" : "Cancellation declined",
+        review.status === "Approved"
+          ? `${review.request.ticketId} was cancelled. The requester and technician were notified.`
+          : `${review.request.requesterName} was told the request stays open.`,
+      );
+    } catch (error) {
+      showMessage("Could not save decision", error.message || "Please try again.");
+    } finally {
+      setBusy(false);
+      setReview(null);
+      setNote("");
+      load();
+      refreshData();
+    }
+  }
+
+  return (
+    <>
+      <section className="panel cancel-queue">
+        <div className="panel-heading">
+          <div>
+            <span className="eyebrow">CANCELLATION REQUESTS</span>
+            <h2>
+              {pending.length === 0
+                ? "Nothing waiting for review"
+                : `${pending.length} waiting for your decision`}
+            </h2>
+          </div>
+        </div>
+        {pending.length > 0 && (
+          <ul className="cancel-list">
+            {pending.map((request) => (
+              <li key={request.id}>
+                <div>
+                  <strong>
+                    {request.ticketId} · {request.subject}
+                  </strong>
+                  <span>
+                    {request.requesterName} ({request.requesterRole}) · ticket is {request.ticketStatus}
+                  </span>
+                  <p>&ldquo;{request.reason}&rdquo;</p>
+                </div>
+                <div className="inline-actions">
+                  <button
+                    className="table-button"
+                    onClick={() => setReview({ request, status: "Approved" })}
+                  >
+                    Accept
+                  </button>
+                  <button
+                    className="table-button danger"
+                    onClick={() => setReview({ request, status: "Rejected" })}
+                  >
+                    Reject
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        {history.length > 0 && (
+          <div className="cancel-history">
+            <span className="eyebrow">RECENT DECISIONS</span>
+            {history.map((request) => (
+              <div key={request.id}>
+                <span>
+                  {request.ticketId} · {request.requesterName}
+                </span>
+                <Status value={request.status === "Approved" ? "Approved" : "Rejected"} />
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+      {review && (
+        <div className="modal-backdrop" onClick={() => setReview(null)}>
+          <form
+            className="modal-box"
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={submitReview}
+          >
+            <div className="modal-icon">{review.status === "Approved" ? "✓" : "✕"}</div>
+            <h3>{review.status === "Approved" ? "Accept cancellation?" : "Reject cancellation?"}</h3>
+            <p>
+              {review.status === "Approved"
+                ? `${review.request.ticketId} will be cancelled and the requester and technician will be notified.`
+                : `${review.request.ticketId} stays open and the requester will be told why.`}
+            </p>
+            <label className="field-label dialog-note">
+              Note (optional)
+              <textarea
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+                maxLength={500}
+                placeholder="Add a short note for the requester"
+              />
+            </label>
+            <div className="dialog-actions">
+              <button
+                type="button"
+                className="button button-outline"
+                disabled={busy}
+                onClick={() => setReview(null)}
+              >
+                Back
+              </button>
+              <button type="submit" className="button button-primary" disabled={busy}>
+                {review.status === "Approved" ? "Accept" : "Reject"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </>
+  );
+}
+
 const pct = (part, whole) => (whole ? Math.round((part / whole) * 100) : 0);
 
 function countBy(items, getKey) {
