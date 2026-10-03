@@ -3,7 +3,13 @@ import "./App.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "./api";
+import ChartSkeleton from "./ChartSkeleton";
 import ChatInput from "./ChatInput";
+import { downloadCsv, reportToCsvRows } from "./csv";
+import ReportChartContainer from "./ReportChartContainer";
+import ReportFilters from "./ReportFilters";
+import { defaultReportFilters } from "./reportDefaults";
+import useReportData from "./useReportData";
 import { SettingsModal } from "./SettingsModal";
 import { APP_VERSION } from "./settings";
 import { playSound } from "./sounds";
@@ -549,10 +555,7 @@ function App() {
           />
         )}
         {page === "reportManagerPage" && (
-          <ReportManager
-            tickets={allTickets.length ? allTickets : tickets}
-            users={allUsers}
-          />
+          <ReportManager me={user} />
         )}
         {page === "manageRequestsPage" && (
           <ManageRequests
@@ -2943,33 +2946,6 @@ function CancellationQueue({ me, showMessage, refreshData }) {
 
 const pct = (part, whole) => (whole ? Math.round((part / whole) * 100) : 0);
 
-function countBy(items, getKey) {
-  const map = new Map();
-  items.forEach((item) => {
-    const key = getKey(item) || "Unspecified";
-    map.set(key, (map.get(key) || 0) + 1);
-  });
-  return [...map.entries()].sort((a, b) => b[1] - a[1]);
-}
-
-function BarList({ rows, tone = "" }) {
-  const max = Math.max(1, ...rows.map(([, n]) => n));
-  if (!rows.length) return <p className="report-empty">No data for this filter.</p>;
-  return (
-    <div className="bar-list">
-      {rows.map(([label, n]) => (
-        <div className="bar-row" key={label}>
-          <span className="bar-label" title={label}>{label}</span>
-          <span className="bar-track">
-            <span className={`bar-fill ${tone}`} style={{ width: `${(n / max) * 100}%` }}></span>
-          </span>
-          <b>{n}</b>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function ReportCard({ title, note, children, wide = false }) {
   return (
     <section className={`panel report-card ${wide ? "wide" : ""}`}>
@@ -3049,185 +3025,154 @@ function SuperAdminDashboard({ setPage, tickets = [], users = [], activities = [
   );
 }
 
-const TIME_RANGES = [
-  ["7", "Last 7 days"],
-  ["30", "Last 30 days"],
-  ["90", "Last 90 days"],
-  ["all", "All time"],
+const STATUS_COLORS = {
+  Open: "#bd8128",
+  "In Progress": "#39759d",
+  Resolved: "#1c6b56",
+  Cancelled: "#a7b1ac",
+};
+const PRIORITY_COLORS = { High: "#a44b45", Medium: "#bd8128", Low: "#1c6b56" };
+const REQUESTER_ROLES = [
+  ["student", "Student"],
+  ["employee", "Employee"],
+  ["technician", "Technician"],
+  ["admin", "Admin"],
 ];
 
-function ReportManager({ tickets = [], users = [] }) {
-  const [now] = useState(() => Date.now());
-  const [category, setCategory] = useState("all");
-  const [range, setRange] = useState("all");
-  const [role, setRole] = useState("all");
+const formatDay = (value) => (typeof value === "string" ? value.slice(5) : value);
+const percentOf = (part, whole) => (whole ? Math.round((part / whole) * 100) : 0);
 
-  const categories = [...new Set(tickets.map((t) => t.category).filter(Boolean))].sort();
-  const roles = [...new Set(tickets.map((t) => t.userRole).filter(Boolean))].sort();
+function ReportManager({ me }) {
+  // Defaults load immediately: last 30 days, all categories, all roles.
+  const [filters, setFilters] = useState(defaultReportFilters);
+  const { data, isLoading, error, reload } = useReportData(filters, me.userId);
 
-  const cutoff = range === "all" ? 0 : now - Number(range) * 86400000;
-  const filtered = tickets.filter(
-    (t) =>
-      (category === "all" || t.category === category) &&
-      (role === "all" || t.userRole === role) &&
-      (!cutoff || (t.createdAt && new Date(t.createdAt).getTime() >= cutoff)),
-  );
-
-  const total = filtered.length;
-  const resolved = filtered.filter((t) => t.status === "Resolved").length;
-  const backlog = filtered.filter((t) => ["Open", "In Progress"].includes(t.status)).length;
-  const high = filtered.filter((t) => t.priority === "High").length;
-  const statusRows = ["Open", "In Progress", "Resolved", "Cancelled"].map((s) => [
-    s,
-    filtered.filter((t) => t.status === s).length,
-  ]);
-  const statusColors = ["#bd8128", "#39759d", "#1c6b56", "#a7b1ac"];
-  let acc = 0;
-  const donut = statusRows
-    .map(([, n], i) => {
-      const start = acc;
-      acc += total ? (n / total) * 100 : 0;
-      return `${statusColors[i]} ${start}% ${acc}%`;
-    })
-    .join(", ");
-
-  const dayKey = (d) => d.toISOString().slice(0, 10);
-  const trend = (() => {
-    const dated = filtered.filter((t) => t.createdAt);
-    const buckets = new Map();
-    if (range === "all") {
-      dated.forEach((t) => {
-        const k = dayKey(new Date(t.createdAt)).slice(0, 7);
-        buckets.set(k, (buckets.get(k) || 0) + 1);
-      });
-      return [...buckets.entries()].sort();
-    }
-    const days = Number(range);
-    for (let i = days - 1; i >= 0; i--) buckets.set(dayKey(new Date(now - i * 86400000)), 0);
-    dated.forEach((t) => {
-      const k = dayKey(new Date(t.createdAt));
-      if (buckets.has(k)) buckets.set(k, buckets.get(k) + 1);
-    });
-    return [...buckets.entries()].map(([k, n]) => [k.slice(5), n]);
-  })();
-  const trendMax = Math.max(1, ...trend.map(([, n]) => n));
-
-  const locationRows = countBy(filtered, (t) => t.location).slice(0, 12);
-  const locMax = Math.max(1, ...locationRows.map(([, n]) => n));
-  const userRoleRows = countBy(users, (u) => u.role);
-
+  const totals = data?.totals;
   const kpis = [
-    ["Resolution rate", `${pct(resolved, total)}%`],
-    ["Open backlog", String(backlog)],
-    ["High-priority share", `${pct(high, total)}%`],
-    ["Tickets in view", String(total)],
+    ["Resolution rate", totals ? `${percentOf(totals.resolved, totals.total)}%` : null],
+    ["Open backlog", totals ? String(totals.backlog) : null],
+    ["High-priority share", totals ? `${percentOf(totals.high, totals.total)}%` : null],
+    ["Tickets in view", totals ? String(totals.total) : null],
   ];
+
+  const locationRows = data?.byLocation || [];
+  const locationMax = Math.max(1, ...locationRows.map((row) => row.value));
+
+  function exportCsv() {
+    if (!data) return;
+    const from = data.filters.from || "all";
+    const to = data.filters.to || "today";
+    downloadCsv(`helpdesk-report_${from}_to_${to}.csv`, reportToCsvRows(data));
+  }
 
   return (
     <>
       <PageHeader
         eyebrow="SYSTEM / 02"
         title="Report manager"
-        description="Graphs, maps and KPIs across the system. Filter by category, time range and role."
+        description="Charts and KPIs across the system. Showing the last 30 days by default."
       />
-      <section className="panel report-filters">
-        <label>
-          Category
-          <select value={category} onChange={(e) => setCategory(e.target.value)}>
-            <option value="all">All categories</option>
-            {categories.map((c) => <option key={c}>{c}</option>)}
-          </select>
-        </label>
-        <label>
-          Time range
-          <select value={range} onChange={(e) => setRange(e.target.value)}>
-            {TIME_RANGES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-          </select>
-        </label>
-        <label>
-          Requester role
-          <select value={role} onChange={(e) => setRole(e.target.value)}>
-            <option value="all">All roles</option>
-            {roles.map((r) => <option key={r}>{r}</option>)}
-          </select>
-        </label>
-        <button
-          type="button"
-          className="button button-primary"
-          onClick={() => { setCategory("all"); setRange("all"); setRole("all"); }}
-        >
-          Reset
-        </button>
-      </section>
+      <ReportFilters
+        filters={filters}
+        onChange={setFilters}
+        categories={SKILL_OPTIONS.concat("Others")}
+        roles={REQUESTER_ROLES}
+        onExport={exportCsv}
+        canExport={Boolean(data) && !isLoading}
+      />
+      {error && (
+        <section className="panel report-error" role="alert">
+          <strong>Could not load the report.</strong>
+          <p>{error}</p>
+          <button className="button button-primary" onClick={reload}>
+            Try again
+          </button>
+        </section>
+      )}
       <div className="stats-grid">
         {kpis.map(([label, value]) => (
           <div className="stat-card" key={label}>
             <span>KPI · {label}</span>
-            <strong><CountUp value={value} /></strong>
+            {value === null ? (
+              <strong className="kpi-loading" aria-busy="true"></strong>
+            ) : (
+              <strong>
+                <CountUp value={value} />
+              </strong>
+            )}
           </div>
         ))}
       </div>
       <div className="report-grid">
-        <ReportCard title="1 · Tickets by status" note="Donut chart">
-          <div className="donut-wrap">
-            <div className="donut" style={{ background: total ? `conic-gradient(${donut})` : "#e2e8e4" }}>
-              <span>{total}</span>
-            </div>
-            <ul className="legend">
-              {statusRows.map(([s, n], i) => (
-                <li key={s}><i style={{ background: statusColors[i] }}></i>{s} <b>{n}</b></li>
-              ))}
-            </ul>
-          </div>
-        </ReportCard>
-        <ReportCard title="2 · Tickets by category" note="Bar graph">
-          <BarList rows={countBy(filtered, (t) => t.category)} />
-        </ReportCard>
-        <ReportCard title="3 · Tickets by priority" note="Bar graph">
-          <BarList
-            rows={["High", "Medium", "Low"].map((p) => [p, filtered.filter((t) => t.priority === p).length])}
-            tone="gold"
-          />
-        </ReportCard>
-        <ReportCard title="4 · Requests by requester role" note="Bar graph">
-          <BarList rows={countBy(filtered, (t) => t.userRole)} tone="blue" />
-        </ReportCard>
-        <ReportCard title="5 · Ticket volume over time" note={range === "all" ? "Per month" : "Per day"} wide>
-          {trend.length ? (
-            <div className="column-chart">
-              {trend.map(([label, n]) => (
-                <div className="column" key={label} title={`${label}: ${n}`}>
-                  <b>{n || ""}</b>
-                  <span style={{ height: `${(n / trendMax) * 100}%` }}></span>
-                  <small>{label}</small>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="report-empty">No data for this filter.</p>
-          )}
-        </ReportCard>
+        <ReportChartContainer
+          title="1 · Tickets by status"
+          note="Donut chart"
+          type="pie"
+          data={data?.byStatus}
+          colorFor={(row) => STATUS_COLORS[row.label]}
+          isLoading={isLoading}
+        />
+        <ReportChartContainer
+          title="2 · Tickets by category"
+          note="Bar graph"
+          data={data?.byCategory}
+          horizontal
+          isLoading={isLoading}
+        />
+        <ReportChartContainer
+          title="3 · Tickets by priority"
+          note="Bar graph"
+          data={data?.byPriority}
+          colorFor={(row) => PRIORITY_COLORS[row.label] || "#1c6b56"}
+          isLoading={isLoading}
+        />
+        <ReportChartContainer
+          title="4 · Requests by requester role"
+          note="Bar graph"
+          data={data?.byRole}
+          series={[{ key: "value", label: "Tickets", color: "#39759d" }]}
+          isLoading={isLoading}
+        />
+        <ReportChartContainer
+          title="5 · Ticket volume over time"
+          note="Line chart · per day"
+          type="line"
+          data={data?.byDay}
+          xTickFormatter={formatDay}
+          series={[{ key: "value", label: "Tickets", color: "#1c6b56" }]}
+          isLoading={isLoading}
+          wide
+        />
         <ReportCard title="6 · Campus location map" note="Heat map of where requests come from" wide>
-          {locationRows.length ? (
+          {isLoading ? (
+            <ChartSkeleton height={140} label="Loading location map" />
+          ) : locationRows.length ? (
             <div className="heat-map">
-              {locationRows.map(([loc, n]) => (
+              {locationRows.map((row) => (
                 <div
                   className="heat-cell"
-                  key={loc}
-                  style={{ background: `rgba(28, 107, 86, ${0.12 + (n / locMax) * 0.88})`, color: n / locMax > 0.45 ? "#fff" : "var(--ink)" }}
+                  key={row.label}
+                  style={{
+                    background: `rgba(28, 107, 86, ${0.12 + (row.value / locationMax) * 0.88})`,
+                    color: row.value / locationMax > 0.45 ? "#fff" : "var(--ink)",
+                  }}
                 >
-                  <strong>{n}</strong>
-                  <span>{loc}</span>
+                  <strong>{row.value}</strong>
+                  <span>{row.label}</span>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="report-empty">No data for this filter.</p>
+            <p className="report-empty">No data for these filters.</p>
           )}
         </ReportCard>
-        <ReportCard title="7 · Registered users by role" note="Not affected by filters">
-          <BarList rows={userRoleRows} tone="blue" />
-        </ReportCard>
+        <ReportChartContainer
+          title="7 · Registered users by role"
+          note="Not affected by filters"
+          data={data?.usersByRole}
+          series={[{ key: "value", label: "Users", color: "#39759d" }]}
+          isLoading={isLoading}
+        />
       </div>
     </>
   );

@@ -103,6 +103,15 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  getReportSummary: ({ userId, from, to, category, role }) => {
+    const query = new URLSearchParams({ userId: String(userId) });
+    if (from) query.set("from", from);
+    if (to) query.set("to", to);
+    if (category && category !== "All") query.set("category", category);
+    if (role && role !== "All") query.set("role", role);
+    return request(`/reports/summary?${query.toString()}`);
+  },
+
   getNotifications: (userId) =>
     request(`/notifications?userId=${encodeURIComponent(userId)}`),
 

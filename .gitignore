@@ -26,3 +26,4 @@ dist-ssr
 # Environment files (contain DB credentials)
 .env
 server/.env
+backups/
