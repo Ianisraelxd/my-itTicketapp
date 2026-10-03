@@ -71,6 +71,12 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  setUserRole: (userId, payload) =>
+    request(`/users/${encodeURIComponent(userId)}/role`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
   getChatContacts: (userId) =>
     request(`/messages/contacts?userId=${encodeURIComponent(userId)}`),
 

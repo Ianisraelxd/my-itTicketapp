@@ -2041,6 +2041,40 @@ function UsersPage({ currentUser, showMessage, refreshData }) {
   const [users, setUsers] = useState([]);
   const [selectedType, setSelectedType] = useState("technician");
   const [savingId, setSavingId] = useState(null);
+  const [typeDialog, setTypeDialog] = useState(null);
+
+  async function confirmTypeChange() {
+    const { user: target, role } = typeDialog;
+    setTypeDialog(null);
+    setSavingId(target.userId);
+    try {
+      const result = await api.setUserRole(target.userId, {
+        actorId: currentUser.userId,
+        role,
+      });
+      setUsers((rows) =>
+        rows.map((row) =>
+          row.userId === target.userId
+            ? {
+                ...row,
+                roleKey: result.role,
+                role: result.roleName,
+                skills: result.role === "technician" ? row.skills : [],
+              }
+            : row,
+        ),
+      );
+      refreshData();
+      showMessage(
+        "User type changed",
+        `${target.name} is now a ${result.roleName}. They need to log in again as a ${result.roleName} to use the new account type.`,
+      );
+    } catch (error) {
+      showMessage("Could not change type", error.message || "Please try again.");
+    } finally {
+      setSavingId(null);
+    }
+  }
 
   async function toggleSkill(technician, skill) {
     const next = technician.skills.includes(skill)
@@ -2117,13 +2151,14 @@ function UsersPage({ currentUser, showMessage, refreshData }) {
                 <th>Role</th>
                 <th>Email</th>
                 {selectedType === "technician" && <th>Skills (tap to assign)</th>}
+                {(selectedType === "employee" || selectedType === "technician") && <th>Type</th>}
                 <th>Status</th>
               </tr>
             </thead>
             <tbody>
               {filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan="6">No registered {selectedType} users yet.</td>
+                  <td colSpan="7">No registered {selectedType} users yet.</td>
                 </tr>
               ) : (
                 filteredUsers.map((user, index) => (
@@ -2143,6 +2178,22 @@ function UsersPage({ currentUser, showMessage, refreshData }) {
                         />
                       </td>
                     )}
+                    {(selectedType === "employee" || selectedType === "technician") && (
+                      <td>
+                        <button
+                          className="table-button light"
+                          disabled={savingId === user.userId}
+                          onClick={() =>
+                            setTypeDialog({
+                              user,
+                              role: selectedType === "employee" ? "technician" : "employee",
+                            })
+                          }
+                        >
+                          {selectedType === "employee" ? "Make technician" : "Make employee"}
+                        </button>
+                      </td>
+                    )}
                     <td>
                       <Status value="Active" />
                     </td>
@@ -2153,6 +2204,29 @@ function UsersPage({ currentUser, showMessage, refreshData }) {
           </table>
         </div>
       </section>
+      {typeDialog && (
+        <div className="modal-backdrop" onClick={() => setTypeDialog(null)}>
+          <div className="modal-box" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-icon">⇄</div>
+            <h3>Change user type?</h3>
+            <p>
+              <strong>{typeDialog.user.name}</strong> will become a{" "}
+              <strong>{typeDialog.role === "technician" ? "Technician" : "Employee"}</strong>.
+              {typeDialog.role === "employee"
+                ? " Their assigned skills will be cleared."
+                : " You can assign their skills afterwards."}
+            </p>
+            <div className="dialog-actions">
+              <button className="button button-outline" onClick={() => setTypeDialog(null)}>
+                Cancel
+              </button>
+              <button className="button button-primary" onClick={confirmTypeChange}>
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
