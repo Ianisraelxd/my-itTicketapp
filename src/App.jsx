@@ -1,6 +1,6 @@
 import "./App.css";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "./api";
 
@@ -35,6 +35,25 @@ function playAuthSound() {
   } catch {
     // Audio unavailable; ignore.
   }
+}
+
+// Ticket categories. Technician skills are drawn from the same list (minus
+// "Others"), which is how requests get matched to the right technician.
+const SKILL_OPTIONS = [
+  "Hardware",
+  "Software",
+  "Network / Internet",
+  "Account / Login",
+  "Printer",
+];
+const CATEGORY_OPTIONS = [...SKILL_OPTIONS, "Others"];
+
+// How well a ticket fits a technician's skills:
+// "match" = recommended, "mismatch" = outside their skills, "neutral" = no skills
+// assigned yet or a general ("Others") request.
+function skillFit(skills = [], category) {
+  if (!skills.length || !SKILL_OPTIONS.includes(category)) return "neutral";
+  return skills.includes(category) ? "match" : "mismatch";
 }
 
 const ASSIGNMENT_STORAGE_KEY = "helpdesk-ticket-assignments-v1";
@@ -80,7 +99,7 @@ function App() {
   const [pwForm, setPwForm] = useState({ newPassword: "", confirm: "", reason: "" });
   const [pwSubmitting, setPwSubmitting] = useState(false);
   const [request, setRequest] = useState({
-    category: "Hardware",
+    category: "",
     priority: "Medium",
     subject: "",
     location: "",
@@ -212,6 +231,13 @@ function App() {
 
   async function submitRequest(event) {
     event.preventDefault();
+    if (!request.category) {
+      showMessage(
+        "Choose a category",
+        "Please pick the type of problem (for example Hardware or Software) so the right technician can help.",
+      );
+      return;
+    }
     if (
       !request.subject.trim() ||
       !request.location.trim() ||
@@ -244,7 +270,7 @@ function App() {
     refreshData();
     addActivity(`Submitted ${created.id}: ${created.subject}`);
     setRequest({
-      category: "Hardware",
+      category: "",
       priority: "Medium",
       subject: "",
       location: "",
@@ -405,6 +431,7 @@ function App() {
         )}
         {page === "technicianRequestsPage" && (
           <TechnicianRequests
+            mySkills={allUsers.find((item) => item.userId === user.userId)?.skills || []}
             tickets={allTickets.length ? allTickets : tickets}
             ticketAssignments={ticketAssignments}
             setTicketAssignments={setTicketAssignments}
@@ -444,7 +471,9 @@ function App() {
             refreshData={refreshData}
           />
         )}
-        {page === "usersPage" && <UsersPage />}
+        {page === "usersPage" && (
+          <UsersPage currentUser={user} showMessage={showMessage} refreshData={refreshData} />
+        )}
         {page === "passwordRequestsPage" && (
           <PasswordRequestsPage
             requests={pwRequests}
@@ -456,6 +485,9 @@ function App() {
         {page === "activityLogPage" && <ActivityLog activities={activities} />}
         </div>
       </main>
+      {(user.role === "admin" || user.role === "technician") && (
+        <ChatDock me={user} />
+      )}
       <nav className="bottom-nav" aria-label="Main navigation">
         {navFor[roleType].map(([id, icon, label]) => (
           <button
@@ -1220,14 +1252,8 @@ function RequestPage({ request, setRequest, submitRequest }) {
           <SelectField
             label="Category"
             value={request.category}
-            options={[
-              "Hardware",
-              "Network / Internet",
-              "Software",
-              "Account / Login",
-              "Printer",
-              "Others",
-            ]}
+            options={CATEGORY_OPTIONS}
+            placeholder="Select the type of problem"
             onChange={(value) => setRequest({ ...request, category: value })}
           />
           <SelectField
@@ -1270,11 +1296,20 @@ function RequestPage({ request, setRequest, submitRequest }) {
     </>
   );
 }
-function SelectField({ label, value, options, onChange }) {
+function SelectField({ label, value, options, onChange, placeholder }) {
   return (
     <label className="field-label">
       {label}
-      <select value={value} onChange={(event) => onChange(event.target.value)}>
+      <select
+        value={value}
+        required={Boolean(placeholder)}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {placeholder && (
+          <option value="" disabled>
+            {placeholder}
+          </option>
+        )}
         {options.map((option) => (
           <option key={option}>{option}</option>
         ))}
@@ -1404,7 +1439,18 @@ function TechnicianDashboard({ setPage, tickets = [] }) {
     </>
   );
 }
+function SkillChips({ skills = [], empty = "No skills assigned" }) {
+  if (!skills.length) return <span className="skill-empty">{empty}</span>;
+  return (
+    <span className="skill-chips">
+      {skills.map((skill) => (
+        <span className="skill-chip" key={skill}>{skill}</span>
+      ))}
+    </span>
+  );
+}
 function TechnicianRequests({
+  mySkills = [],
   tickets = [],
   ticketAssignments = {},
   setTicketAssignments,
@@ -1413,10 +1459,18 @@ function TechnicianRequests({
   refreshData,
 }) {
   const [localTickets, setLocalTickets] = useState(tickets);
+  const [riskDialog, setRiskDialog] = useState(null);
+  const [view, setView] = useState("all");
 
   useEffect(() => {
     setLocalTickets(tickets);
   }, [tickets]);
+
+  // Pick up skill changes an admin makes while this page is open.
+  useEffect(() => {
+    const timer = setInterval(refreshData, 30000);
+    return () => clearInterval(timer);
+  }, [refreshData]);
 
   const handleResolve = async (ticketId) => {
     try {
@@ -1441,6 +1495,27 @@ function TechnicianRequests({
     }
   };
 
+  const requestResolve = (ticket) => {
+    if (skillFit(mySkills, ticket.category) === "mismatch") {
+      setRiskDialog(ticket);
+      return;
+    }
+    handleResolve(ticket.id);
+  };
+
+  // Recommended tickets float to the top; the rest keep their original order.
+  const rank = { match: 0, neutral: 1, mismatch: 2 };
+  const sorted = [...localTickets].sort(
+    (a, b) => rank[skillFit(mySkills, a.category)] - rank[skillFit(mySkills, b.category)],
+  );
+  const recommendedCount = localTickets.filter(
+    (ticket) => skillFit(mySkills, ticket.category) === "match" && ticket.status !== "Resolved",
+  ).length;
+  const visible =
+    view === "recommended"
+      ? sorted.filter((ticket) => skillFit(mySkills, ticket.category) === "match")
+      : sorted;
+
   return (
     <>
       <PageHeader
@@ -1448,6 +1523,33 @@ function TechnicianRequests({
         title="Assigned requests"
         description="Technical issues currently waiting for action."
       />
+      <section className="panel skill-banner">
+        <div>
+          <span className="eyebrow">YOUR SKILLS</span>
+          <h2><SkillChips skills={mySkills} empty="No skills assigned yet" /></h2>
+          <p>
+            {mySkills.length
+              ? `${recommendedCount} open request${recommendedCount === 1 ? "" : "s"} recommended for you are listed first.`
+              : "Ask an admin to assign your skills so requests can be matched to you."}
+          </p>
+        </div>
+        <div className="segmented" role="tablist" aria-label="Request filter">
+          <button
+            type="button"
+            className={view === "all" ? "active" : ""}
+            onClick={() => setView("all")}
+          >
+            All requests
+          </button>
+          <button
+            type="button"
+            className={view === "recommended" ? "active" : ""}
+            onClick={() => setView("recommended")}
+          >
+            Recommended
+          </button>
+        </div>
+      </section>
       <section className="panel">
         <div className="panel-heading">
           <div>
@@ -1462,6 +1564,8 @@ function TechnicianRequests({
                 <th>Ticket</th>
                 <th>User</th>
                 <th>Issue</th>
+                <th>Category</th>
+                <th>Fit</th>
                 <th>Priority</th>
                 <th>Status</th>
                 <th>Technician</th>
@@ -1470,20 +1574,31 @@ function TechnicianRequests({
               </tr>
             </thead>
             <tbody>
-              {localTickets.length === 0 && (
+              {visible.length === 0 && (
                 <tr>
-                  <td colSpan="8">No tickets are currently available.</td>
+                  <td colSpan="10">
+                    {view === "recommended"
+                      ? "No requests match your skills right now."
+                      : "No tickets are currently available."}
+                  </td>
                 </tr>
               )}
-              {localTickets.map((ticket) => {
+              {visible.map((ticket) => {
                 const assignment = ticketAssignments[ticket.id] || {};
+                const fit = skillFit(mySkills, ticket.category);
                 return (
-                  <tr key={ticket.id}>
+                  <tr key={ticket.id} className={`fit-row fit-${fit}`}>
                     <td>
                       <strong>{ticket.id}</strong>
                     </td>
                     <td>{ticket.userName || "Unknown user"}</td>
                     <td>{ticket.subject}</td>
+                    <td>{ticket.category}</td>
+                    <td>
+                      {fit === "match" && <span className="fit-badge fit-badge-match">★ Recommended</span>}
+                      {fit === "mismatch" && <span className="fit-badge fit-badge-mismatch">⚠ Outside your skills</span>}
+                      {fit === "neutral" && <span className="fit-badge">—</span>}
+                    </td>
                     <td>
                       <Priority value={ticket.priority} />
                     </td>
@@ -1496,7 +1611,7 @@ function TechnicianRequests({
                       <button
                         className="table-button"
                         disabled={ticket.status === "Resolved"}
-                        onClick={() => handleResolve(ticket.id)}
+                        onClick={() => requestResolve(ticket)}
                       >
                         {ticket.status === "Resolved" ? "Resolved" : "Resolve"}
                       </button>
@@ -1508,6 +1623,34 @@ function TechnicianRequests({
           </table>
         </div>
       </section>
+      {riskDialog && (
+        <div className="modal-backdrop" onClick={() => setRiskDialog(null)}>
+          <div className="modal-box risk-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-icon warn-icon">!</div>
+            <h3>Not recommended for your skills</h3>
+            <p>
+              <strong>{riskDialog.id}</strong> is a <strong>{riskDialog.category}</strong> request,
+              which is outside your skills. This is not recommended for your skill. Do this at
+              your own risk.
+            </p>
+            <div className="dialog-actions">
+              <button className="button button-outline" onClick={() => setRiskDialog(null)}>
+                Cancel
+              </button>
+              <button
+                className="button button-primary"
+                onClick={() => {
+                  const ticket = riskDialog;
+                  setRiskDialog(null);
+                  handleResolve(ticket.id);
+                }}
+              >
+                Proceed anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -1528,7 +1671,7 @@ function ManageRequests({
   const handleAssign = async (ticketId) => {
     const ticket = tickets.find((item) => item.id === ticketId);
     if (!ticket) return;
-    setAssignDialog({ ticketId, subject: ticket.subject });
+    setAssignDialog({ ticketId, subject: ticket.subject, category: ticket.category });
   };
 
   const handleView = (ticketId) => {
@@ -1642,15 +1785,26 @@ function ManageRequests({
               {technicians.length === 0 ? (
                 <div className="empty-assignment">No technicians are currently available.</div>
               ) : (
-                technicians.map((technician, index) => {
+                [...technicians]
+                  .sort(
+                    (a, b) =>
+                      Number(skillFit(b.skills, assignDialog.category) === "match") -
+                      Number(skillFit(a.skills, assignDialog.category) === "match"),
+                  )
+                  .map((technician, index) => {
+                  const fit = skillFit(technician.skills, assignDialog.category);
                   const slot = ["9:00 AM - 11:00 AM", "1:00 PM - 3:00 PM", "4:00 PM - 6:00 PM"][index % 3];
                   return (
                     <button
-                      key={technician.id}
+                      key={technician.userId}
                       className="assignment-card"
                       onClick={() => confirmAssign(assignDialog.ticketId, technician, slot)}
                     >
-                      <span className="assignment-name">{technician.name}</span>
+                      <span className="assignment-name">
+                        {technician.name}
+                        {fit === "match" && <span className="fit-badge fit-badge-match">★ Skill match</span>}
+                      </span>
+                      <SkillChips skills={technician.skills} />
                       <span className="assignment-slot">Available: {slot}</span>
                     </button>
                   );
@@ -1861,9 +2015,55 @@ function PasswordRequestsPage({ requests = [], currentUser, showMessage, refresh
     </>
   );
 }
-function UsersPage() {
+function SkillEditor({ technician, onToggle, busy }) {
+  return (
+    <div className="skill-editor">
+      {SKILL_OPTIONS.map((skill) => {
+        const on = technician.skills.includes(skill);
+        return (
+          <button
+            type="button"
+            key={skill}
+            className={`skill-toggle ${on ? "on" : ""}`}
+            aria-pressed={on}
+            disabled={busy}
+            onClick={() => onToggle(technician, skill)}
+          >
+            {on ? "✓ " : "+ "}
+            {skill}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+function UsersPage({ currentUser, showMessage, refreshData }) {
   const [users, setUsers] = useState([]);
-  const [selectedType, setSelectedType] = useState("student");
+  const [selectedType, setSelectedType] = useState("technician");
+  const [savingId, setSavingId] = useState(null);
+
+  async function toggleSkill(technician, skill) {
+    const next = technician.skills.includes(skill)
+      ? technician.skills.filter((item) => item !== skill)
+      : [...technician.skills, skill];
+    setSavingId(technician.userId);
+    try {
+      const result = await api.setTechnicianSkills(technician.userId, {
+        actorId: currentUser.userId,
+        skills: next,
+      });
+      setUsers((rows) =>
+        rows.map((row) =>
+          row.userId === technician.userId ? { ...row, skills: result.skills } : row,
+        ),
+      );
+      refreshData();
+    } catch (error) {
+      showMessage("Could not update skills", error.message || "Please try again.");
+    } finally {
+      setSavingId(null);
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -1916,13 +2116,14 @@ function UsersPage() {
                 <th>Name</th>
                 <th>Role</th>
                 <th>Email</th>
+                {selectedType === "technician" && <th>Skills (tap to assign)</th>}
                 <th>Status</th>
               </tr>
             </thead>
             <tbody>
               {filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan="5">No registered {selectedType} users yet.</td>
+                  <td colSpan="6">No registered {selectedType} users yet.</td>
                 </tr>
               ) : (
                 filteredUsers.map((user, index) => (
@@ -1933,6 +2134,15 @@ function UsersPage() {
                     <td>{user.name}</td>
                     <td>{user.role}</td>
                     <td>{user.email}</td>
+                    {selectedType === "technician" && (
+                      <td>
+                        <SkillEditor
+                          technician={user}
+                          onToggle={toggleSkill}
+                          busy={savingId === user.userId}
+                        />
+                      </td>
+                    )}
                     <td>
                       <Status value="Active" />
                     </td>
@@ -1944,6 +2154,215 @@ function UsersPage() {
         </div>
       </section>
     </>
+  );
+}
+
+function formatChatTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function ChatWindow({ me, contact, onClose }) {
+  const [messages, setMessages] = useState([]);
+  const [draft, setDraft] = useState("");
+  const [collapsed, setCollapsed] = useState(false);
+  const [sending, setSending] = useState(false);
+  const scroller = useRef(null);
+
+  const load = useCallback(
+    () =>
+      api
+        .getConversation(me.userId, contact.userId)
+        .then((rows) =>
+          setMessages((prev) =>
+            prev.length === rows.length && prev.at(-1)?.id === rows.at(-1)?.id ? prev : rows,
+          ),
+        )
+        .catch(() => {}),
+    [me.userId, contact.userId],
+  );
+
+  useEffect(() => {
+    load();
+    const timer = setInterval(load, 3000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  useEffect(() => {
+    if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
+  }, [messages.length, collapsed]);
+
+  async function send(event) {
+    event.preventDefault();
+    const body = draft.trim();
+    if (!body || sending) return;
+    setSending(true);
+    try {
+      await api.sendMessage({ senderId: me.userId, recipientId: contact.userId, body });
+      setDraft("");
+      await load();
+    } catch {
+      // Keep the draft so the message can be retried.
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <section className={`chat-window ${collapsed ? "collapsed" : ""}`} aria-label={`Chat with ${contact.name}`}>
+      <header className="chat-window-head" onClick={() => setCollapsed((value) => !value)}>
+        <span className="chat-avatar">{contact.name.charAt(0)}</span>
+        <div>
+          <strong>{contact.name}</strong>
+          <small>{contact.roleName}</small>
+        </div>
+        <button
+          type="button"
+          className="chat-close"
+          aria-label="Close chat"
+          onClick={(event) => {
+            event.stopPropagation();
+            onClose();
+          }}
+        >
+          ×
+        </button>
+      </header>
+      {!collapsed && (
+        <>
+          <div className="chat-messages" ref={scroller}>
+            {messages.length === 0 && (
+              <p className="chat-empty">
+                Say hi to {contact.name}. Only admins and technicians can message each other.
+              </p>
+            )}
+            {messages.map((message, index) => {
+              const mine = message.senderId === me.userId;
+              const newSender = messages[index - 1]?.senderId !== message.senderId;
+              return (
+                <div className={`chat-msg ${mine ? "mine" : "theirs"}`} key={message.id}>
+                  {newSender && (
+                    <span className="chat-meta">
+                      <b>{mine ? "You" : message.senderName}</b> · {message.senderRole}
+                    </span>
+                  )}
+                  <span className="chat-bubble" title={formatChatTime(message.createdAt)}>
+                    {message.body}
+                    <time>{formatChatTime(message.createdAt)}</time>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <form className="chat-compose" onSubmit={send}>
+            <input
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder="Type a message…"
+              maxLength={1000}
+              aria-label="Message"
+              autoFocus
+            />
+            <button type="submit" disabled={!draft.trim() || sending} aria-label="Send">
+              ➤
+            </button>
+          </form>
+        </>
+      )}
+    </section>
+  );
+}
+
+// Facebook-style chat: a floating button, a contact list, and docked windows.
+function ChatDock({ me }) {
+  const [open, setOpen] = useState(false);
+  const [contacts, setContacts] = useState([]);
+  const [windows, setWindows] = useState([]);
+  const unread = contacts.reduce((total, contact) => total + contact.unread, 0);
+
+  useEffect(() => {
+    let active = true;
+    const load = () =>
+      api
+        .getChatContacts(me.userId)
+        .then((rows) => active && setContacts(rows))
+        .catch(() => {});
+    load();
+    const timer = setInterval(load, 5000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [me.userId]);
+
+  function openChat(contact) {
+    setWindows((current) =>
+      current.some((item) => item.userId === contact.userId)
+        ? current
+        : [...current.slice(-1), contact],
+    );
+    setOpen(false);
+  }
+
+  return (
+    <div className="chat-dock">
+      <div className="chat-windows">
+        {windows.map((contact) => (
+          <ChatWindow
+            key={contact.userId}
+            me={me}
+            contact={contact}
+            onClose={() => setWindows((current) => current.filter((item) => item.userId !== contact.userId))}
+          />
+        ))}
+      </div>
+      <div className="chat-launcher-wrap">
+        {open && (
+          <div className="chat-list" role="dialog" aria-label="Messages">
+            <header>
+              <strong>Messages</strong>
+              <small>Admins and technicians</small>
+            </header>
+            <div className="chat-list-body">
+              {contacts.length === 0 && (
+                <p className="chat-empty">No other admins or technicians yet.</p>
+              )}
+              {contacts.map((contact) => (
+                <button
+                  type="button"
+                  className="chat-contact"
+                  key={contact.userId}
+                  onClick={() => openChat(contact)}
+                >
+                  <span className="chat-avatar">{contact.name.charAt(0)}</span>
+                  <span className="chat-contact-text">
+                    <strong>{contact.name}</strong>
+                    <small>{contact.roleName}</small>
+                    {contact.lastBody && (
+                      <em className={contact.unread ? "unread" : ""}>{contact.lastBody}</em>
+                    )}
+                  </span>
+                  {contact.unread > 0 && <b className="chat-badge">{contact.unread}</b>}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <button
+          type="button"
+          className={`chat-launcher ${open ? "open" : ""}`}
+          onClick={() => setOpen((value) => !value)}
+          aria-label="Open messages"
+          aria-expanded={open}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3C6.5 3 2 6.9 2 11.7c0 2.6 1.3 4.9 3.4 6.5V22l3.6-2c1 .3 2 .4 3 .4 5.5 0 10-3.9 10-8.7S17.5 3 12 3Z" />
+          </svg>
+          {unread > 0 && <b className="chat-badge">{unread}</b>}
+        </button>
+      </div>
+    </div>
   );
 }
 const pct = (part, whole) => (whole ? Math.round((part / whole) * 100) : 0);

@@ -12,6 +12,7 @@ CREATE DATABASE IF NOT EXISTS helpdesk
 USE helpdesk;
 
 -- Drop in dependency order so re-running the script is safe.
+DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS activities;
 DROP TABLE IF EXISTS password_requests;
 DROP TABLE IF EXISTS tickets;
@@ -25,6 +26,7 @@ CREATE TABLE users (
   role       VARCHAR(32)  NOT NULL,          -- student | employee | technician | admin | superadmin
   role_name  VARCHAR(120) NOT NULL,
   email      VARCHAR(160) NULL,
+  skills     VARCHAR(255) NOT NULL DEFAULT '',  -- comma-separated ticket categories a technician is recommended for
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_user_role (id_number, role)
 );
@@ -86,3 +88,22 @@ INSERT INTO users (id_number, password, name, role, role_name, email) VALUES
 
 INSERT INTO activities (actor_name, actor_role, action, created_at) VALUES
   ('System', 'System', 'Database initialized', '2026-08-30 10:30:00');
+
+-- Extra technicians with different skills, so recommendations are visible.
+INSERT INTO users (id_number, password, name, role, role_name, email, skills) VALUES
+  ('2404155', '123456technician', 'Software Technician', 'technician', 'Technician', 'software.tech@campus.edu', 'Software,Account / Login'),
+  ('2404156', '123456technician', 'Network Technician',  'technician', 'Technician', 'network.tech@campus.edu',  'Network / Internet');
+UPDATE users SET skills = 'Hardware,Printer' WHERE id_number = '2404154' AND role = 'technician';
+
+-- Instant messages between admins and technicians (chat dock).
+CREATE TABLE messages (
+  message_pk   INT AUTO_INCREMENT PRIMARY KEY,
+  sender_pk    INT NOT NULL,
+  recipient_pk INT NOT NULL,
+  body         VARCHAR(1000) NOT NULL,
+  created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  read_at      TIMESTAMP NULL,
+  KEY idx_msg_pair (sender_pk, recipient_pk),
+  CONSTRAINT fk_msg_sender FOREIGN KEY (sender_pk) REFERENCES users(user_pk) ON DELETE CASCADE,
+  CONSTRAINT fk_msg_recipient FOREIGN KEY (recipient_pk) REFERENCES users(user_pk) ON DELETE CASCADE
+);

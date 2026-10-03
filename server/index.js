@@ -170,11 +170,111 @@ app.post("/api/activities", wrap(async (req, res) => {
 }));
 
 // --- Users ------------------------------------------------------------------
+const parseSkills = (value) =>
+  String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
 app.get("/api/users", wrap(async (_req, res) => {
   const rows = await query(
-    "SELECT id_number AS id, name, role_name AS role, email FROM users ORDER BY user_pk",
+    "SELECT user_pk AS userId, id_number AS id, name, role_name AS role, role AS roleKey, email, skills FROM users ORDER BY user_pk",
+  );
+  res.json(rows.map((row) => ({ ...row, skills: parseSkills(row.skills) })));
+}));
+
+// Admins assign the skills a technician is recommended for.
+app.patch("/api/users/:userId/skills", wrap(async (req, res) => {
+  const { actorId, skills } = req.body ?? {};
+  const actors = await query("SELECT role FROM users WHERE user_pk = ? LIMIT 1", [actorId ?? 0]);
+  if (!actors[0] || !["admin", "superadmin"].includes(actors[0].role)) {
+    return res.status(403).json({ error: "Only admins can assign technician skills." });
+  }
+  if (!Array.isArray(skills)) {
+    return res.status(400).json({ error: "skills must be a list." });
+  }
+  const targets = await query(
+    "SELECT user_pk, name FROM users WHERE user_pk = ? AND role = 'technician' LIMIT 1",
+    [req.params.userId],
+  );
+  if (!targets[0]) {
+    return res.status(404).json({ error: "Technician not found." });
+  }
+  const clean = [...new Set(skills.map((s) => String(s).trim()).filter(Boolean))];
+  await query("UPDATE users SET skills = ? WHERE user_pk = ?", [clean.join(","), targets[0].user_pk]);
+  const actorRows = await query("SELECT name, role_name FROM users WHERE user_pk = ?", [actorId]);
+  await query(
+    "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
+    [
+      actorRows[0].name,
+      actorRows[0].role_name,
+      `Set skills for ${targets[0].name}: ${clean.join(", ") || "none"}`,
+    ],
+  );
+  res.json({ ok: true, skills: clean });
+}));
+
+// --- Messaging (admins <-> technicians only) -----------------------------------
+const CHAT_ROLES = ["admin", "technician"];
+
+async function chatUser(userId) {
+  const rows = await query(
+    "SELECT user_pk, name, role, role_name FROM users WHERE user_pk = ? LIMIT 1",
+    [userId ?? 0],
+  );
+  return rows[0] && CHAT_ROLES.includes(rows[0].role) ? rows[0] : null;
+}
+
+// Contacts for the chat dock, with last message + unread count per contact.
+app.get("/api/messages/contacts", wrap(async (req, res) => {
+  const me = await chatUser(req.query.userId);
+  if (!me) return res.status(403).json({ error: "Messaging is limited to admins and technicians." });
+  const rows = await query(
+    `SELECT u.user_pk AS userId, u.name, u.role_name AS roleName,
+       (SELECT body FROM messages m WHERE (m.sender_pk = u.user_pk AND m.recipient_pk = ?) OR (m.sender_pk = ? AND m.recipient_pk = u.user_pk) ORDER BY m.message_pk DESC LIMIT 1) AS lastBody,
+       (SELECT created_at FROM messages m WHERE (m.sender_pk = u.user_pk AND m.recipient_pk = ?) OR (m.sender_pk = ? AND m.recipient_pk = u.user_pk) ORDER BY m.message_pk DESC LIMIT 1) AS lastAt,
+       (SELECT COUNT(*) FROM messages m WHERE m.sender_pk = u.user_pk AND m.recipient_pk = ? AND m.read_at IS NULL) AS unread
+     FROM users u WHERE u.role IN ('admin','technician') AND u.user_pk <> ?
+     ORDER BY lastAt IS NULL, lastAt DESC, u.name`,
+    [me.user_pk, me.user_pk, me.user_pk, me.user_pk, me.user_pk, me.user_pk],
+  );
+  res.json(rows.map((r) => ({ ...r, unread: Number(r.unread) })));
+}));
+
+// Conversation with one contact. Fetching marks their messages as read.
+app.get("/api/messages", wrap(async (req, res) => {
+  const me = await chatUser(req.query.userId);
+  const other = await chatUser(req.query.withId);
+  if (!me || !other) return res.status(403).json({ error: "Messaging is limited to admins and technicians." });
+  await query(
+    "UPDATE messages SET read_at = NOW() WHERE sender_pk = ? AND recipient_pk = ? AND read_at IS NULL",
+    [other.user_pk, me.user_pk],
+  );
+  const rows = await query(
+    `SELECT m.message_pk AS id, m.sender_pk AS senderId, s.name AS senderName, s.role_name AS senderRole,
+       m.body, m.created_at AS createdAt
+     FROM messages m JOIN users s ON s.user_pk = m.sender_pk
+     WHERE (m.sender_pk = ? AND m.recipient_pk = ?) OR (m.sender_pk = ? AND m.recipient_pk = ?)
+     ORDER BY m.message_pk ASC LIMIT 200`,
+    [me.user_pk, other.user_pk, other.user_pk, me.user_pk],
   );
   res.json(rows);
+}));
+
+app.post("/api/messages", wrap(async (req, res) => {
+  const { senderId, recipientId, body } = req.body ?? {};
+  const sender = await chatUser(senderId);
+  const recipient = await chatUser(recipientId);
+  if (!sender || !recipient || sender.user_pk === recipient.user_pk) {
+    return res.status(403).json({ error: "Messaging is limited to admins and technicians." });
+  }
+  const text = String(body ?? "").trim().slice(0, 1000);
+  if (!text) return res.status(400).json({ error: "Message cannot be empty." });
+  const result = await pool.execute(
+    "INSERT INTO messages (sender_pk, recipient_pk, body) VALUES (?, ?, ?)",
+    [sender.user_pk, recipient.user_pk, text],
+  );
+  res.status(201).json({ id: result[0].insertId, ok: true });
 }));
 
 // --- Profile ----------------------------------------------------------------

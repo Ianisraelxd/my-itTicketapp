@@ -64,4 +64,21 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload),
     }),
+
+  setTechnicianSkills: (userId, payload) =>
+    request(`/users/${encodeURIComponent(userId)}/skills`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
+  getChatContacts: (userId) =>
+    request(`/messages/contacts?userId=${encodeURIComponent(userId)}`),
+
+  getConversation: (userId, withId) =>
+    request(
+      `/messages?userId=${encodeURIComponent(userId)}&withId=${encodeURIComponent(withId)}`,
+    ),
+
+  sendMessage: (message) =>
+    request("/messages", { method: "POST", body: JSON.stringify(message) }),
 };
