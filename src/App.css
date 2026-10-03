@@ -351,7 +351,7 @@ button.sidebar-user:hover .profile-chevron {
 }
 
 .page {
-    animation: rise .55s var(--ease) both
+    animation: rise .55s var(--ease) backwards
 }
 
 .mobile-header,
