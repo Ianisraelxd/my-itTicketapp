@@ -88,14 +88,14 @@ app.get("/api/tickets", wrap(async (req, res) => {
 
   if (mine === "1" && userId) {
     const rows = await query(
-      "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.created_at AS createdAt, t.created_by, u.name AS userName, u.role_name AS userRole FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by WHERE t.created_by = ? ORDER BY t.ticket_pk DESC",
+      "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.description, t.created_at AS createdAt, t.created_by, u.name AS userName, u.role_name AS userRole FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by WHERE t.created_by = ? ORDER BY t.ticket_pk DESC",
       [userId],
     );
     return res.json(rows);
   }
 
   const rows = await query(
-    "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.created_at AS createdAt, t.created_by, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by ORDER BY t.ticket_pk DESC",
+    "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.description, t.created_at AS createdAt, t.created_by, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by ORDER BY t.ticket_pk DESC",
   );
   res.json(rows);
 }));

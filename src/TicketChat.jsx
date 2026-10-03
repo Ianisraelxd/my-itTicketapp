@@ -267,28 +267,66 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
   );
 }
 
-// Ticket details sheet: summary on top, conversation below.
+// Two side-by-side cards: the ticket's details on the left, the conversation on
+// the right. On phones they become two tabs.
 export function TicketDetailsModal({ ticket, me, onClose, onChanged, showMessage }) {
+  const [tab, setTab] = useState("chat");
+  const submitted = ticket.createdAt ? formatTime(ticket.createdAt) : "";
+  const facts = [
+    ["Category", ticket.category],
+    ["Priority", `${ticket.priority}`],
+    ["Location", ticket.location || "Not provided"],
+    ["Requested by", ticket.userName || "Unknown"],
+    ["Submitted", submitted || "—"],
+  ];
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-box ticket-sheet" onClick={(event) => event.stopPropagation()}>
-        <button type="button" className="modal-close" aria-label="Close" onClick={onClose}>
+      <div className="ticket-duo" onClick={(event) => event.stopPropagation()}>
+        <button type="button" className="ticket-duo-close" aria-label="Close" onClick={onClose}>
           ×
         </button>
-        <header className="ticket-sheet-head">
+        <div className="ticket-tabs segmented" role="tablist" aria-label="Ticket sections">
+          <button
+            type="button"
+            className={tab === "details" ? "active" : ""}
+            onClick={() => setTab("details")}
+          >
+            Details
+          </button>
+          <button
+            type="button"
+            className={tab === "chat" ? "active" : ""}
+            onClick={() => setTab("chat")}
+          >
+            Chat
+          </button>
+        </div>
+
+        <aside className={`ticket-card ticket-info ${tab === "details" ? "show" : ""}`}>
           <span className="eyebrow">{ticket.id}</span>
           <h3>{ticket.subject}</h3>
-          <div className="ticket-sheet-meta">
-            <span>{ticket.category}</span>
-            <span>{ticket.priority} priority</span>
-            <span className={`status status-${ticket.status.toLowerCase().replace(" ", "-")}`}>
-              <i></i>
-              {ticket.status}
-            </span>
-            {ticket.userName && <span>By {ticket.userName}</span>}
+          <span className={`status status-${ticket.status.toLowerCase().replace(" ", "-")}`}>
+            <i></i>
+            {ticket.status}
+          </span>
+          <dl className="ticket-facts">
+            {facts.map(([label, value]) => (
+              <div key={label}>
+                <dt>{label}</dt>
+                <dd>{value}</dd>
+              </div>
+            ))}
+          </dl>
+          <div className="ticket-description">
+            <span className="eyebrow">DESCRIPTION</span>
+            <p>{ticket.description || "No description was provided."}</p>
           </div>
-        </header>
-        <TicketChat ticket={ticket} me={me} onChanged={onChanged} showMessage={showMessage} />
+        </aside>
+
+        <section className={`ticket-card ticket-chat-card ${tab === "chat" ? "show" : ""}`}>
+          <TicketChat ticket={ticket} me={me} onChanged={onChanged} showMessage={showMessage} />
+        </section>
       </div>
     </div>
   );
