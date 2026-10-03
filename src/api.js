@@ -77,6 +77,23 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  cancelTicket: (ticketId, userId) =>
+    request(`/tickets/${encodeURIComponent(ticketId)}/cancel`, {
+      method: "PUT",
+      body: JSON.stringify({ userId }),
+    }),
+
+  getTicketMessages: (ticketId, userId) =>
+    request(
+      `/tickets/${encodeURIComponent(ticketId)}/messages?userId=${encodeURIComponent(userId)}`,
+    ),
+
+  sendTicketMessage: (ticketId, payload) =>
+    request(`/tickets/${encodeURIComponent(ticketId)}/messages`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
   getChatContacts: (userId) =>
     request(`/messages/contacts?userId=${encodeURIComponent(userId)}`),
 

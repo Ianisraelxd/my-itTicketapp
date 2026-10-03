@@ -12,6 +12,7 @@ CREATE DATABASE IF NOT EXISTS helpdesk
 USE helpdesk;
 
 -- Drop in dependency order so re-running the script is safe.
+DROP TABLE IF EXISTS ticket_messages;
 DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS activities;
 DROP TABLE IF EXISTS password_requests;
@@ -37,7 +38,7 @@ CREATE TABLE tickets (
   subject     VARCHAR(200) NOT NULL,
   category    VARCHAR(80)  NOT NULL,
   priority    VARCHAR(20)  NOT NULL,         -- Low | Medium | High
-  status      VARCHAR(20)  NOT NULL DEFAULT 'Open', -- Open | In Progress | Resolved
+  status      VARCHAR(20)  NOT NULL DEFAULT 'Open', -- Open | In Progress | Resolved | Cancelled
   location    VARCHAR(160) NULL,
   description TEXT NULL,
   created_by  INT NULL,
@@ -106,4 +107,19 @@ CREATE TABLE messages (
   KEY idx_msg_pair (sender_pk, recipient_pk),
   CONSTRAINT fk_msg_sender FOREIGN KEY (sender_pk) REFERENCES users(user_pk) ON DELETE CASCADE,
   CONSTRAINT fk_msg_recipient FOREIGN KEY (recipient_pk) REFERENCES users(user_pk) ON DELETE CASCADE
+);
+
+-- Per-ticket conversation between the requester and staff. The same table holds
+-- general chat (kind = 'chat') and cancellation requests for tickets that are
+-- already In Progress (kind = 'cancellation_request').
+CREATE TABLE ticket_messages (
+  message_pk   INT AUTO_INCREMENT PRIMARY KEY,
+  ticket_pk    INT NOT NULL,
+  sender_pk    INT NOT NULL,
+  message_text VARCHAR(1000) NOT NULL,
+  kind         VARCHAR(24)   NOT NULL DEFAULT 'chat',  -- chat | cancellation_request
+  created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_ticket_msg (ticket_pk, message_pk),
+  CONSTRAINT fk_tmsg_ticket FOREIGN KEY (ticket_pk) REFERENCES tickets(ticket_pk) ON DELETE CASCADE,
+  CONSTRAINT fk_tmsg_sender FOREIGN KEY (sender_pk) REFERENCES users(user_pk) ON DELETE CASCADE
 );
