@@ -123,7 +123,7 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
   return (
     <div className="ticket-chat">
       <div className="ticket-chat-head">
-        <strong>Group conversation</strong>
+        <strong>Conversation</strong>
         {isOwner && !closed && (
           <button
             type="button"
@@ -135,7 +135,7 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
           </button>
         )}
       </div>
-      {participants.length > 0 && (
+      {!isOwner && participants.length > 0 && (
         <div className="ticket-people" aria-label="People in this conversation">
           {participants.map((person) => (
             <span
