@@ -214,6 +214,53 @@ app.patch("/api/users/:userId/skills", wrap(async (req, res) => {
   res.json({ ok: true, skills: clean });
 }));
 
+// Admins can switch an account between Employee and Technician.
+app.patch("/api/users/:userId/role", wrap(async (req, res) => {
+  const { actorId, role } = req.body ?? {};
+  const actors = await query(
+    "SELECT name, role, role_name FROM users WHERE user_pk = ? LIMIT 1",
+    [actorId ?? 0],
+  );
+  const actor = actors[0];
+  if (!actor || actor.role !== "admin") {
+    return res.status(403).json({ error: "Only admins can change a user's type." });
+  }
+  if (!["employee", "technician"].includes(role)) {
+    return res.status(400).json({ error: "Type must be employee or technician." });
+  }
+  const targets = await query(
+    "SELECT user_pk, id_number, name, role FROM users WHERE user_pk = ? LIMIT 1",
+    [req.params.userId],
+  );
+  const target = targets[0];
+  if (!target || !["employee", "technician"].includes(target.role)) {
+    return res.status(404).json({ error: "Only employees and technicians can be changed." });
+  }
+  if (target.role === role) {
+    return res.json({ ok: true, role, roleName: role === "employee" ? "Employee" : "Technician" });
+  }
+  const clash = await query(
+    "SELECT user_pk FROM users WHERE id_number = ? AND role = ? LIMIT 1",
+    [target.id_number, role],
+  );
+  if (clash.length > 0) {
+    return res.status(409).json({
+      error: `A ${role} account with ID ${target.id_number} already exists.`,
+    });
+  }
+  const roleName = role === "employee" ? "Employee" : "Technician";
+  // Skills only apply to technicians, so clear them when leaving that role.
+  await query(
+    "UPDATE users SET role = ?, role_name = ?, skills = IF(? = 'technician', skills, '') WHERE user_pk = ?",
+    [role, roleName, role, target.user_pk],
+  );
+  await query(
+    "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
+    [actor.name, actor.role_name, `Changed ${target.name} from ${target.role} to ${role}`],
+  );
+  res.json({ ok: true, role, roleName });
+}));
+
 // --- Messaging (admins <-> technicians only) -----------------------------------
 const CHAT_ROLES = ["admin", "technician"];
 

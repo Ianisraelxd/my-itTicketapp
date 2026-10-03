@@ -174,6 +174,7 @@ Base path: `/api` (proxied to `http://localhost:3001` in development).
 | GET / POST | `/api/activities` | List or add activity log entries. |
 | GET | `/api/users` | List users, including each technician's `skills`. |
 | PATCH | `/api/users/:userId/skills` | Admin only. Body: `{ actorId, skills: [...] }`. |
+| PATCH | `/api/users/:userId/role` | Admin only. Body: `{ actorId, role }` where role is `employee` or `technician`; clears skills when leaving technician. |
 | GET | `/api/profile/:userId` | Account details for the profile panel. |
 | GET / POST | `/api/password-requests` | List or file password-change requests. |
 | PATCH | `/api/password-requests/:code/status` | Approve or reject a password-change request. |
