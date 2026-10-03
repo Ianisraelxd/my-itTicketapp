@@ -3,6 +3,7 @@ import "./App.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "./api";
+import { playSound } from "./sounds";
 import { TicketDetailsModal } from "./TicketChat";
 
 const navFor = {
@@ -30,16 +31,6 @@ const navFor = {
     ["activityLogPage", "◷", "Activity Log Reports"],
   ],
 };
-
-// Played after a successful login or signup (including via the Enter key).
-function playAuthSound() {
-  try {
-    const audio = new Audio("/login-sound.mp3");
-    audio.play().catch(() => {});
-  } catch {
-    // Audio unavailable; ignore.
-  }
-}
 
 // Ticket categories. Technician skills are drawn from the same list (minus
 // "Others"), which is how requests get matched to the right technician.
@@ -150,6 +141,8 @@ function App() {
           if (seen) {
             const fresh = data.items.filter((item) => !item.read && !seen.has(item.id));
             if (fresh.length > 0) {
+              // Chat messages already have their own sound while a chat is open.
+              playSound(fresh.every((item) => item.type === "message") ? "received" : "notification");
               setToasts((current) => [...fresh.slice(0, 3), ...current].slice(0, 4));
               setRefreshKey((value) => value + 1);
             }
@@ -252,7 +245,7 @@ function App() {
       );
       return;
     }
-    playAuthSound();
+    playSound("login");
     setUser(account);
     refreshData();
     const landing =
@@ -754,7 +747,7 @@ function AuthScreen({
                       userType: signupForm.userType,
                       password: signupForm.password,
                     });
-                    playAuthSound();
+                    playSound("signup");
                     showMessage(
                       "Account created",
                       "Your account was created successfully. You can now log in.",
@@ -2385,16 +2378,27 @@ function ChatWindow({ me, contact, onClose }) {
   const [collapsed, setCollapsed] = useState(false);
   const [sending, setSending] = useState(false);
   const scroller = useRef(null);
+  const lastSeenId = useRef(null);
 
   const load = useCallback(
     () =>
       api
         .getConversation(me.userId, contact.userId)
-        .then((rows) =>
+        .then((rows) => {
+          const newest = rows.at(-1);
+          if (
+            lastSeenId.current !== null &&
+            newest &&
+            newest.id !== lastSeenId.current &&
+            newest.senderId !== me.userId
+          ) {
+            playSound("received");
+          }
+          lastSeenId.current = newest ? newest.id : 0;
           setMessages((prev) =>
             prev.length === rows.length && prev.at(-1)?.id === rows.at(-1)?.id ? prev : rows,
-          ),
-        )
+          );
+        })
         .catch(() => {}),
     [me.userId, contact.userId],
   );
@@ -2416,6 +2420,7 @@ function ChatWindow({ me, contact, onClose }) {
     setSending(true);
     try {
       await api.sendMessage({ senderId: me.userId, recipientId: contact.userId, body });
+      playSound("sent");
       setDraft("");
       await load();
     } catch {
@@ -2496,13 +2501,34 @@ function ChatDock({ me }) {
   const [contacts, setContacts] = useState([]);
   const [windows, setWindows] = useState([]);
   const unread = contacts.reduce((total, contact) => total + contact.unread, 0);
+  const openWindowIds = useRef([]);
+  const knownUnread = useRef(null);
+
+  useEffect(() => {
+    openWindowIds.current = windows.map((item) => item.userId);
+  }, [windows]);
 
   useEffect(() => {
     let active = true;
     const load = () =>
       api
         .getChatContacts(me.userId)
-        .then((rows) => active && setContacts(rows))
+        .then((rows) => {
+          if (!active) return;
+          const previous = knownUnread.current;
+          if (
+            previous &&
+            rows.some(
+              (row) =>
+                row.unread > (previous[row.userId] || 0) &&
+                !openWindowIds.current.includes(row.userId),
+            )
+          ) {
+            playSound("received");
+          }
+          knownUnread.current = Object.fromEntries(rows.map((row) => [row.userId, row.unread]));
+          setContacts(rows);
+        })
         .catch(() => {});
     load();
     const timer = setInterval(load, 5000);

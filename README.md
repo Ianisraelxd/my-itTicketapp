@@ -45,7 +45,7 @@ The project ships in two forms:
 - **Admin / technician chat** — a Facebook-style chat dock (bottom-right) lets admins and technicians message each other. Every message shows the sender's name and role. Other roles can't use it.
 - **Super Admin reporting** — Dashboard with KPIs, a Report Manager (charts, location heat map, filters by category, time range and role) and full Activity Log Reports.
 - **Responsive layout** — sidebar on desktop, icon rail on tablets, bottom tab bar on phones, with animations that respect reduced-motion settings.
-- **Login sound** — plays after a successful login or signup.
+- **Sound effects** — login, signup, message sent, message received and new-notification sounds (helper in `src/sounds.js`, files in `public/sounds/`).
 
 ---
 
@@ -65,7 +65,7 @@ The project ships in two forms:
 
 ```
 my-react-app/
-├─ public/                 # Static assets served as-is (incl. login-sound.mp3)
+├─ public/                 # Static assets served as-is (sound effects in sounds/)
 ├─ server/                 # Express + MySQL backend
 │  ├─ db.js                # MySQL connection pool + query helper
 │  ├─ index.js             # API server and routes

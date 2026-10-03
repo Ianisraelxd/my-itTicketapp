@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "./api";
+import { playSound } from "./sounds";
 
 const CLOSED_STATUSES = ["Resolved", "Done", "Closed", "Cancelled"];
 
@@ -31,6 +32,7 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const scroller = useRef(null);
+  const lastSeenId = useRef(null);
 
   const isOwner = ticket.created_by === me.userId;
   const closed = CLOSED_STATUSES.includes(ticket.status);
@@ -44,6 +46,16 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
         api.getTicketCancellations(ticket.id, me.userId),
       ])
         .then(([rows, cancellations]) => {
+          const newest = rows.at(-1);
+          if (
+            lastSeenId.current !== null &&
+            newest &&
+            newest.id !== lastSeenId.current &&
+            newest.senderId !== me.userId
+          ) {
+            playSound("received");
+          }
+          lastSeenId.current = newest ? newest.id : 0;
           setMessages((prev) =>
             prev.length === rows.length && prev.at(-1)?.id === rows.at(-1)?.id ? prev : rows,
           );
@@ -70,6 +82,7 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
     setSending(true);
     try {
       await api.sendTicketMessage(ticket.id, { userId: me.userId, text });
+      playSound("sent");
       setDraft("");
       await load();
     } catch (error) {
