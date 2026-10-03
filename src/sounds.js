@@ -11,7 +11,7 @@ const FILES = {
   notification: "/sounds/notification.mp3",
 };
 
-const TARGET_PEAK = 0.5;
+const TARGET_PEAK = 0.4; // 20% below the previous 0.5
 const MAX_GAIN = 6;
 
 // The same sound never retriggers within this window (polling can report one
