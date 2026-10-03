@@ -5,7 +5,7 @@ A role-based IT support desk for a campus, built with **React + Vite**, backed b
 The project ships in two forms:
 
 1. **Full app** — React frontend + Express API + MySQL database (real persistence).
-2. **Presentation build** — a single self-contained `presentation.html` that runs the whole UI in the browser using `localStorage` instead of a database. No backend, no build step.
+2. **Presentation build** — a single self-contained `presentation/index.html` that runs the whole UI in the browser using `localStorage` instead of a database. No backend, no build step.
 
 ---
 
