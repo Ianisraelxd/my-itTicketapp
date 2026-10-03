@@ -3215,3 +3215,112 @@ td .fit-badge-match { margin-left: 0 }
 @media (max-width: 640px) {
     .auth-settings { top: 12px; right: 12px }
 }
+
+/* ==========================================================================
+   Report Manager: Recharts containers, skeletons, filters
+   ========================================================================== */
+.chart-box { width: 100%; min-width: 0 }
+.chart-box .recharts-wrapper:focus,
+.chart-box .recharts-surface:focus { outline: none }
+.chart-empty { display: grid; place-items: center; text-align: center }
+
+@keyframes skeleton-pulse {
+    0%, 100% { opacity: .55 }
+    50% { opacity: 1 }
+}
+
+.chart-skeleton {
+    position: relative;
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 4px 4px 0;
+    overflow: hidden
+}
+
+.chart-skeleton-grid {
+    position: absolute;
+    inset: 4px 4px 22px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    pointer-events: none
+}
+
+.chart-skeleton-grid span { height: 1px; background: #edf1ef }
+
+.chart-skeleton-bars {
+    position: relative;
+    flex: 1;
+    display: flex;
+    align-items: flex-end;
+    gap: 3%;
+    padding: 0 3%
+}
+
+.chart-skeleton-bars i {
+    flex: 1;
+    border-radius: 8px 8px 0 0;
+    background: linear-gradient(180deg, #dbe8e0, #e9f1ec);
+    animation: skeleton-pulse 1.3s ease-in-out infinite
+}
+
+.chart-skeleton-axis {
+    height: 10px;
+    margin: 0 3%;
+    border-radius: 6px;
+    background: #e9f1ec;
+    animation: skeleton-pulse 1.3s ease-in-out infinite
+}
+
+.stat-card strong.kpi-loading {
+    width: 84px;
+    height: 34px;
+    border-radius: 8px;
+    background: #e9f1ec;
+    animation: skeleton-pulse 1.3s ease-in-out infinite
+}
+
+.report-filters .filter-presets {
+    display: inline-flex;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 12px;
+    background: var(--mint)
+}
+
+.filter-presets button {
+    padding: 8px 12px;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    color: var(--green);
+    font-size: 12px;
+    font-weight: 700;
+    transition: background .25s, box-shadow .25s
+}
+
+.filter-presets button.active { background: #fff; box-shadow: var(--shadow-sm) }
+
+.filter-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 10px
+}
+
+.report-error {
+    border: 1px solid #ecc5bd;
+    background: #fdf3f1
+}
+
+.report-error p { margin: 4px 0 14px }
+
+@media (max-width: 640px) {
+    .report-filters label { width: 100% }
+    .report-filters .filter-presets { width: 100%; justify-content: space-between }
+    .filter-presets button { flex: 1; padding: 8px 4px }
+    .filter-actions { width: 100%; margin-left: 0 }
+    .filter-actions .button { flex: 1 }
+}

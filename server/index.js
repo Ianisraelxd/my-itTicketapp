@@ -496,6 +496,95 @@ app.patch("/api/cancellation-requests/:code/status", wrap(async (req, res) => {
   res.json({ ok: true, id: req.params.code, status: finalStatus });
 }));
 
+// --- Reports (Super Admin) -----------------------------------------------------
+// One round trip returns every aggregation the Report Manager charts need. All
+// breakdowns respect the same filters: date range, ticket category, requester role.
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+app.get("/api/reports/summary", wrap(async (req, res) => {
+  const actors = await query("SELECT role FROM users WHERE user_pk = ? LIMIT 1", [req.query.userId ?? 0]);
+  if (!actors[0] || actors[0].role !== "superadmin") {
+    return res.status(403).json({ error: "Only the super admin can view reports." });
+  }
+
+  const from = ISO_DATE.test(req.query.from ?? "") ? req.query.from : null;
+  const to = ISO_DATE.test(req.query.to ?? "") ? req.query.to : null;
+  const category = req.query.category && req.query.category !== "All" ? String(req.query.category) : null;
+  const role = req.query.role && req.query.role !== "All" ? String(req.query.role) : null;
+
+  const where = ["1 = 1"];
+  const params = [];
+  if (from) { where.push("t.created_at >= ?"); params.push(`${from} 00:00:00`); }
+  if (to) { where.push("t.created_at < DATE_ADD(?, INTERVAL 1 DAY)"); params.push(to); }
+  if (category) { where.push("t.category = ?"); params.push(category); }
+  if (role) { where.push("u.role = ?"); params.push(role); }
+  const filter = `FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by WHERE ${where.join(" AND ")}`;
+
+  // `expression` and `order` are fixed strings from this file, never user input.
+  const grouped = async (expression, { order = "value DESC", limit = 50 } = {}) => {
+    const rows = await query(
+      `SELECT COALESCE(${expression}, 'Unspecified') AS label, COUNT(*) AS value ${filter} GROUP BY label ORDER BY ${order} LIMIT ${limit}`,
+      params,
+    );
+    return rows.map((row) => ({ label: row.label, value: Number(row.value) }));
+  };
+
+  const [totalsRow] = await query(
+    `SELECT COUNT(*) AS total,
+       COALESCE(SUM(t.status = 'Resolved'), 0) AS resolved,
+       COALESCE(SUM(t.status IN ('Open', 'In Progress')), 0) AS backlog,
+       COALESCE(SUM(t.status = 'Cancelled'), 0) AS cancelled,
+       COALESCE(SUM(t.priority = 'High'), 0) AS high ${filter}`,
+    params,
+  );
+
+  const [byStatus, byCategory, byPriority, byRole, byLocation, dayRows, usersByRole] = await Promise.all([
+    grouped("t.status", { order: "FIELD(label, 'Open', 'In Progress', 'Resolved', 'Cancelled')" }),
+    grouped("t.category"),
+    grouped("t.priority", { order: "FIELD(label, 'High', 'Medium', 'Low')" }),
+    grouped("u.role_name"),
+    grouped("NULLIF(TRIM(t.location), '')", { limit: 12 }),
+    query(
+      `SELECT DATE_FORMAT(t.created_at, '%Y-%m-%d') AS day, COUNT(*) AS value ${filter} GROUP BY day ORDER BY day`,
+      params,
+    ),
+    query("SELECT role_name AS label, COUNT(*) AS value FROM users GROUP BY role_name ORDER BY value DESC"),
+  ]);
+
+  // Fill quiet days with zero so the line chart has no gaps (kept to a sane span).
+  const counts = new Map(dayRows.map((row) => [row.day, Number(row.value)]));
+  let byDay = dayRows.map((row) => ({ label: row.day, value: Number(row.value) }));
+  if (from && to) {
+    const start = new Date(`${from}T00:00:00Z`);
+    const end = new Date(`${to}T00:00:00Z`);
+    const span = Math.round((end - start) / 86400000) + 1;
+    if (span > 0 && span <= 120) {
+      byDay = Array.from({ length: span }, (_, i) => {
+        const key = new Date(start.getTime() + i * 86400000).toISOString().slice(0, 10);
+        return { label: key, value: counts.get(key) || 0 };
+      });
+    }
+  }
+
+  res.json({
+    filters: { from, to, category: category || "All", role: role || "All" },
+    totals: {
+      total: Number(totalsRow.total),
+      resolved: Number(totalsRow.resolved),
+      backlog: Number(totalsRow.backlog),
+      cancelled: Number(totalsRow.cancelled),
+      high: Number(totalsRow.high),
+    },
+    byStatus,
+    byCategory,
+    byPriority,
+    byRole,
+    byLocation,
+    byDay,
+    usersByRole: usersByRole.map((row) => ({ label: row.label, value: Number(row.value) })),
+  });
+}));
+
 // --- Notifications -----------------------------------------------------------
 app.get("/api/notifications", wrap(async (req, res) => {
   const userId = Number(req.query.userId);

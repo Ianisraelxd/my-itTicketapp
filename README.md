@@ -43,7 +43,7 @@ The project ships in two forms:
 - **Ticket chat & cancellation requests** — the requester, assigned technician and admins share one group conversation per ticket (open it from My Requests, the technician queue or Manage Requests). Requesters can't cancel on their own: they send a cancellation request with a reason, and an admin accepts or rejects it from Manage Requests.
 - **Notifications** — a Notifications page (with an unread badge and pop-up toasts) tells requesters when a technician is assigned or their problem is fixed, tells technicians about assignments, messages and cancelled tickets, and tells admins about new requests, cancellation requests and password requests.
 - **Admin / technician chat** — a Facebook-style chat dock (bottom-right) lets admins and technicians message each other. Every message shows the sender's name and role. Other roles can't use it.
-- **Super Admin reporting** — Dashboard with KPIs, a Report Manager (charts, location heat map, filters by category, time range and role) and full Activity Log Reports.
+- **Super Admin reporting** — Dashboard with KPIs, a Report Manager (Recharts charts fed by SQL aggregation, skeleton loading, a location heat map, date/category/role filters that default to the last 30 days, and CSV export) and full Activity Log Reports.
 - **Responsive layout** — sidebar on desktop, icon rail on tablets, bottom tab bar on phones, with animations that respect reduced-motion settings.
 - **Settings** — a Settings dialog (mute, volume) saved in the browser's localStorage, plus an About dialog with a short description and the version (v1.0.2).
 - **Sound effects** — login, signup, message sent, message received and new-notification sounds (helper in `src/sounds.js`, files in `public/sounds/`).
@@ -180,6 +180,7 @@ Base path: `/api` (proxied to `http://localhost:3001` in development).
 | POST / GET | `/api/tickets/:id/cancellation-requests` | Owner files a cancellation request (`{ userId, reason }`) / lists the ticket's requests. |
 | GET | `/api/cancellation-requests?userId=` | Admin queue of all cancellation requests. |
 | PATCH | `/api/cancellation-requests/:code/status` | Admin accepts (ticket becomes Cancelled) or rejects. Body: `{ actorId, status, note? }`. |
+| GET | `/api/reports/summary?userId=&from=&to=&category=&role=` | Super admin only. SQL-aggregated data for the Report Manager. |
 | GET | `/api/notifications?userId=` | Latest notifications and unread count. |
 | POST | `/api/notifications/read` | Mark notifications read. Body: `{ userId, ids? }` (all when `ids` is omitted). |
 | GET / POST | `/api/activities` | List or add activity log entries. |
@@ -240,6 +241,36 @@ Because React and Babel load from a CDN, the machine needs internet access the f
 | `npm run lint`    | Run oxlint.                                    |
 
 ---
+
+## Backup and recovery
+
+`scripts/backup-database.bat` dumps the database with `mysqldump` to `backups/backup_YYYY-MM-DD_HH-mm-ss.sql` (gitignored), logs to `backups/backup.log`, and deletes backups older than 14 days. Edit the settings at the top of the script (`DB_NAME` is `helpdesk` by default; also `DB_USER`, `DB_PASS`, `MYSQL_BIN`, `KEEP_DAYS`).
+
+**Run it daily at 2:00 AM with Task Scheduler**
+
+1. Press Win, type *Task Scheduler*, open it, then choose **Create Task...** (not *Create Basic Task*).
+2. **General**: name it `HelpDesk DB Backup`; tick *Run whether user is logged on or not* and *Run with highest privileges*.
+3. **Triggers** > *New...*: *Daily*, start `2:00:00 AM`, recur every 1 day > OK.
+4. **Actions** > *New...*: *Start a program*. Program/script: `C:\xampp\htdocs\my-react-app\scripts\backup-database.bat`. Start in: `C:\xampp\htdocs\my-react-app\scripts` > OK.
+5. **Settings**: tick *Run task as soon as possible after a scheduled start is missed* (for a PC that is off at 2 AM) > OK, then enter your Windows password.
+6. Right-click the task > *Run*, then check `backups\backup.log`.
+
+One-line alternative (Command Prompt opened as Administrator):
+
+```
+schtasks /Create /TN "HelpDesk DB Backup" /SC DAILY /ST 02:00 /RL HIGHEST /TR "C:\xampp\htdocs\my-react-app\scripts\backup-database.bat"
+```
+
+MySQL (XAMPP) must be running at 2 AM, otherwise the backup fails and `backup.log` says FAILED.
+
+**Restore** (use Command Prompt, because PowerShell does not support the `<` redirect; swap in your own file name):
+
+```
+C:\xampp\mysql\bin\mysql.exe -u root -e "CREATE DATABASE IF NOT EXISTS helpdesk CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+C:\xampp\mysql\bin\mysql.exe -u root -p helpdesk < C:\xampp\htdocs\my-react-app\backups\backup_2026-10-03_02-00-00.sql
+```
+
+The dump drops and recreates each table, so restoring overwrites the current data. From PowerShell, wrap the second command: `cmd /c "mysql.exe ... < file"`.
 
 ## Security notes
 
