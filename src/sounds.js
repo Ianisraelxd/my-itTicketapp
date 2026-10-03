@@ -1,3 +1,5 @@
+import { SETTINGS_STORAGE_KEY, loadSettings } from "./settings";
+
 // Small sound-effect helper. Files live in public/sounds/.
 //
 // Sounds are played through the Web Audio API so each one can be normalised:
@@ -18,6 +20,13 @@ const MAX_GAIN = 6;
 // event twice), and a message "ding" is skipped right after a notification.
 const COOLDOWN_MS = 800;
 const NOTIFICATION_SHADOW_MS = 1200;
+
+// Mute and volume come from the Settings dialog (saved in localStorage).
+let settings = loadSettings();
+
+export function setSoundSettings(next) {
+  settings = next;
+}
 
 let context = null;
 const buffers = {};
@@ -58,10 +67,12 @@ function playWithElement(name, volume) {
   audio.play().catch(() => {});
 }
 
-export function playSound(name, volume = 1) {
+export function playSound(name, volume = 1, { force = false } = {}) {
   if (typeof window === "undefined" || !FILES[name]) return;
+  if (settings.muted || settings.volume <= 0) return;
+  volume *= settings.volume;
   const now = Date.now();
-  if (now - (lastPlayed[name] || 0) < COOLDOWN_MS) return;
+  if (!force && now - (lastPlayed[name] || 0) < COOLDOWN_MS) return;
   if (name === "received" && now - (lastPlayed.notification || 0) < NOTIFICATION_SHADOW_MS) return;
   lastPlayed[name] = now;
 
@@ -83,6 +94,13 @@ export function playSound(name, volume = 1) {
       playWithElement(name, volume);
     }
   })();
+}
+
+// Keep several open tabs in sync.
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (event) => {
+    if (event.key === SETTINGS_STORAGE_KEY) settings = loadSettings();
+  });
 }
 
 // Decode every clip after the first click or key press so the first sound of

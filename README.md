@@ -45,6 +45,7 @@ The project ships in two forms:
 - **Admin / technician chat** — a Facebook-style chat dock (bottom-right) lets admins and technicians message each other. Every message shows the sender's name and role. Other roles can't use it.
 - **Super Admin reporting** — Dashboard with KPIs, a Report Manager (charts, location heat map, filters by category, time range and role) and full Activity Log Reports.
 - **Responsive layout** — sidebar on desktop, icon rail on tablets, bottom tab bar on phones, with animations that respect reduced-motion settings.
+- **Settings** — a Settings dialog (mute, volume) saved in the browser's localStorage, plus an About dialog with a short description and the version (v1.0.2).
 - **Sound effects** — login, signup, message sent, message received and new-notification sounds (helper in `src/sounds.js`, files in `public/sounds/`).
 
 ---
