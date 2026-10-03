@@ -40,7 +40,7 @@ The project ships in two forms:
 - **Activity log** — records logins and ticket actions, persisted server-side.
 - **Technician skills & recommendations** — admins assign skills (Hardware, Software, Network / Internet, Account / Login, Printer) to each technician. A technician's queue lists matching tickets first with a "Recommended" badge; out-of-skill tickets still show, but resolving one asks for confirmation with an "at your own risk" warning.
 - **Required ticket category** — requesters must pick the problem type (e.g. Hardware or Software) when submitting.
-- **Ticket chat & cancellation requests** — requesters and technicians can talk inside a ticket. Requesters can't cancel on their own: they send a cancellation request with a reason, and an admin accepts or rejects it from Manage Requests.
+- **Ticket chat & cancellation requests** — the requester, assigned technician and admins share one group conversation per ticket (open it from My Requests, the technician queue or Manage Requests). Requesters can't cancel on their own: they send a cancellation request with a reason, and an admin accepts or rejects it from Manage Requests.
 - **Notifications** — a Notifications page (with an unread badge and pop-up toasts) tells requesters when a technician is assigned or their problem is fixed, tells technicians about assignments, messages and cancelled tickets, and tells admins about new requests, cancellation requests and password requests.
 - **Admin / technician chat** — a Facebook-style chat dock (bottom-right) lets admins and technicians message each other. Every message shows the sender's name and role. Other roles can't use it.
 - **Super Admin reporting** — Dashboard with KPIs, a Report Manager (charts, location heat map, filters by category, time range and role) and full Activity Log Reports.
@@ -174,6 +174,7 @@ Base path: `/api` (proxied to `http://localhost:3001` in development).
 | POST | `/api/tickets` | Create a ticket. Body: `{ subject, category, priority, location?, description?, createdBy? }`. |
 | PATCH | `/api/tickets/:id/status` | Set status to Open, In Progress or Resolved. |
 | PATCH | `/api/tickets/:id/assign` | Admin only. Body: `{ actorId, technicianId }`; sets the technician and moves the ticket to In Progress. |
+| GET | `/api/tickets/:id/participants` | Who is in the ticket conversation: requester, assigned technician, admins. |
 | GET / POST | `/api/tickets/:id/messages` | Ticket conversation. POST body: `{ userId, text }`. |
 | POST / GET | `/api/tickets/:id/cancellation-requests` | Owner files a cancellation request (`{ userId, reason }`) / lists the ticket's requests. |
 | GET | `/api/cancellation-requests?userId=` | Admin queue of all cancellation requests. |

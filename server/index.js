@@ -274,6 +274,27 @@ app.patch("/api/tickets/:id/assign", wrap(async (req, res) => {
   res.json({ ok: true, id: ticket.code, status: "In Progress", assignedTo: technician.user_pk });
 }));
 
+// Everyone who can see this ticket's conversation: the requester, the assigned
+// technician, and the admins.
+app.get("/api/tickets/:id/participants", wrap(async (req, res) => {
+  const access = await ticketAccess(req.params.id, req.query.userId);
+  if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
+  const { ticket } = access;
+  const rows = await query(
+    `SELECT user_pk AS userId, name, role_name AS roleName,
+       CASE WHEN user_pk = ? THEN 'Requester' WHEN user_pk = ? THEN 'Technician' ELSE 'Admin' END AS part
+     FROM users
+     WHERE user_pk = ? OR user_pk = ? OR role = 'admin'
+     ORDER BY FIELD(CASE WHEN user_pk = ? THEN 'Requester' WHEN user_pk = ? THEN 'Technician' ELSE 'Admin' END, 'Requester', 'Technician', 'Admin'), name`,
+    [
+      ticket.created_by ?? 0, ticket.assigned_to ?? 0,
+      ticket.created_by ?? 0, ticket.assigned_to ?? 0,
+      ticket.created_by ?? 0, ticket.assigned_to ?? 0,
+    ],
+  );
+  res.json(rows);
+}));
+
 app.get("/api/tickets/:id/messages", wrap(async (req, res) => {
   const access = await ticketAccess(req.params.id, req.query.userId);
   if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
@@ -290,7 +311,7 @@ app.get("/api/tickets/:id/messages", wrap(async (req, res) => {
 app.post("/api/tickets/:id/messages", wrap(async (req, res) => {
   const access = await ticketAccess(req.params.id, req.body?.userId);
   if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
-  const { ticket, user, isOwner } = access;
+  const { ticket, user } = access;
   const body = String(req.body?.text ?? "").trim().slice(0, 1000);
   if (!body) return res.status(400).json({ error: "Message cannot be empty." });
   if (CLOSED_STATUSES.includes(ticket.status)) {
@@ -300,9 +321,9 @@ app.post("/api/tickets/:id/messages", wrap(async (req, res) => {
     "INSERT INTO ticket_messages (ticket_pk, sender_pk, message_text, kind) VALUES (?, ?, ?, 'chat')",
     [ticket.ticket_pk, user.user_pk, body],
   );
-  // Tell the other side: the requester hears from staff, staff hear from the requester.
-  const recipient = isOwner ? ticket.assigned_to : ticket.created_by;
-  await notify([recipient], {
+  // Group-chat style: everyone on the ticket except the sender hears about it.
+  const everyone = [ticket.created_by, ticket.assigned_to, ...(await adminIds())];
+  await notify(everyone.filter((id) => id && id !== user.user_pk), {
     type: "message",
     title: `New message on ${ticket.code}`,
     body: `${user.name}: ${body.slice(0, 90)}`,

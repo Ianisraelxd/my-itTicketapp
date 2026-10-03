@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "./api";
+import ChatInput from "./ChatInput";
 import { playSound } from "./sounds";
 
 const CLOSED_STATUSES = ["Resolved", "Done", "Closed", "Cancelled"];
@@ -26,6 +27,7 @@ function formatTime(value) {
 export default function TicketChat({ ticket, me, onChanged, showMessage }) {
   const [messages, setMessages] = useState([]);
   const [requests, setRequests] = useState([]);
+  const [participants, setParticipants] = useState([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -44,8 +46,10 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
       Promise.all([
         api.getTicketMessages(ticket.id, me.userId),
         api.getTicketCancellations(ticket.id, me.userId),
+        api.getTicketParticipants(ticket.id, me.userId),
       ])
-        .then(([rows, cancellations]) => {
+        .then(([rows, cancellations, people]) => {
+          setParticipants(people);
           const newest = rows.at(-1);
           if (
             lastSeenId.current !== null &&
@@ -76,7 +80,7 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
   }, [messages.length]);
 
   async function send(event) {
-    event.preventDefault();
+    event?.preventDefault();
     const text = draft.trim();
     if (!text || sending || closed) return;
     setSending(true);
@@ -131,6 +135,20 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
           </button>
         )}
       </div>
+      {!isOwner && participants.length > 0 && (
+        <div className="ticket-people" aria-label="People in this conversation">
+          {participants.map((person) => (
+            <span
+              key={person.userId}
+              className={`person person-${person.part.toLowerCase()}`}
+              title={`${person.name} · ${person.roleName}`}
+            >
+              <b>{person.userId === me.userId ? "You" : person.name}</b>
+              <small>{person.part}</small>
+            </span>
+          ))}
+        </div>
+      )}
       {isOwner && lastDeclined && !closed && (
         <p className="ticket-chat-note">
           Your last cancellation request was declined
@@ -185,12 +203,11 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
         </p>
       ) : (
         <form className="chat-compose" onSubmit={send}>
-          <input
+          <ChatInput
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={setDraft}
+            onSend={() => send()}
             placeholder="Write a message…"
-            maxLength={1000}
-            aria-label="Message"
           />
           <button type="submit" disabled={!draft.trim() || sending} aria-label="Send">
             ➤
