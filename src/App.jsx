@@ -3,6 +3,7 @@ import "./App.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "./api";
+import { TicketDetailsModal } from "./TicketChat";
 
 const navFor = {
   user: [
@@ -424,6 +425,9 @@ function App() {
             tickets={tickets}
             ticketAssignments={ticketAssignments}
             setPage={setPage}
+            me={user}
+            refreshData={refreshData}
+            showMessage={showMessage}
           />
         )}
         {page === "technicianDashboard" && (
@@ -431,6 +435,7 @@ function App() {
         )}
         {page === "technicianRequestsPage" && (
           <TechnicianRequests
+            me={user}
             mySkills={allUsers.find((item) => item.userId === user.userId)?.skills || []}
             tickets={allTickets.length ? allTickets : tickets}
             ticketAssignments={ticketAssignments}
@@ -1171,7 +1176,7 @@ function UserDashboard({ setPage, tickets, ticketAssignments = {}, userName }) {
     </>
   );
 }
-function TicketTable({ tickets, showAssignmentMeta = false }) {
+function TicketTable({ tickets, showAssignmentMeta = false, onOpen }) {
   const hasMeta = showAssignmentMeta || tickets.some((ticket) => ticket.assignedTechnician || ticket.progress);
 
   if (!tickets || tickets.length === 0) {
@@ -1194,6 +1199,7 @@ function TicketTable({ tickets, showAssignmentMeta = false }) {
             <th>Status</th>
             {hasMeta && <th>Technician</th>}
             {hasMeta && <th>Progress</th>}
+            {onOpen && <th>Details</th>}
           </tr>
         </thead>
         <tbody>
@@ -1212,6 +1218,13 @@ function TicketTable({ tickets, showAssignmentMeta = false }) {
               </td>
               {hasMeta && <td>{ticket.assignedTechnician || "Unassigned"}</td>}
               {hasMeta && <td>{ticket.progress || "Queued"}</td>}
+              {onOpen && (
+                <td>
+                  <button className="table-button" onClick={() => onOpen(ticket.id)}>
+                    Open
+                  </button>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -1317,7 +1330,9 @@ function SelectField({ label, value, options, onChange, placeholder }) {
     </label>
   );
 }
-function MyRequests({ tickets, ticketAssignments = {}, setPage }) {
+function MyRequests({ tickets, ticketAssignments = {}, setPage, me, refreshData, showMessage }) {
+  const [openId, setOpenId] = useState(null);
+  const openTicket = tickets.find((ticket) => ticket.id === openId);
   return (
     <>
       <PageHeader
@@ -1348,8 +1363,18 @@ function MyRequests({ tickets, ticketAssignments = {}, setPage }) {
             progress: ticketAssignments[ticket.id]?.progress || "Queued",
           }))}
           showAssignmentMeta
+          onOpen={setOpenId}
         />
       </section>
+      {openTicket && (
+        <TicketDetailsModal
+          ticket={openTicket}
+          me={me}
+          onClose={() => setOpenId(null)}
+          onChanged={refreshData}
+          showMessage={showMessage}
+        />
+      )}
     </>
   );
 }
@@ -1450,6 +1475,7 @@ function SkillChips({ skills = [], empty = "No skills assigned" }) {
   );
 }
 function TechnicianRequests({
+  me,
   mySkills = [],
   tickets = [],
   ticketAssignments = {},
@@ -1461,6 +1487,8 @@ function TechnicianRequests({
   const [localTickets, setLocalTickets] = useState(tickets);
   const [riskDialog, setRiskDialog] = useState(null);
   const [view, setView] = useState("all");
+  const [openId, setOpenId] = useState(null);
+  const openTicket = localTickets.find((ticket) => ticket.id === openId);
 
   useEffect(() => {
     setLocalTickets(tickets);
@@ -1608,13 +1636,22 @@ function TechnicianRequests({
                     <td>{assignment.assignedTechnician || "Pending assignment"}</td>
                     <td>{assignment.progress || "Queued"}</td>
                     <td>
-                      <button
-                        className="table-button"
-                        disabled={ticket.status === "Resolved"}
-                        onClick={() => requestResolve(ticket)}
-                      >
-                        {ticket.status === "Resolved" ? "Resolved" : "Resolve"}
-                      </button>
+                      <div className="inline-actions">
+                        <button className="table-button light" onClick={() => setOpenId(ticket.id)}>
+                          Chat
+                        </button>
+                        <button
+                          className="table-button"
+                          disabled={["Resolved", "Cancelled"].includes(ticket.status)}
+                          onClick={() => requestResolve(ticket)}
+                        >
+                          {ticket.status === "Cancelled"
+                            ? "Cancelled"
+                            : ticket.status === "Resolved"
+                              ? "Resolved"
+                              : "Resolve"}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -1623,6 +1660,15 @@ function TechnicianRequests({
           </table>
         </div>
       </section>
+      {openTicket && (
+        <TicketDetailsModal
+          ticket={openTicket}
+          me={me}
+          onClose={() => setOpenId(null)}
+          onChanged={refreshData}
+          showMessage={showMessage}
+        />
+      )}
       {riskDialog && (
         <div className="modal-backdrop" onClick={() => setRiskDialog(null)}>
           <div className="modal-box risk-modal" onClick={(event) => event.stopPropagation()}>
@@ -1760,9 +1806,14 @@ function ManageRequests({
                         </button>
                         <button
                           className="table-button"
+                          disabled={["Resolved", "Cancelled"].includes(ticket.status)}
                           onClick={() => handleAssign(ticket.id)}
                         >
-                          {ticket.status === "In Progress" ? "In progress" : "Assign"}
+                          {ticket.status === "Cancelled"
+                            ? "Cancelled"
+                            : ticket.status === "In Progress"
+                              ? "In progress"
+                              : "Assign"}
                         </button>
                       </div>
                     </td>
@@ -2492,7 +2543,7 @@ function SuperAdminDashboard({ setPage, tickets = [], users = [], activities = [
   const summaries = [
     ["Total users", String(users.length), `${technicians} technicians`],
     ["Total tickets", String(total), `${open} open · ${inProgress} in progress`],
-    ["Resolved tickets", String(resolved), `${total - resolved} still active`],
+    ["Resolved tickets", String(resolved), `${open + inProgress} still active`],
     ["System activity", String(activities.length), "logged actions"],
   ];
 
@@ -2573,13 +2624,13 @@ function ReportManager({ tickets = [], users = [] }) {
 
   const total = filtered.length;
   const resolved = filtered.filter((t) => t.status === "Resolved").length;
-  const backlog = total - resolved;
+  const backlog = filtered.filter((t) => ["Open", "In Progress"].includes(t.status)).length;
   const high = filtered.filter((t) => t.priority === "High").length;
-  const statusRows = ["Open", "In Progress", "Resolved"].map((s) => [
+  const statusRows = ["Open", "In Progress", "Resolved", "Cancelled"].map((s) => [
     s,
     filtered.filter((t) => t.status === s).length,
   ]);
-  const statusColors = ["#bd8128", "#39759d", "#1c6b56"];
+  const statusColors = ["#bd8128", "#39759d", "#1c6b56", "#a7b1ac"];
   let acc = 0;
   const donut = statusRows
     .map(([, n], i) => {

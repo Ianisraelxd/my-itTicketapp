@@ -141,6 +141,113 @@ app.post("/api/tickets", wrap(async (req, res) => {
   }
 }));
 
+// --- Ticket cancellation + in-ticket messaging ---------------------------------
+// The app's "new" status is 'Open', which plays the role of Pending here.
+const DIRECT_CANCEL_STATUSES = ["Pending", "Approved", "Assigned", "Open"];
+const CLOSED_STATUSES = ["Resolved", "Done", "Closed", "Cancelled"];
+const TICKET_STAFF_ROLES = ["technician", "admin", "superadmin"];
+
+async function ticketAccess(code, userId) {
+  const tickets = await query(
+    "SELECT ticket_pk, code, status, created_by FROM tickets WHERE code = ? LIMIT 1",
+    [code],
+  );
+  const users = await query(
+    "SELECT user_pk, name, role, role_name FROM users WHERE user_pk = ? LIMIT 1",
+    [userId ?? 0],
+  );
+  const ticket = tickets[0];
+  const user = users[0];
+  if (!ticket) return { error: [404, "Ticket not found."] };
+  if (!user) return { error: [403, "Unknown user."] };
+  const isOwner = ticket.created_by === user.user_pk;
+  if (!isOwner && !TICKET_STAFF_ROLES.includes(user.role)) {
+    return { error: [403, "You do not have access to this ticket."] };
+  }
+  return { ticket, user, isOwner };
+}
+
+// Direct cancellation. The status condition lives in the UPDATE itself so two
+// concurrent requests (e.g. cancel vs. technician picking it up) cannot both win.
+app.put("/api/tickets/:id/cancel", wrap(async (req, res) => {
+  const access = await ticketAccess(req.params.id, req.body?.userId);
+  if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
+  const { ticket, user, isOwner } = access;
+  if (!isOwner) {
+    return res.status(403).json({ error: "Only the person who submitted the ticket can cancel it." });
+  }
+  const placeholders = DIRECT_CANCEL_STATUSES.map(() => "?").join(", ");
+  const [result] = await pool.execute(
+    `UPDATE tickets SET status = 'Cancelled' WHERE ticket_pk = ? AND created_by = ? AND status IN (${placeholders})`,
+    [ticket.ticket_pk, user.user_pk, ...DIRECT_CANCEL_STATUSES],
+  );
+  if (result.affectedRows === 0) {
+    const latest = await query("SELECT status FROM tickets WHERE ticket_pk = ?", [ticket.ticket_pk]);
+    const status = latest[0]?.status;
+    return res.status(409).json({
+      error:
+        status === "In Progress"
+          ? "This ticket is already in progress. Send a cancellation request instead."
+          : `This ticket is ${status} and can no longer be cancelled.`,
+      status,
+    });
+  }
+  await query(
+    "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
+    [user.name, user.role_name, `Cancelled ticket ${ticket.code}`],
+  );
+  res.json({ ok: true, id: ticket.code, status: "Cancelled" });
+}));
+
+app.get("/api/tickets/:id/messages", wrap(async (req, res) => {
+  const access = await ticketAccess(req.params.id, req.query.userId);
+  if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
+  const rows = await query(
+    `SELECT m.message_pk AS id, m.sender_pk AS senderId, u.name AS senderName, u.role_name AS senderRole,
+       m.message_text AS text, m.kind, m.created_at AS createdAt
+     FROM ticket_messages m JOIN users u ON u.user_pk = m.sender_pk
+     WHERE m.ticket_pk = ? ORDER BY m.message_pk ASC LIMIT 500`,
+    [access.ticket.ticket_pk],
+  );
+  res.json(rows);
+}));
+
+app.post("/api/tickets/:id/messages", wrap(async (req, res) => {
+  const { userId, text, kind } = req.body ?? {};
+  const access = await ticketAccess(req.params.id, userId);
+  if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
+  const { ticket, user, isOwner } = access;
+  const body = String(text ?? "").trim().slice(0, 1000);
+  if (!body) return res.status(400).json({ error: "Message cannot be empty." });
+
+  const messageKind = kind === "cancellation_request" ? "cancellation_request" : "chat";
+  if (messageKind === "cancellation_request") {
+    if (!isOwner) {
+      return res.status(403).json({ error: "Only the ticket owner can request cancellation." });
+    }
+    if (ticket.status !== "In Progress") {
+      return res.status(409).json({
+        error: "Cancellation requests are only for tickets that are in progress.",
+        status: ticket.status,
+      });
+    }
+  } else if (CLOSED_STATUSES.includes(ticket.status)) {
+    return res.status(409).json({ error: `This ticket is ${ticket.status}; the chat is closed.` });
+  }
+
+  const [result] = await pool.execute(
+    "INSERT INTO ticket_messages (ticket_pk, sender_pk, message_text, kind) VALUES (?, ?, ?, ?)",
+    [ticket.ticket_pk, user.user_pk, body, messageKind],
+  );
+  if (messageKind === "cancellation_request") {
+    await query(
+      "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
+      [user.name, user.role_name, `Requested cancellation of ticket ${ticket.code}`],
+    );
+  }
+  res.status(201).json({ ok: true, id: result.insertId });
+}));
+
 // --- Activities -------------------------------------------------------------
 app.get("/api/activities", wrap(async (_req, res) => {
   const rows = await query(

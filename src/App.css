@@ -2521,3 +2521,137 @@ td .fit-badge-match { margin-left: 0 }
 
     .chat-window.collapsed { inset: auto 12px calc(92px + var(--safe-bottom)) 12px; width: auto; height: 56px; border-radius: 16px }
 }
+
+/* ==========================================================================
+   Ticket details + in-ticket chat
+   ========================================================================== */
+.ticket-sheet {
+    position: relative;
+    width: min(100%, 660px);
+    height: min(86dvh, 720px);
+    display: flex;
+    flex-direction: column;
+    padding: 26px 24px 20px;
+    text-align: left;
+    overflow: hidden
+}
+
+.ticket-sheet .modal-close { top: 14px; right: 16px }
+
+.ticket-sheet-head { flex: none; padding-right: 30px }
+
+.ticket-sheet-head h3 { margin: 6px 0 10px }
+
+.ticket-sheet-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    margin-bottom: 14px;
+    color: var(--muted);
+    font-size: 12px
+}
+
+.ticket-chat {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    overflow: hidden
+}
+
+.ticket-chat-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    background: #fff
+}
+
+.ticket-chat-head strong { font-size: 13px }
+
+.ticket-chat-messages {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 14px;
+    background: #f7faf8
+}
+
+.ticket-chat-closed {
+    flex: none;
+    margin: 0;
+    padding: 12px 14px;
+    border-top: 1px solid var(--line);
+    background: #f0f4f1;
+    color: var(--muted);
+    font-size: 12px;
+    text-align: center
+}
+
+.table-button.danger {
+    background: #fff;
+    border-color: #e3b3ab;
+    color: #a4472f
+}
+
+.table-button.danger:hover:not(:disabled) {
+    background: #fbeae7;
+    box-shadow: none
+}
+
+.table-button.danger:disabled {
+    background: #f0f4f1;
+    border-color: transparent;
+    color: var(--muted)
+}
+
+.status-cancelled i { background: #a7b1ac }
+
+.chat-msg.cancel-request .chat-bubble {
+    background: #fbf2e0;
+    color: #6f4f12;
+    border: 1px solid #ecd49c
+}
+
+.chat-flag {
+    display: block;
+    margin-bottom: 3px;
+    font: 700 9.5px Manrope, sans-serif;
+    font-style: normal;
+    letter-spacing: .8px;
+    text-transform: uppercase;
+    color: #a4691a
+}
+
+.modal-box .dialog-note textarea {
+    width: 100%;
+    min-height: 90px;
+    margin: 8px 0 16px;
+    padding: 12px;
+    border: 1.5px solid #dce5df;
+    border-radius: 12px;
+    font-size: 16px;
+    resize: vertical;
+    outline: none
+}
+
+.modal-box .dialog-note textarea:focus {
+    border-color: var(--green);
+    box-shadow: 0 0 0 4px #1c6b5622
+}
+
+@media (max-width: 640px) {
+    .ticket-sheet {
+        width: 100%;
+        height: calc(100dvh - 24px);
+        padding: 20px 14px 14px
+    }
+}
