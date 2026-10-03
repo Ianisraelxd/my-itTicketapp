@@ -112,6 +112,11 @@ export const api = {
       body: JSON.stringify({ userId, ids }),
     }),
 
+  getTicketParticipants: (ticketId, userId) =>
+    request(
+      `/tickets/${encodeURIComponent(ticketId)}/participants?userId=${encodeURIComponent(userId)}`,
+    ),
+
   getTicketMessages: (ticketId, userId) =>
     request(
       `/tickets/${encodeURIComponent(ticketId)}/messages?userId=${encodeURIComponent(userId)}`,

@@ -3001,3 +3001,55 @@ td .fit-badge-match { margin-left: 0 }
     .cancel-list .inline-actions { flex-direction: row }
     .cancel-list .inline-actions .table-button { flex: 1 }
 }
+
+/* Wrapping message box + group conversation participants */
+.chat-compose { align-items: flex-end }
+
+.chat-compose textarea {
+    flex: 1;
+    min-width: 0;
+    min-height: 42px;
+    max-height: 120px;
+    padding: 10px 16px;
+    border: 1.5px solid var(--line);
+    border-radius: 21px;
+    outline: none;
+    font: inherit;
+    font-size: 16px;
+    line-height: 1.35;
+    resize: none;
+    overflow-y: auto;
+    word-break: break-word;
+    transition: border-color .25s, box-shadow .25s
+}
+
+.chat-compose textarea:focus {
+    border-color: var(--green);
+    box-shadow: 0 0 0 3px #1c6b5622
+}
+
+.ticket-people {
+    flex: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--line);
+    background: #fbfcfb
+}
+
+.person {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    background: var(--mint);
+    color: var(--green-dark);
+    font-size: 11px
+}
+
+.person b { font-weight: 700 }
+.person small { font-size: 9.5px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; opacity: .7 }
+.person-technician { background: #e1edf5; color: var(--blue) }
+.person-admin { background: #fbf2e0; color: #8a6420 }

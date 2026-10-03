@@ -3,6 +3,7 @@ import "./App.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "./api";
+import ChatInput from "./ChatInput";
 import { playSound } from "./sounds";
 import { TicketDetailsModal } from "./TicketChat";
 
@@ -1793,6 +1794,8 @@ function ManageRequests({
 }) {
   const [assignDialog, setAssignDialog] = useState(null);
   const [viewDialog, setViewDialog] = useState(null);
+  const [chatId, setChatId] = useState(null);
+  const chatTicket = tickets.find((ticket) => ticket.id === chatId);
   const technicians = users.filter((user) =>
     /technician/i.test(user.role || ""),
   );
@@ -1888,6 +1891,9 @@ function ManageRequests({
                         >
                           View
                         </button>
+                        <button className="table-button light" onClick={() => setChatId(ticket.id)}>
+                          Chat
+                        </button>
                         <button
                           className="table-button"
                           disabled={["Resolved", "Cancelled"].includes(ticket.status)}
@@ -1908,6 +1914,15 @@ function ManageRequests({
           </table>
         </div>
       </section>
+      {chatTicket && (
+        <TicketDetailsModal
+          ticket={chatTicket}
+          me={me}
+          onClose={() => setChatId(null)}
+          onChanged={refreshData}
+          showMessage={showMessage}
+        />
+      )}
       {assignDialog && (
         <div className="modal-backdrop" onClick={() => setAssignDialog(null)}>
           <div className="modal-box assignment-modal" onClick={(event) => event.stopPropagation()}>
@@ -2414,7 +2429,7 @@ function ChatWindow({ me, contact, onClose }) {
   }, [messages.length, collapsed]);
 
   async function send(event) {
-    event.preventDefault();
+    event?.preventDefault();
     const body = draft.trim();
     if (!body || sending) return;
     setSending(true);
@@ -2477,12 +2492,11 @@ function ChatWindow({ me, contact, onClose }) {
             })}
           </div>
           <form className="chat-compose" onSubmit={send}>
-            <input
+            <ChatInput
               value={draft}
-              onChange={(event) => setDraft(event.target.value)}
+              onChange={setDraft}
+              onSend={() => send()}
               placeholder="Type a message…"
-              maxLength={1000}
-              aria-label="Message"
               autoFocus
             />
             <button type="submit" disabled={!draft.trim() || sending} aria-label="Send">
