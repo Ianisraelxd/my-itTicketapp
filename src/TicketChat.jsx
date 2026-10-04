@@ -265,6 +265,39 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
 
 // Two side-by-side cards: the ticket's details on the left, the conversation on
 // the right. On phones they become two tabs.
+const TRACK_STEPS = ["Submitted", "In progress", "Resolved"];
+
+function ProgressTrack({ ticket }) {
+  if (ticket.status === "Cancelled") {
+    return <p className="progress-note progress-cancelled">This ticket was cancelled.</p>;
+  }
+  const stage = ticket.status === "Resolved" ? 2 : ticket.status === "In Progress" ? 1 : 0;
+  const details = [
+    "We received your request",
+    ticket.assignedName ? `${ticket.assignedName} is handling it` : "Waiting for a technician",
+    "The problem is fixed",
+  ];
+  return (
+    <>
+      <ol className="progress-track" aria-label="Ticket progress">
+        {TRACK_STEPS.map((label, index) => (
+          <li
+            key={label}
+            className={index < stage || (index === stage && stage === 2) ? "done" : index === stage ? "current" : ""}
+          >
+            <span className="progress-dot">{index < stage || (index === stage && stage === 2) ? "✓" : index + 1}</span>
+            <b>{label}</b>
+            <small>{index === stage ? details[index] : ""}</small>
+          </li>
+        ))}
+      </ol>
+      {Number(ticket.cancelPending) > 0 && (
+        <p className="progress-note">Cancellation requested. Waiting for an admin to decide.</p>
+      )}
+    </>
+  );
+}
+
 export function TicketDetailsModal({ ticket, me, onClose, onChanged, showMessage }) {
   const [tab, setTab] = useState("chat");
   const submitted = ticket.createdAt ? formatTime(ticket.createdAt) : "";
@@ -306,6 +339,7 @@ export function TicketDetailsModal({ ticket, me, onClose, onChanged, showMessage
             <i></i>
             {ticket.status}
           </span>
+          <ProgressTrack ticket={ticket} />
           <dl className="ticket-facts">
             {facts.map(([label, value]) => (
               <div key={label}>

@@ -108,14 +108,14 @@ app.get("/api/tickets", wrap(async (req, res) => {
 
   if (mine === "1" && userId) {
     const rows = await query(
-      "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, u.name AS userName, u.role_name AS userRole FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by WHERE t.created_by = ? ORDER BY t.ticket_pk DESC",
+      "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to WHERE t.created_by = ? ORDER BY t.ticket_pk DESC",
       [userId],
     );
     return res.json(rows);
   }
 
   const rows = await query(
-    "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by ORDER BY t.ticket_pk DESC",
+    "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to ORDER BY t.ticket_pk DESC",
   );
   res.json(rows);
 }));
@@ -518,7 +518,7 @@ app.get("/api/reports/summary", wrap(async (req, res) => {
   if (to) { where.push("t.created_at < DATE_ADD(?, INTERVAL 1 DAY)"); params.push(to); }
   if (category) { where.push("t.category = ?"); params.push(category); }
   if (role) { where.push("u.role = ?"); params.push(role); }
-  const filter = `FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by WHERE ${where.join(" AND ")}`;
+  const filter = `FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to WHERE ${where.join(" AND ")}`;
 
   // `expression` and `order` are fixed strings from this file, never user input.
   const grouped = async (expression, { order = "value DESC", limit = 50 } = {}) => {

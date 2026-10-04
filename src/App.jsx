@@ -41,6 +41,20 @@ const navFor = {
   ],
 };
 
+// Technician + progress shown in the ticket tables. Derived from the ticket
+// itself (status, assigned technician, pending cancellation) so every role sees
+// the same thing; the browser-only assignment record is just a fallback name.
+function ticketTracking(ticket, assignment = {}) {
+  const assignedTechnician = ticket.assignedName || assignment.assignedTechnician || "";
+  let progress;
+  if (ticket.status === "Cancelled") progress = "Cancelled";
+  else if (ticket.status === "Resolved") progress = "Resolved";
+  else if (Number(ticket.cancelPending) > 0) progress = "Cancellation requested";
+  else if (ticket.status === "In Progress") progress = assignedTechnician ? "Technician working on it" : "In progress";
+  else progress = "Waiting for a technician";
+  return { assignedTechnician, progress };
+}
+
 // Ticket categories. Technician skills are drawn from the same list (minus
 // "Others"), which is how requests get matched to the right technician.
 const SKILL_OPTIONS = [
@@ -1266,8 +1280,7 @@ function UserDashboard({ setPage, tickets, ticketAssignments = {}, userName }) {
           <TicketTable
             tickets={tickets.slice(0, 3).map((ticket) => ({
               ...ticket,
-              assignedTechnician: ticketAssignments[ticket.id]?.assignedTechnician || "",
-              progress: ticketAssignments[ticket.id]?.progress || "Queued",
+              ...ticketTracking(ticket, ticketAssignments[ticket.id]),
             }))}
             showAssignmentMeta
           />
@@ -1473,8 +1486,7 @@ function MyRequests({ tickets, ticketAssignments = {}, setPage, me, refreshData,
         <TicketTable
           tickets={tickets.map((ticket) => ({
             ...ticket,
-            assignedTechnician: ticketAssignments[ticket.id]?.assignedTechnician || "",
-            progress: ticketAssignments[ticket.id]?.progress || "Queued",
+            ...ticketTracking(ticket, ticketAssignments[ticket.id]),
           }))}
           showAssignmentMeta
           onOpen={setOpenId}
@@ -1727,6 +1739,7 @@ function TechnicianRequests({
               )}
               {visible.map((ticket) => {
                 const assignment = ticketAssignments[ticket.id] || {};
+                const tracking = ticketTracking(ticket, assignment);
                 const fit = skillFit(mySkills, ticket.category);
                 return (
                   <tr key={ticket.id} className={`fit-row fit-${fit}`}>
@@ -1747,8 +1760,8 @@ function TechnicianRequests({
                     <td>
                       <Status value={ticket.status} />
                     </td>
-                    <td>{assignment.assignedTechnician || "Pending assignment"}</td>
-                    <td>{assignment.progress || "Queued"}</td>
+                    <td>{tracking.assignedTechnician || "Pending assignment"}</td>
+                    <td>{tracking.progress}</td>
                     <td>
                       <div className="inline-actions">
                         <button className="table-button light" onClick={() => setOpenId(ticket.id)}>
@@ -1843,6 +1856,7 @@ function ManageRequests({
     setViewDialog({
       ...ticket,
       assignment: ticketAssignments[ticket.id] || {},
+      tracking: ticketTracking(ticket, ticketAssignments[ticket.id]),
     });
   };
 
@@ -1901,6 +1915,7 @@ function ManageRequests({
               )}
               {tickets.map((ticket) => {
                 const assignment = ticketAssignments[ticket.id] || {};
+                const tracking = ticketTracking(ticket, assignment);
                 return (
                   <tr key={ticket.id}>
                     <td>
@@ -1912,8 +1927,8 @@ function ManageRequests({
                     <td>
                       <Status value={ticket.status} />
                     </td>
-                    <td>{assignment.assignedTechnician || "Unassigned"}</td>
-                    <td>{assignment.progress || "Queued"}</td>
+                    <td>{tracking.assignedTechnician || "Unassigned"}</td>
+                    <td>{tracking.progress}</td>
                     <td>
                       <div className="inline-actions">
                         <button
@@ -2005,9 +2020,9 @@ function ManageRequests({
             <h3>{viewDialog.id}</h3>
             <p>{viewDialog.subject}</p>
             <div className="detail-stack">
-              <div><strong>Technician:</strong> {viewDialog.assignment.assignedTechnician || "Not assigned"}</div>
+              <div><strong>Technician:</strong> {viewDialog.tracking.assignedTechnician || "Not assigned"}</div>
               <div><strong>Availability:</strong> {viewDialog.assignment.assignedTime || "Awaiting schedule"}</div>
-              <div><strong>Progress:</strong> {viewDialog.assignment.progress || "Queued"}</div>
+              <div><strong>Progress:</strong> {viewDialog.tracking.progress}</div>
               <div><strong>Status:</strong> {viewDialog.status}</div>
             </div>
             <button className="button button-primary" onClick={() => setViewDialog(null)}>

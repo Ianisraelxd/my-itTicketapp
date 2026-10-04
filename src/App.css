@@ -3324,3 +3324,78 @@ td .fit-badge-match { margin-left: 0 }
     .filter-actions { width: 100%; margin-left: 0 }
     .filter-actions .button { flex: 1 }
 }
+
+/* Ticket progress tracker */
+.progress-track {
+    list-style: none;
+    margin: 18px 0 4px;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px
+}
+
+.progress-track li {
+    position: relative;
+    display: grid;
+    justify-items: center;
+    gap: 3px;
+    text-align: center
+}
+
+.progress-track li::before {
+    content: "";
+    position: absolute;
+    top: 13px;
+    right: 50%;
+    width: 100%;
+    height: 3px;
+    border-radius: 3px;
+    background: var(--line);
+    z-index: 0
+}
+
+.progress-track li:first-child::before { display: none }
+.progress-track li.done::before,
+.progress-track li.current::before { background: var(--green) }
+
+.progress-dot {
+    position: relative;
+    z-index: 1;
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    border: 2px solid var(--line);
+    background: #fff;
+    color: var(--muted);
+    font: 700 12px Manrope, sans-serif;
+    transition: all .3s var(--ease)
+}
+
+.progress-track li.done .progress-dot {
+    border-color: var(--green);
+    background: var(--green);
+    color: #fff
+}
+
+.progress-track li.current .progress-dot {
+    border-color: var(--green);
+    color: var(--green);
+    animation: pulse-dot 1.8s infinite
+}
+
+.progress-track b { font-size: 11.5px; color: var(--ink) }
+.progress-track small { min-height: 28px; color: var(--muted); font-size: 10.5px; line-height: 1.35 }
+
+.progress-note {
+    margin: 12px 0 0 !important;
+    padding: 9px 12px;
+    border-radius: 10px;
+    background: #fbf2e0;
+    color: #8a6420 !important;
+    font-size: 12px !important
+}
+
+.progress-cancelled { background: #eef1ef; color: #55645d !important }
