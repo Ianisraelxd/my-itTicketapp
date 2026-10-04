@@ -12,6 +12,7 @@ The project ships in two forms:
 ## Table of contents
 
 - [Features](#features)
+- [Screenshots](#screenshots)
 - [Tech stack](#tech-stack)
 - [Project structure](#project-structure)
 - [Getting started](#getting-started)
@@ -32,25 +33,156 @@ The project ships in two forms:
 
 ## Features
 
-- **Role-based access** — Student, Employee, Technician, Admin, and Super Admin, each with its own navigation and dashboards.
-- **Authentication** — login validated against the database, with a signup and password-reset flow (prototype).
-- **Ticket management** — submit requests, auto-generated ticket IDs (`#HD001`), and live status tracking (Open / In Progress / Resolved).
-- **Dashboards** — per-role overview cards summarizing ticket counts and activity.
-- **User directory** — admins can view registered users pulled from the database.
-- **Activity log** — records logins and ticket actions, persisted server-side.
-- **Technician skills & recommendations** — admins assign skills (Hardware, Software, Network / Internet, Account / Login, Printer) to each technician. A technician's queue lists matching tickets first with a "Recommended" badge; out-of-skill tickets still show, but resolving one asks for confirmation with an "at your own risk" warning.
-- **Required ticket category** — requesters must pick the problem type (e.g. Hardware or Software) when submitting.
-- **Ticket chat & cancellation requests** — the requester, assigned technician and admins share one group conversation per ticket (open it from My Requests, the technician queue or Manage Requests). Requesters can't cancel on their own: they send a cancellation request with a reason, and an admin accepts or rejects it from Manage Requests.
-- **Reopen resolved tickets** — if the problem comes back, the requester can reopen a resolved ticket (after a warning and with a reason, up to 3 times). The technician and admins are notified and the ticket goes back to work.
-- **Notifications** — a Notifications page (with an unread badge and pop-up toasts) tells requesters when a technician is assigned or their problem is fixed, tells technicians about assignments, messages and cancelled tickets, and tells admins about new requests, cancellation requests and password requests.
-- **Admin / technician chat** — a Facebook-style chat dock (bottom-right) lets admins and technicians message each other. Every message shows the sender's name and role. Other roles can't use it.
-- **Super Admin reporting** — Dashboard with KPIs, a Report Manager (Recharts charts fed by SQL aggregation, skeleton loading, a location heat map, date/category/role filters that default to the last 30 days, and CSV export) and full Activity Log Reports.
-- **Responsive layout** — sidebar on desktop, icon rail on tablets, bottom tab bar on phones, with animations that respect reduced-motion settings.
-- **Settings** — a Settings dialog saved in the browser's localStorage: theme (light, dark or follow the device), animations (on, follow device, off), mute and volume, plus an About dialog with a short description and the version (v1.0.2).
-- **Sound effects** — login, signup, message sent, message received and new-notification sounds (helper in `src/sounds.js`, files in `public/sounds/`).
+**Everyone**
+- **Role-based access** — Student, Employee, Technician, Admin and Super Admin, each with its own navigation and dashboard.
+- **Sign in / sign up** — login checked against the database, plus a signup and password-reset-request flow (prototype).
+- **Notifications** — an in-app Notifications page with an unread badge and pop-up banners for everything that changes on your tickets and account.
+- **Settings** — theme (light, dark or follow the device), animations (on, follow device, off), mute and volume, saved in the browser's localStorage, plus an About dialog (v1.0.2).
+- **Sound effects** — login, signup, message sent, message received and notification sounds.
+- **Works on every screen** — sidebar on desktop, icon rail on tablets, bottom tab bar on phones.
+
+**Students and employees**
+- Submit a request with a required category (Hardware, Software, Network / Internet, Account / Login, Printer, Others), priority, location and description.
+- Track every request with a live progress tracker (Submitted → In progress → Resolved) and the assigned technician's name.
+- Talk to the support team inside each ticket.
+- Can't cancel directly: they send a **cancellation request** with a reason, which an admin accepts or rejects.
+- If a resolved problem comes back, they can **reopen** the ticket (after a warning, with a reason, up to 3 times).
+
+**Technicians**
+- A queue of tickets with **recommendations**: tickets matching the technician's skills come first with a "Recommended" badge.
+- Tickets outside their skills still appear, but resolving one asks for confirmation with an "at your own risk" warning.
+- Ticket conversations and a Facebook-style **chat dock** to message admins and other technicians.
+
+**Admins**
+- **Manage requests**: review all tickets, assign a technician (skill matches are suggested first) and answer **cancellation requests**.
+- **Users**: browse accounts, assign **technician skills**, and switch someone between Employee and Technician.
+- **Password requests**: approve or decline password-change requests.
+- Ticket conversations and the admin/technician chat dock.
+
+**Super admin**
+- A **dashboard** with system KPIs, a **Report Manager** (Recharts charts fed by SQL aggregation, skeleton loading, a campus location heat map, date / category / role filters that default to the last 30 days, CSV export) and **Activity Log Reports** of everything users did.
 
 ---
 
+## Screenshots
+
+All screenshots are generated from a demo database by [`scripts/capture-screenshots.mjs`](scripts/capture-screenshots.mjs) (see [Regenerating the screenshots](#regenerating-the-screenshots)).
+
+### Sign in
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/01-login.png" alt="Login screen, light theme"><br><sub>Login (light)</sub></td>
+    <td><img src="docs/screenshots/02-login-dark.png" alt="Login screen, dark theme"><br><sub>Login (dark)</sub></td>
+  </tr>
+</table>
+
+### Students and employees
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/03-student-dashboard.png" alt="Student dashboard"><br><sub>Dashboard with request counts and latest requests</sub></td>
+    <td><img src="docs/screenshots/04-submit-request.png" alt="Submit a request form"><br><sub>Submit a request (the category is required)</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/05-my-requests.png" alt="My requests list"><br><sub>My requests with technician and progress</sub></td>
+    <td><img src="docs/screenshots/09-notifications.png" alt="Notifications page"><br><sub>Notifications</sub></td>
+  </tr>
+</table>
+
+**Ticket details and conversation** — details and progress tracker on the left, the conversation with the support team on the right.
+
+![Ticket details and chat](docs/screenshots/06-ticket-details-chat.png)
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/07-cancellation-requested.png" alt="Cancellation requested"><br><sub>Cancellation is a request an admin decides on</sub></td>
+    <td><img src="docs/screenshots/08-reopen-warning.png" alt="Reopen warning"><br><sub>Reopening a resolved ticket starts with a warning</sub></td>
+  </tr>
+</table>
+
+### Technicians
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/18-technician-dashboard.png" alt="Technician dashboard"><br><sub>Dashboard</sub></td>
+    <td><img src="docs/screenshots/19-technician-queue.png" alt="Technician queue with recommendations"><br><sub>Queue with skill-based recommendations</sub></td>
+  </tr>
+</table>
+
+![Out-of-skill warning](docs/screenshots/20-out-of-skill-warning.png)
+
+### Admins
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/21-admin-manage-requests.png" alt="Admin request management"><br><sub>Request management with the cancellation queue</sub></td>
+    <td><img src="docs/screenshots/22-assign-technician.png" alt="Assign a technician"><br><sub>Assigning a technician (skill matches first)</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/23-users-and-skills.png" alt="Users and technician skills"><br><sub>Users and technician skills</sub></td>
+    <td><img src="docs/screenshots/24-password-requests.png" alt="Password requests"><br><sub>Password-change requests</sub></td>
+  </tr>
+</table>
+
+**Admin / technician chat dock** — a Facebook-style chat in the bottom-right corner; every message shows the sender's name and role.
+
+![Chat dock](docs/screenshots/25-chat-dock.png)
+
+### Super admin
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/26-superadmin-dashboard.png" alt="Super admin dashboard"><br><sub>Dashboard with a resolution-rate KPI</sub></td>
+    <td><img src="docs/screenshots/28-activity-log.png" alt="Activity log reports"><br><sub>Activity log reports</sub></td>
+  </tr>
+</table>
+
+**Report Manager** — filters (last 30 days by default), KPIs, seven reports and CSV export.
+
+![Report Manager](docs/screenshots/27-report-manager.png)
+
+### Settings, themes and About
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/10-settings.png" alt="Settings dialog"><br><sub>Settings</sub></td>
+    <td><img src="docs/screenshots/11-about.png" alt="About dialog"><br><sub>About</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/12-student-dashboard-dark.png" alt="Student dashboard in dark mode"><br><sub>Dark mode dashboard</sub></td>
+    <td><img src="docs/screenshots/13-ticket-details-dark.png" alt="Ticket popup in dark mode"><br><sub>Dark mode ticket popup</sub></td>
+  </tr>
+</table>
+
+![Report Manager in dark mode](docs/screenshots/29-report-manager-dark.png)
+
+### On a phone
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/14-mobile-dashboard.png" alt="Phone dashboard" width="240"><br><sub>Dashboard</sub></td>
+    <td><img src="docs/screenshots/15-mobile-ticket-chat.png" alt="Phone ticket chat" width="240"><br><sub>Ticket chat</sub></td>
+    <td><img src="docs/screenshots/16-mobile-ticket-details.png" alt="Phone ticket details" width="240"><br><sub>Ticket details</sub></td>
+    <td><img src="docs/screenshots/17-mobile-notifications.png" alt="Phone notifications" width="240"><br><sub>Notifications</sub></td>
+  </tr>
+</table>
+
+### Regenerating the screenshots
+
+The screenshots come from a throwaway demo database, never your real one:
+
+1. Make a copy of `server/schema.sql` with `helpdesk` renamed to `helpdesk_demo` (the `CREATE DATABASE` and `USE` lines) and run it in MySQL.
+2. Start the API on that database and a dev server pointed at it:
+   ```bash
+   DB_NAME=helpdesk_demo PORT=3002 node server/index.js
+   API_TARGET=http://localhost:3002 npx vite --port 5175
+   ```
+   (Git Bash syntax; in PowerShell set `$env:DB_NAME="helpdesk_demo"` first.)
+3. Fill it with sample tickets and chats: `DB_NAME=helpdesk_demo node scripts/seed-demo-data.mjs http://localhost:3002`
+4. Capture: `node scripts/capture-screenshots.mjs http://localhost:5175` (uses Chrome or Edge through `puppeteer-core`; set `CHROME_PATH` for another browser).
+
+---
 ## Tech stack
 
 | Layer      | Technology                          |
@@ -67,7 +199,9 @@ The project ships in two forms:
 
 ```
 my-react-app/
+├─ docs/screenshots/       # Screenshots used in this README
 ├─ public/                 # Static assets served as-is (sound effects in sounds/)
+├─ scripts/                # DB backup, demo-data seeding and screenshot capture
 ├─ server/                 # Express + MySQL backend
 │  ├─ db.js                # MySQL connection pool + query helper
 │  ├─ index.js             # API server and routes

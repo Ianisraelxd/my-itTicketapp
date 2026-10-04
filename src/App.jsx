@@ -3161,6 +3161,7 @@ function ReportManager({ me }) {
           title="4 · Requests by requester role"
           note="Bar graph"
           data={data?.byRole}
+          horizontal
           series={[{ key: "value", label: "Tickets", color: "#39759d" }]}
           isLoading={isLoading}
         />
@@ -3201,6 +3202,7 @@ function ReportManager({ me }) {
           title="7 · Registered users by role"
           note="Not affected by filters"
           data={data?.usersByRole}
+          horizontal
           series={[{ key: "value", label: "Users", color: "#39759d" }]}
           isLoading={isLoading}
         />
