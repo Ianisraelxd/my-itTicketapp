@@ -10,6 +10,16 @@ const PORT = Number(process.env.PORT) || 3001;
 // Wrap async route handlers so thrown errors reach the error middleware.
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
+// Next sequential code such as #HD007. `table` and `prefix` are fixed strings
+// from this file. Run inside the same transaction as the INSERT.
+async function nextCode(conn, table, prefix) {
+  const [rows] = await conn.execute(
+    `SELECT COALESCE(MAX(CAST(SUBSTRING(code, ?) AS UNSIGNED)), 0) + 1 AS n FROM ${table}`,
+    [prefix.length + 1],
+  );
+  return `${prefix}${String(rows[0].n).padStart(3, "0")}`;
+}
+
 // Notifications never break the action that triggered them.
 async function notify(userIds, { type, title, body, ticketCode = null }) {
   const targets = [...new Set((userIds || []).filter(Boolean))];
@@ -132,6 +142,11 @@ app.patch("/api/tickets/:id/status", wrap(async (req, res) => {
     return res.status(400).json({ error: "status must be Open, In Progress, or Resolved." });
   }
 
+  const actors = await query("SELECT role FROM users WHERE user_pk = ? LIMIT 1", [actorId ?? 0]);
+  if (!actors[0] || !["technician", "admin"].includes(actors[0].role)) {
+    return res.status(403).json({ error: "Only technicians and admins can change a ticket's status." });
+  }
+
   const tickets = await query(
     "SELECT ticket_pk, code, subject, status, created_by FROM tickets WHERE code = ? LIMIT 1",
     [id],
@@ -174,8 +189,7 @@ app.post("/api/tickets", wrap(async (req, res) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [countRows] = await conn.execute("SELECT COUNT(*) AS n FROM tickets");
-    const code = `#HD${String(countRows[0].n + 1).padStart(3, "0")}`;
+    const code = await nextCode(conn, "tickets", "#HD");
     await conn.execute(
       "INSERT INTO tickets (code, subject, category, priority, status, location, description, created_by) VALUES (?, ?, ?, ?, 'Open', ?, ?, ?)",
       [code, subject, category, priority, location ?? null, description ?? null, createdBy ?? null],
@@ -357,8 +371,7 @@ app.post("/api/tickets/:id/cancellation-requests", wrap(async (req, res) => {
   let code;
   try {
     await conn.beginTransaction();
-    const [countRows] = await conn.execute("SELECT COUNT(*) AS n FROM cancellation_requests");
-    code = `#CR${String(countRows[0].n + 1).padStart(3, "0")}`;
+    code = await nextCode(conn, "cancellation_requests", "#CR");
     await conn.execute(
       "INSERT INTO cancellation_requests (code, ticket_pk, requested_by, reason) VALUES (?, ?, ?, ?)",
       [code, ticket.ticket_pk, user.user_pk, reason],
@@ -886,8 +899,7 @@ app.post("/api/password-requests", wrap(async (req, res) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [countRows] = await conn.execute("SELECT COUNT(*) AS n FROM password_requests");
-    const code = `#PW${String(countRows[0].n + 1).padStart(3, "0")}`;
+    const code = await nextCode(conn, "password_requests", "#PW");
     await conn.execute(
       "INSERT INTO password_requests (code, user_pk, new_password, reason) VALUES (?, ?, ?, ?)",
       [code, userId, String(newPassword), reason?.trim() || null],

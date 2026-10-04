@@ -539,7 +539,11 @@ function App() {
           />
         )}
         {page === "technicianDashboard" && (
-          <TechnicianDashboard setPage={setPage} tickets={allTickets.length ? allTickets : tickets} />
+          <TechnicianDashboard
+            me={user}
+            setPage={setPage}
+            tickets={allTickets.length ? allTickets : tickets}
+          />
         )}
         {page === "technicianRequestsPage" && (
           <TechnicianRequests
@@ -1214,23 +1218,28 @@ function CountUp({ value }) {
   if (!isNumber) return value;
   return `${reduceMotion ? target : shown}${suffix}`;
 }
-function StatCard({ label, value, tone = "" }) {
+function StatCard({ label, value, tone = "", hint = "" }) {
   return (
     <div className={`stat-card ${tone}`}>
       <span>{label}</span>
       <strong><CountUp value={value} /></strong>
-      <small>
-        Compared with last month <b>↗</b>
-      </small>
+      {hint && <small>{hint}</small>}
     </div>
   );
+}
+
+function greeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
 }
 function UserDashboard({ setPage, tickets, ticketAssignments = {}, userName }) {
   return (
     <>
       <PageHeader
         eyebrow="OVERVIEW / 01"
-        title={`Good morning, ${userName}.`}
+        title={`${greeting()}, ${userName}.`}
         description="Here’s what’s happening with your support requests."
         action={
           <button
@@ -1242,7 +1251,15 @@ function UserDashboard({ setPage, tickets, ticketAssignments = {}, userName }) {
         }
       />
       <div className="stats-grid">
-        <StatCard label="Total requests" value={tickets.length} />
+        <StatCard
+          label="Total requests"
+          value={tickets.length}
+          hint={
+            tickets.some((ticket) => ticket.status === "Cancelled")
+              ? `${tickets.filter((ticket) => ticket.status === "Cancelled").length} cancelled`
+              : ""
+          }
+        />
         <StatCard
           label="Open"
           value={tickets.filter((ticket) => ticket.status === "Open").length}
@@ -1558,10 +1575,13 @@ function AdminDashboard({ setPage, tickets = [], users = [] }) {
     </>
   );
 }
-function TechnicianDashboard({ setPage, tickets = [] }) {
-  const open = tickets.filter((ticket) => ticket.status === "Open").length;
-  const inProgress = tickets.filter((ticket) => ticket.status === "In Progress").length;
-  const resolved = tickets.filter((ticket) => ticket.status === "Resolved").length;
+function TechnicianDashboard({ setPage, tickets = [], me }) {
+  const mine = tickets.filter(
+    (ticket) => ticket.assignedTo === me.userId && ticket.status !== "Cancelled",
+  );
+  const waiting = tickets.filter((ticket) => ticket.status === "Open").length;
+  const inProgress = mine.filter((ticket) => ticket.status === "In Progress").length;
+  const resolved = mine.filter((ticket) => ticket.status === "Resolved").length;
 
   return (
     <>
@@ -1571,15 +1591,19 @@ function TechnicianDashboard({ setPage, tickets = [] }) {
         description="View and manage the support requests currently in the system."
       />
       <div className="stats-grid">
-        <StatCard label="Assigned tickets" value={tickets.length} />
-        <StatCard label="Open" value={open} tone="gold" />
-        <StatCard label="In progress" value={inProgress} tone="blue" />
-        <StatCard label="Completed" value={resolved} tone="green" />
+        <StatCard label="Assigned to you" value={mine.length} hint="Tickets an admin gave you" />
+        <StatCard label="Waiting for a technician" value={waiting} tone="gold" hint="Not assigned yet" />
+        <StatCard label="Your tickets in progress" value={inProgress} tone="blue" />
+        <StatCard label="Completed by you" value={resolved} tone="green" />
       </div>
       <section className="panel empty-action">
         <div className="empty-icon">✓</div>
         <h2>Ready when you are.</h2>
-        <p>{tickets.length} requests are available in the queue.</p>
+        <p>
+          {waiting === 0
+            ? "No requests are waiting right now."
+            : `${waiting} request${waiting === 1 ? " is" : "s are"} waiting for a technician.`}
+        </p>
         <button
           className="button button-primary"
           onClick={() => setPage("technicianRequestsPage")}
@@ -1610,15 +1634,10 @@ function TechnicianRequests({
   showMessage,
   refreshData,
 }) {
-  const [localTickets, setLocalTickets] = useState(tickets);
   const [riskDialog, setRiskDialog] = useState(null);
   const [view, setView] = useState("all");
   const [openId, setOpenId] = useState(null);
-  const openTicket = localTickets.find((ticket) => ticket.id === openId);
-
-  useEffect(() => {
-    setLocalTickets(tickets);
-  }, [tickets]);
+  const openTicket = tickets.find((ticket) => ticket.id === openId);
 
   // Pick up skill changes an admin makes while this page is open.
   useEffect(() => {
@@ -1636,11 +1655,6 @@ function TechnicianRequests({
           progress: "Resolved",
         },
       }));
-      setLocalTickets((items) =>
-        items.map((ticket) =>
-          ticket.id === ticketId ? { ...ticket, status: "Resolved" } : ticket,
-        ),
-      );
       addActivity(`Resolved ticket ${ticketId}`);
       showMessage("Ticket resolved", `Ticket ${ticketId} has been marked as resolved.`);
       refreshData();
@@ -1659,11 +1673,11 @@ function TechnicianRequests({
 
   // Recommended tickets float to the top; the rest keep their original order.
   const rank = { match: 0, neutral: 1, mismatch: 2 };
-  const sorted = [...localTickets].sort(
-    (a, b) => rank[skillFit(mySkills, a.category)] - rank[skillFit(mySkills, b.category)],
-  );
-  const recommendedCount = localTickets.filter(
-    (ticket) => skillFit(mySkills, ticket.category) === "match" && ticket.status !== "Resolved",
+  const finished = (ticket) => ["Resolved", "Cancelled"].includes(ticket.status);
+  const order = (ticket) => rank[skillFit(mySkills, ticket.category)] + (finished(ticket) ? 10 : 0);
+  const sorted = [...tickets].sort((a, b) => order(a) - order(b));
+  const recommendedCount = tickets.filter(
+    (ticket) => skillFit(mySkills, ticket.category) === "match" && !finished(ticket),
   ).length;
   const visible =
     view === "recommended"

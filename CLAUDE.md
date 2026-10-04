@@ -14,7 +14,7 @@ npm run db:init    # Runs server/schema.sql via XAMPP's mysql.exe (prompts for p
 
 The frontend and API must both be running for the app to work. There is no test suite.
 
-`server/schema.sql` **drops and recreates all tables**, then seeds demo accounts. Copy `server/.env.example` to `server/.env` for DB credentials. All seeded accounts share ID `2404154` and are distinguished by role (login requires ID + password + role); passwords are in the schema file.
+`server/schema.sql` **drops and recreates all tables**, then seeds demo accounts. Create `server/.env` (gitignored; there is no example file) with `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME=helpdesk`, `PORT=3001`. All seeded accounts share ID `2404154` and are distinguished by role (login requires ID + password + role); passwords are in the schema file.
 
 ## Architecture
 

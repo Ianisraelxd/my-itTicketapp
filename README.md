@@ -71,7 +71,7 @@ my-react-app/
 │  ├─ db.js                # MySQL connection pool + query helper
 │  ├─ index.js             # API server and routes
 │  ├─ schema.sql           # Database schema + seed data
-│  └─ .env.example         # Backend environment template
+│  └─ .env                 # Your DB credentials (create it; gitignored)
 ├─ src/                    # React frontend
 │  ├─ api.js               # Fetch client for the /api backend
 │  ├─ App.jsx              # Main application (all views/components)
@@ -111,13 +111,7 @@ This runs `mysql -u root -p < server/schema.sql`, which creates the `helpdesk` d
 
 ### 3. Configure environment
 
-Copy the example env file and fill in your MySQL credentials:
-
-```bash
-cp server/.env.example server/.env
-```
-
-`server/.env` (gitignored):
+Create `server/.env` (gitignored) with your MySQL credentials:
 
 ```
 DB_HOST=localhost
