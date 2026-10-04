@@ -11,7 +11,7 @@ import ReportFilters from "./ReportFilters";
 import { defaultReportFilters } from "./reportDefaults";
 import useReportData from "./useReportData";
 import { SettingsModal } from "./SettingsModal";
-import { APP_VERSION } from "./settings";
+import { APP_VERSION, motionAllowed } from "./settings";
 import { playSound } from "./sounds";
 import { TicketDetailsModal } from "./TicketChat";
 
@@ -1197,9 +1197,7 @@ function CountUp({ value }) {
   const isNumber = match !== null;
   const target = isNumber ? Number(match[1]) : 0;
   const suffix = isNumber ? match[2] : "";
-  const reduceMotion =
-    typeof window !== "undefined" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const reduceMotion = typeof window !== "undefined" && !motionAllowed();
   const [shown, setShown] = useState(reduceMotion ? target : 0);
 
   useEffect(() => {

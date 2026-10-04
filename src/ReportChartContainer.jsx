@@ -71,6 +71,7 @@ export default function ReportChartContainer({
             innerRadius="55%"
             outerRadius="85%"
             paddingAngle={2}
+            stroke="var(--card)"
           >
             {data
               .filter((row) => Number(row[valueKey]) > 0)
@@ -135,7 +136,7 @@ export default function ReportChartContainer({
               <YAxis allowDecimals={false} tick={AXIS_STYLE} tickLine={false} axisLine={false} />
             </>
           )}
-          <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: "#e7f0eb88" }} />
+          <Tooltip contentStyle={TOOLTIP_STYLE} cursor={{ fill: "var(--mint)", opacity: 0.5 }} />
           {showLegend && <Legend iconType="circle" wrapperStyle={{ fontSize: 12 }} />}
           {series.map((item, index) => (
             <Bar
