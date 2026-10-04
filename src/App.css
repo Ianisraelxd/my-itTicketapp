@@ -2791,6 +2791,50 @@ td .fit-badge-match { margin-left: 0 }
 
 .status-cancelled i { background: #a7b1ac }
 
+.table-button.warn {
+    background: var(--warn-bg);
+    border-color: var(--warn-line);
+    color: var(--warn-ink)
+}
+
+.table-button.warn:hover:not(:disabled) { background: var(--warn-line); box-shadow: none }
+.table-button.warn:disabled { background: var(--surface-2); border-color: transparent; color: var(--muted) }
+
+.reopen-warning {
+    margin: 0 0 16px;
+    padding: 12px 14px;
+    border: 1px solid var(--warn-line);
+    border-radius: 14px;
+    background: var(--warn-bg);
+    color: var(--warn-ink);
+    text-align: left;
+    font-size: 12.5px;
+    line-height: 1.5
+}
+
+.reopen-warning ul { margin: 6px 0 0; padding-left: 18px }
+.reopen-warning li + li { margin-top: 3px }
+
+.reopen-confirm {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin: 0 0 18px;
+    color: var(--ink-2);
+    font-size: 12.5px;
+    line-height: 1.4;
+    text-align: left;
+    cursor: pointer
+}
+
+.reopen-confirm input {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
+    accent-color: var(--green)
+}
+
 .chat-msg.cancel-request .chat-bubble {
     background: var(--warn-bg);
     color: var(--warn-ink);

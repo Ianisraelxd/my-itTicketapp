@@ -45,6 +45,7 @@ CREATE TABLE tickets (
   description TEXT NULL,
   created_by  INT NULL,
   assigned_to INT NULL,                      -- technician assigned by an admin
+  reopen_count INT NOT NULL DEFAULT 0,       -- times the requester reopened it after Resolved
   created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_ticket_user FOREIGN KEY (created_by)
     REFERENCES users(user_pk) ON DELETE SET NULL
@@ -120,7 +121,7 @@ CREATE TABLE ticket_messages (
   ticket_pk    INT NOT NULL,
   sender_pk    INT NOT NULL,
   message_text VARCHAR(1000) NOT NULL,
-  kind         VARCHAR(24)   NOT NULL DEFAULT 'chat',  -- chat | cancellation_request | cancellation_decision
+  kind         VARCHAR(24)   NOT NULL DEFAULT 'chat',  -- chat | cancellation_request | cancellation_decision | reopen
   created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   KEY idx_ticket_msg (ticket_pk, message_pk),
   CONSTRAINT fk_tmsg_ticket FOREIGN KEY (ticket_pk) REFERENCES tickets(ticket_pk) ON DELETE CASCADE,

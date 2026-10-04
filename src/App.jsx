@@ -52,6 +52,9 @@ function ticketTracking(ticket, assignment = {}) {
   else if (Number(ticket.cancelPending) > 0) progress = "Cancellation requested";
   else if (ticket.status === "In Progress") progress = assignedTechnician ? "Technician working on it" : "In progress";
   else progress = "Waiting for a technician";
+  if (Number(ticket.reopenCount) > 0 && !["Resolved", "Cancelled"].includes(ticket.status)) {
+    progress = `Reopened: ${progress.charAt(0).toLowerCase()}${progress.slice(1)}`;
+  }
   return { assignedTechnician, progress };
 }
 
@@ -2693,6 +2696,7 @@ const NOTIFICATION_STYLES = {
   password_approved: ["🔑", "good"],
   password_rejected: ["🔑", "muted"],
   skills: ["★", "good"],
+  reopened: ["↻", "warn"],
   role: ["⇄", "info"],
 };
 

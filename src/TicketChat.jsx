@@ -5,6 +5,7 @@ import ChatInput from "./ChatInput";
 import { playSound } from "./sounds";
 
 const CLOSED_STATUSES = ["Resolved", "Done", "Closed", "Cancelled"];
+const MAX_REOPENS = 3;
 
 function formatTime(value) {
   const date = new Date(value);
@@ -33,11 +34,16 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const [reopenOpen, setReopenOpen] = useState(false);
+  const [reopenReason, setReopenReason] = useState("");
+  const [reopenSure, setReopenSure] = useState(false);
   const scroller = useRef(null);
   const lastSeenId = useRef(null);
 
   const isOwner = ticket.created_by === me.userId;
   const closed = CLOSED_STATUSES.includes(ticket.status);
+  const reopensLeft = MAX_REOPENS - Number(ticket.reopenCount || 0);
+  const canReopen = isOwner && ticket.status === "Resolved";
   const pending = requests.find((request) => request.status === "Pending");
   const lastDeclined = !pending && requests[0]?.status === "Rejected" ? requests[0] : null;
 
@@ -97,6 +103,30 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
     }
   }
 
+  async function submitReopen(event) {
+    event.preventDefault();
+    const trimmed = reopenReason.trim();
+    if (!trimmed || !reopenSure) return;
+    setBusy(true);
+    try {
+      await api.reopenTicket(ticket.id, { userId: me.userId, reason: trimmed });
+      setReopenOpen(false);
+      setReopenReason("");
+      setReopenSure(false);
+      await load();
+      showMessage(
+        "Ticket reopened",
+        "Your technician and the admins were notified that the problem is still happening.",
+      );
+    } catch (error) {
+      setReopenOpen(false);
+      showMessage("Could not reopen", error.message || "Please try again.");
+    } finally {
+      setBusy(false);
+      onChanged();
+    }
+  }
+
   async function submitRequest(event) {
     event.preventDefault();
     const trimmed = reason.trim();
@@ -124,6 +154,17 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
     <div className="ticket-chat">
       <div className="ticket-chat-head">
         <strong>Conversation</strong>
+        {canReopen && (
+          <button
+            type="button"
+            className="table-button warn"
+            disabled={reopensLeft <= 0}
+            title={reopensLeft <= 0 ? "Reopen limit reached" : undefined}
+            onClick={() => setReopenOpen(true)}
+          >
+            {reopensLeft <= 0 ? "Reopen limit reached" : "Problem not fixed? Reopen"}
+          </button>
+        )}
         {isOwner && !closed && (
           <button
             type="button"
@@ -176,7 +217,7 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
           return (
             <div
               className={`chat-msg ${mine ? "mine" : "theirs"} ${
-                message.kind === "cancellation_request" ? "cancel-request" : ""
+                message.kind === "cancellation_request" || message.kind === "reopen" ? "cancel-request" : ""
               }`}
               key={message.id}
             >
@@ -189,6 +230,7 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
                 {message.kind === "cancellation_request" && (
                   <em className="chat-flag">Cancellation request</em>
                 )}
+                {message.kind === "reopen" && <em className="chat-flag">Ticket reopened</em>}
                 {message.text}
                 <time>{formatTime(message.createdAt)}</time>
               </span>
@@ -200,6 +242,7 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
       {closed ? (
         <p className="ticket-chat-closed">
           This ticket is {ticket.status.toLowerCase()}, so the conversation is read-only.
+          {canReopen && reopensLeft > 0 && " Still broken? Use Reopen above."}
         </p>
       ) : (
         <form className="chat-compose" onSubmit={send}>
@@ -213,6 +256,71 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
             ➤
           </button>
         </form>
+      )}
+
+      {reopenOpen && (
+        <div className="modal-backdrop" onClick={() => setReopenOpen(false)}>
+          <form
+            className="modal-box"
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={submitReopen}
+          >
+            <div className="modal-icon warn-icon">!</div>
+            <h3>Reopen this ticket?</h3>
+            <div className="reopen-warning" role="alert">
+              <strong>Please read before you continue</strong>
+              <ul>
+                <li>Only reopen if the <b>same problem</b> is still happening.</li>
+                <li>
+                  If it is a <b>new or different</b> problem, submit a new request instead.
+                </li>
+                <li>
+                  The technician and the admins will be notified right away, and the ticket goes back
+                  to work.
+                </li>
+                <li>
+                  You can reopen a ticket {MAX_REOPENS} times at most ({reopensLeft} left).
+                </li>
+              </ul>
+            </div>
+            <label className="field-label dialog-note">
+              What is still wrong?
+              <textarea
+                value={reopenReason}
+                onChange={(event) => setReopenReason(event.target.value)}
+                placeholder="Example: The projector still shuts off after a few minutes."
+                maxLength={500}
+                required
+                autoFocus
+              />
+            </label>
+            <label className="reopen-confirm">
+              <input
+                type="checkbox"
+                checked={reopenSure}
+                onChange={(event) => setReopenSure(event.target.checked)}
+              />
+              <span>I confirm this is the same problem that was marked as fixed.</span>
+            </label>
+            <div className="dialog-actions">
+              <button
+                type="button"
+                className="button button-outline"
+                disabled={busy}
+                onClick={() => setReopenOpen(false)}
+              >
+                Back
+              </button>
+              <button
+                type="submit"
+                className="button button-primary"
+                disabled={busy || !reopenReason.trim() || !reopenSure}
+              >
+                Reopen ticket
+              </button>
+            </div>
+          </form>
+        </div>
       )}
 
       {dialogOpen && (
@@ -291,6 +399,12 @@ function ProgressTrack({ ticket }) {
           </li>
         ))}
       </ol>
+      {Number(ticket.reopenCount) > 0 && (
+        <p className="progress-note">
+          Reopened {ticket.reopenCount} time{Number(ticket.reopenCount) === 1 ? "" : "s"} because the problem
+          was still happening.
+        </p>
+      )}
       {Number(ticket.cancelPending) > 0 && (
         <p className="progress-note">Cancellation requested. Waiting for an admin to decide.</p>
       )}

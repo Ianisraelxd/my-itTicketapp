@@ -41,6 +41,7 @@ The project ships in two forms:
 - **Technician skills & recommendations** — admins assign skills (Hardware, Software, Network / Internet, Account / Login, Printer) to each technician. A technician's queue lists matching tickets first with a "Recommended" badge; out-of-skill tickets still show, but resolving one asks for confirmation with an "at your own risk" warning.
 - **Required ticket category** — requesters must pick the problem type (e.g. Hardware or Software) when submitting.
 - **Ticket chat & cancellation requests** — the requester, assigned technician and admins share one group conversation per ticket (open it from My Requests, the technician queue or Manage Requests). Requesters can't cancel on their own: they send a cancellation request with a reason, and an admin accepts or rejects it from Manage Requests.
+- **Reopen resolved tickets** — if the problem comes back, the requester can reopen a resolved ticket (after a warning and with a reason, up to 3 times). The technician and admins are notified and the ticket goes back to work.
 - **Notifications** — a Notifications page (with an unread badge and pop-up toasts) tells requesters when a technician is assigned or their problem is fixed, tells technicians about assignments, messages and cancelled tickets, and tells admins about new requests, cancellation requests and password requests.
 - **Admin / technician chat** — a Facebook-style chat dock (bottom-right) lets admins and technicians message each other. Every message shows the sender's name and role. Other roles can't use it.
 - **Super Admin reporting** — Dashboard with KPIs, a Report Manager (Recharts charts fed by SQL aggregation, skeleton loading, a location heat map, date/category/role filters that default to the last 30 days, and CSV export) and full Activity Log Reports.
@@ -171,6 +172,7 @@ Base path: `/api` (proxied to `http://localhost:3001` in development).
 | PATCH | `/api/tickets/:id/assign` | Admin only. Body: `{ actorId, technicianId }`; sets the technician and moves the ticket to In Progress. |
 | GET | `/api/tickets/:id/participants` | Who is in the ticket conversation: requester, assigned technician, admins. |
 | GET / POST | `/api/tickets/:id/messages` | Ticket conversation. POST body: `{ userId, text }`. |
+| POST | `/api/tickets/:id/reopen` | Owner reopens a Resolved ticket. Body: `{ userId, reason }`; max 3 reopens. |
 | POST / GET | `/api/tickets/:id/cancellation-requests` | Owner files a cancellation request (`{ userId, reason }`) / lists the ticket's requests. |
 | GET | `/api/cancellation-requests?userId=` | Admin queue of all cancellation requests. |
 | PATCH | `/api/cancellation-requests/:code/status` | Admin accepts (ticket becomes Cancelled) or rejects. Body: `{ actorId, status, note? }`. |
@@ -205,7 +207,7 @@ The `helpdesk` database contains eight tables (see `server/schema.sql` for full 
 - **`notifications`** — per-user in-app notifications with a read timestamp.
 - **`messages`** — chat messages between admins and technicians, with a read timestamp.
 
-Re-running `schema.sql` drops and recreates the tables, restoring the seed data. If you already have a database from an earlier version, add the new pieces by hand instead (`ALTER TABLE users ADD COLUMN skills ...`, `ALTER TABLE tickets ADD COLUMN assigned_to ...`, and the `messages`, `ticket_messages`, `cancellation_requests` and `notifications` tables from `schema.sql`) to avoid losing data.
+Re-running `schema.sql` drops and recreates the tables, restoring the seed data. If you already have a database from an earlier version, add the new pieces by hand instead (`ALTER TABLE users ADD COLUMN skills ...`, `ALTER TABLE tickets ADD COLUMN assigned_to ...` and `reopen_count INT NOT NULL DEFAULT 0`, and the `messages`, `ticket_messages`, `cancellation_requests` and `notifications` tables from `schema.sql`) to avoid losing data.
 
 ---
 

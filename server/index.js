@@ -118,14 +118,14 @@ app.get("/api/tickets", wrap(async (req, res) => {
 
   if (mine === "1" && userId) {
     const rows = await query(
-      "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to WHERE t.created_by = ? ORDER BY t.ticket_pk DESC",
+      "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to WHERE t.created_by = ? ORDER BY t.ticket_pk DESC",
       [userId],
     );
     return res.json(rows);
   }
 
   const rows = await query(
-    "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to ORDER BY t.ticket_pk DESC",
+    "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to ORDER BY t.ticket_pk DESC",
   );
   res.json(rows);
 }));
@@ -416,6 +416,55 @@ app.get("/api/tickets/:id/cancellation-requests", wrap(async (req, res) => {
     [access.ticket.ticket_pk],
   );
   res.json(rows);
+}));
+
+// A requester can reopen a ticket that was marked Resolved when the problem is
+// still there. The status guard sits in the UPDATE so a double click cannot
+// reopen it twice, and the number of reopens is capped.
+const MAX_REOPENS = 3;
+
+app.post("/api/tickets/:id/reopen", wrap(async (req, res) => {
+  const access = await ticketAccess(req.params.id, req.body?.userId);
+  if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
+  const { ticket, user, isOwner } = access;
+  if (!isOwner) {
+    return res.status(403).json({ error: "Only the person who submitted the ticket can reopen it." });
+  }
+  const reason = String(req.body?.reason ?? "").trim().slice(0, 500);
+  if (!reason) return res.status(400).json({ error: "Please explain what is still wrong." });
+
+  const counts = await query("SELECT reopen_count FROM tickets WHERE ticket_pk = ?", [ticket.ticket_pk]);
+  if (Number(counts[0]?.reopen_count) >= MAX_REOPENS) {
+    return res.status(409).json({
+      error: `This ticket was already reopened ${MAX_REOPENS} times. Please submit a new request instead.`,
+    });
+  }
+
+  const nextStatus = ticket.assigned_to ? "In Progress" : "Open";
+  const [result] = await pool.execute(
+    "UPDATE tickets SET status = ?, reopen_count = reopen_count + 1 WHERE ticket_pk = ? AND status = 'Resolved' AND reopen_count < ?",
+    [nextStatus, ticket.ticket_pk, MAX_REOPENS],
+  );
+  if (result.affectedRows === 0) {
+    return res.status(409).json({ error: "Only a resolved ticket can be reopened." });
+  }
+
+  await query(
+    "INSERT INTO ticket_messages (ticket_pk, sender_pk, message_text, kind) VALUES (?, ?, ?, 'reopen')",
+    [ticket.ticket_pk, user.user_pk, `Ticket reopened, the problem is still happening: ${reason}`],
+  );
+  const recipients = [ticket.assigned_to, ...(await adminIds())].filter((id) => id && id !== user.user_pk);
+  await notify(recipients, {
+    type: "reopened",
+    title: "Ticket reopened: issue still persists",
+    body: `${user.name} reopened ${ticket.code}: ${reason.slice(0, 90)}`,
+    ticketCode: ticket.code,
+  });
+  await query(
+    "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
+    [user.name, user.role_name, `Reopened ticket ${ticket.code}`],
+  );
+  res.json({ ok: true, id: ticket.code, status: nextStatus });
 }));
 
 // Admin queue of all cancellation requests (pending first).
