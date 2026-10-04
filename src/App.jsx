@@ -11,7 +11,7 @@ import ReportFilters from "./ReportFilters";
 import { defaultReportFilters } from "./reportDefaults";
 import useReportData from "./useReportData";
 import { SettingsModal } from "./SettingsModal";
-import { APP_VERSION } from "./settings";
+import { APP_VERSION, motionAllowed } from "./settings";
 import { playSound } from "./sounds";
 import { TicketDetailsModal } from "./TicketChat";
 
@@ -40,6 +40,23 @@ const navFor = {
     ["activityLogPage", "◷", "Activity Log Reports"],
   ],
 };
+
+// Technician + progress shown in the ticket tables. Derived from the ticket
+// itself (status, assigned technician, pending cancellation) so every role sees
+// the same thing; the browser-only assignment record is just a fallback name.
+function ticketTracking(ticket, assignment = {}) {
+  const assignedTechnician = ticket.assignedName || assignment.assignedTechnician || "";
+  let progress;
+  if (ticket.status === "Cancelled") progress = "Cancelled";
+  else if (ticket.status === "Resolved") progress = "Resolved";
+  else if (Number(ticket.cancelPending) > 0) progress = "Cancellation requested";
+  else if (ticket.status === "In Progress") progress = assignedTechnician ? "Technician working on it" : "In progress";
+  else progress = "Waiting for a technician";
+  if (Number(ticket.reopenCount) > 0 && !["Resolved", "Cancelled"].includes(ticket.status)) {
+    progress = `Reopened: ${progress.charAt(0).toLowerCase()}${progress.slice(1)}`;
+  }
+  return { assignedTechnician, progress };
+}
 
 // Ticket categories. Technician skills are drawn from the same list (minus
 // "Others"), which is how requests get matched to the right technician.
@@ -525,7 +542,11 @@ function App() {
           />
         )}
         {page === "technicianDashboard" && (
-          <TechnicianDashboard setPage={setPage} tickets={allTickets.length ? allTickets : tickets} />
+          <TechnicianDashboard
+            me={user}
+            setPage={setPage}
+            tickets={allTickets.length ? allTickets : tickets}
+          />
         )}
         {page === "technicianRequestsPage" && (
           <TechnicianRequests
@@ -1179,9 +1200,7 @@ function CountUp({ value }) {
   const isNumber = match !== null;
   const target = isNumber ? Number(match[1]) : 0;
   const suffix = isNumber ? match[2] : "";
-  const reduceMotion =
-    typeof window !== "undefined" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const reduceMotion = typeof window !== "undefined" && !motionAllowed();
   const [shown, setShown] = useState(reduceMotion ? target : 0);
 
   useEffect(() => {
@@ -1200,23 +1219,28 @@ function CountUp({ value }) {
   if (!isNumber) return value;
   return `${reduceMotion ? target : shown}${suffix}`;
 }
-function StatCard({ label, value, tone = "" }) {
+function StatCard({ label, value, tone = "", hint = "" }) {
   return (
     <div className={`stat-card ${tone}`}>
       <span>{label}</span>
       <strong><CountUp value={value} /></strong>
-      <small>
-        Compared with last month <b>↗</b>
-      </small>
+      {hint && <small>{hint}</small>}
     </div>
   );
+}
+
+function greeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
 }
 function UserDashboard({ setPage, tickets, ticketAssignments = {}, userName }) {
   return (
     <>
       <PageHeader
         eyebrow="OVERVIEW / 01"
-        title={`Good morning, ${userName}.`}
+        title={`${greeting()}, ${userName}.`}
         description="Here’s what’s happening with your support requests."
         action={
           <button
@@ -1228,7 +1252,15 @@ function UserDashboard({ setPage, tickets, ticketAssignments = {}, userName }) {
         }
       />
       <div className="stats-grid">
-        <StatCard label="Total requests" value={tickets.length} />
+        <StatCard
+          label="Total requests"
+          value={tickets.length}
+          hint={
+            tickets.some((ticket) => ticket.status === "Cancelled")
+              ? `${tickets.filter((ticket) => ticket.status === "Cancelled").length} cancelled`
+              : ""
+          }
+        />
         <StatCard
           label="Open"
           value={tickets.filter((ticket) => ticket.status === "Open").length}
@@ -1266,8 +1298,7 @@ function UserDashboard({ setPage, tickets, ticketAssignments = {}, userName }) {
           <TicketTable
             tickets={tickets.slice(0, 3).map((ticket) => ({
               ...ticket,
-              assignedTechnician: ticketAssignments[ticket.id]?.assignedTechnician || "",
-              progress: ticketAssignments[ticket.id]?.progress || "Queued",
+              ...ticketTracking(ticket, ticketAssignments[ticket.id]),
             }))}
             showAssignmentMeta
           />
@@ -1473,8 +1504,7 @@ function MyRequests({ tickets, ticketAssignments = {}, setPage, me, refreshData,
         <TicketTable
           tickets={tickets.map((ticket) => ({
             ...ticket,
-            assignedTechnician: ticketAssignments[ticket.id]?.assignedTechnician || "",
-            progress: ticketAssignments[ticket.id]?.progress || "Queued",
+            ...ticketTracking(ticket, ticketAssignments[ticket.id]),
           }))}
           showAssignmentMeta
           onOpen={setOpenId}
@@ -1546,10 +1576,13 @@ function AdminDashboard({ setPage, tickets = [], users = [] }) {
     </>
   );
 }
-function TechnicianDashboard({ setPage, tickets = [] }) {
-  const open = tickets.filter((ticket) => ticket.status === "Open").length;
-  const inProgress = tickets.filter((ticket) => ticket.status === "In Progress").length;
-  const resolved = tickets.filter((ticket) => ticket.status === "Resolved").length;
+function TechnicianDashboard({ setPage, tickets = [], me }) {
+  const mine = tickets.filter(
+    (ticket) => ticket.assignedTo === me.userId && ticket.status !== "Cancelled",
+  );
+  const waiting = tickets.filter((ticket) => ticket.status === "Open").length;
+  const inProgress = mine.filter((ticket) => ticket.status === "In Progress").length;
+  const resolved = mine.filter((ticket) => ticket.status === "Resolved").length;
 
   return (
     <>
@@ -1559,15 +1592,19 @@ function TechnicianDashboard({ setPage, tickets = [] }) {
         description="View and manage the support requests currently in the system."
       />
       <div className="stats-grid">
-        <StatCard label="Assigned tickets" value={tickets.length} />
-        <StatCard label="Open" value={open} tone="gold" />
-        <StatCard label="In progress" value={inProgress} tone="blue" />
-        <StatCard label="Completed" value={resolved} tone="green" />
+        <StatCard label="Assigned to you" value={mine.length} hint="Tickets an admin gave you" />
+        <StatCard label="Waiting for a technician" value={waiting} tone="gold" hint="Not assigned yet" />
+        <StatCard label="Your tickets in progress" value={inProgress} tone="blue" />
+        <StatCard label="Completed by you" value={resolved} tone="green" />
       </div>
       <section className="panel empty-action">
         <div className="empty-icon">✓</div>
         <h2>Ready when you are.</h2>
-        <p>{tickets.length} requests are available in the queue.</p>
+        <p>
+          {waiting === 0
+            ? "No requests are waiting right now."
+            : `${waiting} request${waiting === 1 ? " is" : "s are"} waiting for a technician.`}
+        </p>
         <button
           className="button button-primary"
           onClick={() => setPage("technicianRequestsPage")}
@@ -1598,15 +1635,10 @@ function TechnicianRequests({
   showMessage,
   refreshData,
 }) {
-  const [localTickets, setLocalTickets] = useState(tickets);
   const [riskDialog, setRiskDialog] = useState(null);
   const [view, setView] = useState("all");
   const [openId, setOpenId] = useState(null);
-  const openTicket = localTickets.find((ticket) => ticket.id === openId);
-
-  useEffect(() => {
-    setLocalTickets(tickets);
-  }, [tickets]);
+  const openTicket = tickets.find((ticket) => ticket.id === openId);
 
   // Pick up skill changes an admin makes while this page is open.
   useEffect(() => {
@@ -1624,11 +1656,6 @@ function TechnicianRequests({
           progress: "Resolved",
         },
       }));
-      setLocalTickets((items) =>
-        items.map((ticket) =>
-          ticket.id === ticketId ? { ...ticket, status: "Resolved" } : ticket,
-        ),
-      );
       addActivity(`Resolved ticket ${ticketId}`);
       showMessage("Ticket resolved", `Ticket ${ticketId} has been marked as resolved.`);
       refreshData();
@@ -1647,11 +1674,11 @@ function TechnicianRequests({
 
   // Recommended tickets float to the top; the rest keep their original order.
   const rank = { match: 0, neutral: 1, mismatch: 2 };
-  const sorted = [...localTickets].sort(
-    (a, b) => rank[skillFit(mySkills, a.category)] - rank[skillFit(mySkills, b.category)],
-  );
-  const recommendedCount = localTickets.filter(
-    (ticket) => skillFit(mySkills, ticket.category) === "match" && ticket.status !== "Resolved",
+  const finished = (ticket) => ["Resolved", "Cancelled"].includes(ticket.status);
+  const order = (ticket) => rank[skillFit(mySkills, ticket.category)] + (finished(ticket) ? 10 : 0);
+  const sorted = [...tickets].sort((a, b) => order(a) - order(b));
+  const recommendedCount = tickets.filter(
+    (ticket) => skillFit(mySkills, ticket.category) === "match" && !finished(ticket),
   ).length;
   const visible =
     view === "recommended"
@@ -1727,6 +1754,7 @@ function TechnicianRequests({
               )}
               {visible.map((ticket) => {
                 const assignment = ticketAssignments[ticket.id] || {};
+                const tracking = ticketTracking(ticket, assignment);
                 const fit = skillFit(mySkills, ticket.category);
                 return (
                   <tr key={ticket.id} className={`fit-row fit-${fit}`}>
@@ -1747,8 +1775,8 @@ function TechnicianRequests({
                     <td>
                       <Status value={ticket.status} />
                     </td>
-                    <td>{assignment.assignedTechnician || "Pending assignment"}</td>
-                    <td>{assignment.progress || "Queued"}</td>
+                    <td>{tracking.assignedTechnician || "Pending assignment"}</td>
+                    <td>{tracking.progress}</td>
                     <td>
                       <div className="inline-actions">
                         <button className="table-button light" onClick={() => setOpenId(ticket.id)}>
@@ -1843,6 +1871,7 @@ function ManageRequests({
     setViewDialog({
       ...ticket,
       assignment: ticketAssignments[ticket.id] || {},
+      tracking: ticketTracking(ticket, ticketAssignments[ticket.id]),
     });
   };
 
@@ -1901,6 +1930,7 @@ function ManageRequests({
               )}
               {tickets.map((ticket) => {
                 const assignment = ticketAssignments[ticket.id] || {};
+                const tracking = ticketTracking(ticket, assignment);
                 return (
                   <tr key={ticket.id}>
                     <td>
@@ -1912,8 +1942,8 @@ function ManageRequests({
                     <td>
                       <Status value={ticket.status} />
                     </td>
-                    <td>{assignment.assignedTechnician || "Unassigned"}</td>
-                    <td>{assignment.progress || "Queued"}</td>
+                    <td>{tracking.assignedTechnician || "Unassigned"}</td>
+                    <td>{tracking.progress}</td>
                     <td>
                       <div className="inline-actions">
                         <button
@@ -2005,9 +2035,9 @@ function ManageRequests({
             <h3>{viewDialog.id}</h3>
             <p>{viewDialog.subject}</p>
             <div className="detail-stack">
-              <div><strong>Technician:</strong> {viewDialog.assignment.assignedTechnician || "Not assigned"}</div>
+              <div><strong>Technician:</strong> {viewDialog.tracking.assignedTechnician || "Not assigned"}</div>
               <div><strong>Availability:</strong> {viewDialog.assignment.assignedTime || "Awaiting schedule"}</div>
-              <div><strong>Progress:</strong> {viewDialog.assignment.progress || "Queued"}</div>
+              <div><strong>Progress:</strong> {viewDialog.tracking.progress}</div>
               <div><strong>Status:</strong> {viewDialog.status}</div>
             </div>
             <button className="button button-primary" onClick={() => setViewDialog(null)}>
@@ -2666,6 +2696,7 @@ const NOTIFICATION_STYLES = {
   password_approved: ["🔑", "good"],
   password_rejected: ["🔑", "muted"],
   skills: ["★", "good"],
+  reopened: ["↻", "warn"],
   role: ["⇄", "info"],
 };
 

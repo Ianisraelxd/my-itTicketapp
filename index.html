@@ -4,7 +4,20 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>my-react-app</title>
+    <title>Campus HelpDesk</title>
+    <script>
+      // Apply the saved theme before the page paints, so dark mode never flashes white.
+      try {
+        var saved = JSON.parse(localStorage.getItem("helpdesk-settings-v1") || "{}");
+        var theme = saved.theme === "dark" || saved.theme === "system" ? saved.theme : "light";
+        if (theme === "system") {
+          theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.dataset.motion = saved.motion || "on";
+        document.documentElement.style.colorScheme = theme;
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

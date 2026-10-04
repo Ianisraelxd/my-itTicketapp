@@ -10,6 +10,16 @@ const PORT = Number(process.env.PORT) || 3001;
 // Wrap async route handlers so thrown errors reach the error middleware.
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
+// Next sequential code such as #HD007. `table` and `prefix` are fixed strings
+// from this file. Run inside the same transaction as the INSERT.
+async function nextCode(conn, table, prefix) {
+  const [rows] = await conn.execute(
+    `SELECT COALESCE(MAX(CAST(SUBSTRING(code, ?) AS UNSIGNED)), 0) + 1 AS n FROM ${table}`,
+    [prefix.length + 1],
+  );
+  return `${prefix}${String(rows[0].n).padStart(3, "0")}`;
+}
+
 // Notifications never break the action that triggered them.
 async function notify(userIds, { type, title, body, ticketCode = null }) {
   const targets = [...new Set((userIds || []).filter(Boolean))];
@@ -108,14 +118,14 @@ app.get("/api/tickets", wrap(async (req, res) => {
 
   if (mine === "1" && userId) {
     const rows = await query(
-      "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, u.name AS userName, u.role_name AS userRole FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by WHERE t.created_by = ? ORDER BY t.ticket_pk DESC",
+      "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to WHERE t.created_by = ? ORDER BY t.ticket_pk DESC",
       [userId],
     );
     return res.json(rows);
   }
 
   const rows = await query(
-    "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by ORDER BY t.ticket_pk DESC",
+    "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to ORDER BY t.ticket_pk DESC",
   );
   res.json(rows);
 }));
@@ -130,6 +140,11 @@ app.patch("/api/tickets/:id/status", wrap(async (req, res) => {
   const valid = ["Open", "In Progress", "Resolved"];
   if (!valid.includes(status)) {
     return res.status(400).json({ error: "status must be Open, In Progress, or Resolved." });
+  }
+
+  const actors = await query("SELECT role FROM users WHERE user_pk = ? LIMIT 1", [actorId ?? 0]);
+  if (!actors[0] || !["technician", "admin"].includes(actors[0].role)) {
+    return res.status(403).json({ error: "Only technicians and admins can change a ticket's status." });
   }
 
   const tickets = await query(
@@ -174,8 +189,7 @@ app.post("/api/tickets", wrap(async (req, res) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [countRows] = await conn.execute("SELECT COUNT(*) AS n FROM tickets");
-    const code = `#HD${String(countRows[0].n + 1).padStart(3, "0")}`;
+    const code = await nextCode(conn, "tickets", "#HD");
     await conn.execute(
       "INSERT INTO tickets (code, subject, category, priority, status, location, description, created_by) VALUES (?, ?, ?, ?, 'Open', ?, ?, ?)",
       [code, subject, category, priority, location ?? null, description ?? null, createdBy ?? null],
@@ -357,8 +371,7 @@ app.post("/api/tickets/:id/cancellation-requests", wrap(async (req, res) => {
   let code;
   try {
     await conn.beginTransaction();
-    const [countRows] = await conn.execute("SELECT COUNT(*) AS n FROM cancellation_requests");
-    code = `#CR${String(countRows[0].n + 1).padStart(3, "0")}`;
+    code = await nextCode(conn, "cancellation_requests", "#CR");
     await conn.execute(
       "INSERT INTO cancellation_requests (code, ticket_pk, requested_by, reason) VALUES (?, ?, ?, ?)",
       [code, ticket.ticket_pk, user.user_pk, reason],
@@ -403,6 +416,55 @@ app.get("/api/tickets/:id/cancellation-requests", wrap(async (req, res) => {
     [access.ticket.ticket_pk],
   );
   res.json(rows);
+}));
+
+// A requester can reopen a ticket that was marked Resolved when the problem is
+// still there. The status guard sits in the UPDATE so a double click cannot
+// reopen it twice, and the number of reopens is capped.
+const MAX_REOPENS = 3;
+
+app.post("/api/tickets/:id/reopen", wrap(async (req, res) => {
+  const access = await ticketAccess(req.params.id, req.body?.userId);
+  if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
+  const { ticket, user, isOwner } = access;
+  if (!isOwner) {
+    return res.status(403).json({ error: "Only the person who submitted the ticket can reopen it." });
+  }
+  const reason = String(req.body?.reason ?? "").trim().slice(0, 500);
+  if (!reason) return res.status(400).json({ error: "Please explain what is still wrong." });
+
+  const counts = await query("SELECT reopen_count FROM tickets WHERE ticket_pk = ?", [ticket.ticket_pk]);
+  if (Number(counts[0]?.reopen_count) >= MAX_REOPENS) {
+    return res.status(409).json({
+      error: `This ticket was already reopened ${MAX_REOPENS} times. Please submit a new request instead.`,
+    });
+  }
+
+  const nextStatus = ticket.assigned_to ? "In Progress" : "Open";
+  const [result] = await pool.execute(
+    "UPDATE tickets SET status = ?, reopen_count = reopen_count + 1 WHERE ticket_pk = ? AND status = 'Resolved' AND reopen_count < ?",
+    [nextStatus, ticket.ticket_pk, MAX_REOPENS],
+  );
+  if (result.affectedRows === 0) {
+    return res.status(409).json({ error: "Only a resolved ticket can be reopened." });
+  }
+
+  await query(
+    "INSERT INTO ticket_messages (ticket_pk, sender_pk, message_text, kind) VALUES (?, ?, ?, 'reopen')",
+    [ticket.ticket_pk, user.user_pk, `Ticket reopened, the problem is still happening: ${reason}`],
+  );
+  const recipients = [ticket.assigned_to, ...(await adminIds())].filter((id) => id && id !== user.user_pk);
+  await notify(recipients, {
+    type: "reopened",
+    title: "Ticket reopened: issue still persists",
+    body: `${user.name} reopened ${ticket.code}: ${reason.slice(0, 90)}`,
+    ticketCode: ticket.code,
+  });
+  await query(
+    "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
+    [user.name, user.role_name, `Reopened ticket ${ticket.code}`],
+  );
+  res.json({ ok: true, id: ticket.code, status: nextStatus });
 }));
 
 // Admin queue of all cancellation requests (pending first).
@@ -518,7 +580,7 @@ app.get("/api/reports/summary", wrap(async (req, res) => {
   if (to) { where.push("t.created_at < DATE_ADD(?, INTERVAL 1 DAY)"); params.push(to); }
   if (category) { where.push("t.category = ?"); params.push(category); }
   if (role) { where.push("u.role = ?"); params.push(role); }
-  const filter = `FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by WHERE ${where.join(" AND ")}`;
+  const filter = `FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to WHERE ${where.join(" AND ")}`;
 
   // `expression` and `order` are fixed strings from this file, never user input.
   const grouped = async (expression, { order = "value DESC", limit = 50 } = {}) => {
@@ -886,8 +948,7 @@ app.post("/api/password-requests", wrap(async (req, res) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const [countRows] = await conn.execute("SELECT COUNT(*) AS n FROM password_requests");
-    const code = `#PW${String(countRows[0].n + 1).padStart(3, "0")}`;
+    const code = await nextCode(conn, "password_requests", "#PW");
     await conn.execute(
       "INSERT INTO password_requests (code, user_pk, new_password, reason) VALUES (?, ?, ?, ?)",
       [code, userId, String(newPassword), reason?.trim() || null],

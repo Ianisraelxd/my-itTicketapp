@@ -1,7 +1,7 @@
 :root {
   font-family: "DM Sans", "Segoe UI", sans-serif;
-  color: #17202a;
-  background: #f4f6f5;
+  color: var(--ink, #17202a);
+  background: var(--bg, #f4f6f5);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;

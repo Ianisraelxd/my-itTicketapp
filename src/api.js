@@ -121,6 +121,12 @@ export const api = {
       body: JSON.stringify({ userId, ids }),
     }),
 
+  reopenTicket: (ticketId, payload) =>
+    request(`/tickets/${encodeURIComponent(ticketId)}/reopen`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
   getTicketParticipants: (ticketId, userId) =>
     request(
       `/tickets/${encodeURIComponent(ticketId)}/participants?userId=${encodeURIComponent(userId)}`,
