@@ -45,6 +45,22 @@ export function kpiStatus(metric, value, target) {
   return value <= target * 1.2 ? "warn" : "bad";
 }
 
+// The chosen KPIs of a month joined with their values, targets and status.
+export function buildKpiCards(data) {
+  if (!data) return [];
+  const catalog = new Map(data.catalog.map((metric) => [metric.key, metric]));
+  const readings = new Map(data.metrics.map((reading) => [reading.key, reading]));
+  return data.selected
+    .map((item) => {
+      const metric = catalog.get(item.key);
+      if (!metric) return null;
+      const reading = readings.get(item.key);
+      const target = item.target ?? metric.target;
+      return { metric, reading, target, status: kpiStatus(metric, reading?.value ?? null, target) };
+    })
+    .filter(Boolean);
+}
+
 export const STATUS_LABEL = {
   good: "On target",
   warn: "Close",

@@ -8,6 +8,7 @@ import {
   LineChart,
   Pie,
   PieChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -47,6 +48,9 @@ export default function ReportChartContainer({
   colorFor,
   horizontal = false,
   xTickFormatter,
+  valueFormatter,
+  referenceLine,
+  toolbar,
   isLoading = false,
   height = 260,
   wide = false,
@@ -83,7 +87,7 @@ export default function ReportChartContainer({
       );
     } else if (type === "line") {
       chart = (
-        <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: -12 }}>
+        <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: valueFormatter ? 4 : -12 }}>
           <CartesianGrid stroke="#e9efeb" vertical={false} />
           <XAxis
             dataKey={xKey}
@@ -93,9 +97,28 @@ export default function ReportChartContainer({
             axisLine={{ stroke: "#e2e8e4" }}
             minTickGap={24}
           />
-          <YAxis allowDecimals={false} tick={AXIS_STYLE} tickLine={false} axisLine={false} />
-          <Tooltip contentStyle={TOOLTIP_STYLE} labelFormatter={xTickFormatter} />
+          <YAxis
+            allowDecimals={false}
+            tick={AXIS_STYLE}
+            tickLine={false}
+            axisLine={false}
+            tickFormatter={valueFormatter}
+            width={valueFormatter ? 56 : undefined}
+          />
+          <Tooltip
+            contentStyle={TOOLTIP_STYLE}
+            labelFormatter={xTickFormatter}
+            formatter={valueFormatter ? (value, name) => [valueFormatter(value), name] : undefined}
+          />
           {showLegend && <Legend iconType="circle" wrapperStyle={{ fontSize: 12 }} />}
+          {referenceLine && (
+            <ReferenceLine
+              y={referenceLine.value}
+              stroke="#bd8128"
+              strokeDasharray="6 4"
+              label={{ value: referenceLine.label, position: "insideTopRight", fill: "#bd8128", fontSize: 11 }}
+            />
+          )}
           {series.map((item, index) => (
             <Line
               key={item.key}
@@ -162,6 +185,7 @@ export default function ReportChartContainer({
         <h3>{title}</h3>
         {note && <small>{note}</small>}
       </div>
+      {toolbar}
       {isLoading ? (
         <ChartSkeleton height={height} label={`Loading ${title}`} />
       ) : !hasData ? (

@@ -115,6 +115,11 @@ export const api = {
   getKpi: (userId, month) =>
     request(`/kpi?userId=${encodeURIComponent(userId)}&month=${encodeURIComponent(month)}`),
 
+  getKpiTrend: (userId, month, count = 6) =>
+    request(
+      `/kpi/trend?userId=${encodeURIComponent(userId)}&month=${encodeURIComponent(month)}&count=${count}`,
+    ),
+
   saveKpiSelection: (payload) =>
     request("/kpi/selection", { method: "PUT", body: JSON.stringify(payload) }),
 

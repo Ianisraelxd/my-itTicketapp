@@ -282,7 +282,7 @@ const api = (route, body, method = "POST") =>
   await page.setViewport(DESKTOP);
 
   await nav(page, "Report Manager", 3200);
-  await page.setViewport({ ...DESKTOP, height: 2250 });
+  await page.setViewport({ ...DESKTOP, height: 3000 });
   await sleep(1200);
   await shot(page, "27-report-manager");
   await page.setViewport(DESKTOP);
@@ -295,7 +295,7 @@ const api = (route, body, method = "POST") =>
   const { context, page } = await open({ theme: "dark" });
   await login(page, "superadmin", "123456superadmin");
   await nav(page, "Report Manager", 3200);
-  await page.setViewport({ ...DESKTOP, height: 2250 });
+  await page.setViewport({ ...DESKTOP, height: 3000 });
   await sleep(1200);
   await shot(page, "29-report-manager-dark");
   await nav(page, "Dashboard", 2500);

@@ -61,7 +61,7 @@ The project ships in two forms:
 
 **Super admin**
 - A **dashboard** with a **Monthly KPI Scorecard**: 15 IT performance metrics (AHT, first response time, SLA compliance, first-time fix rate, reopen rate, backlog and more) of which the super admin picks the ones that matter each month, with their own targets. See [docs/KPI-METRICS.md](docs/KPI-METRICS.md).
-- A **Report Manager** (Recharts charts fed by SQL aggregation, skeleton loading, a campus location heat map, date / category / role filters that default to the last 30 days, CSV export) and **Activity Log Reports** of everything users did.
+- A **Report Manager** that shows the same chosen KPIs (health ring, sparklines, six-month trend with the target line) above the detailed charts (Recharts charts fed by SQL aggregation, skeleton loading, a campus location heat map, date / category / role filters that default to the last 30 days, CSV export) and **Activity Log Reports** of everything users did.
 
 ---
 
@@ -138,7 +138,7 @@ All screenshots are generated from a demo database by [`scripts/capture-screensh
   </tr>
 </table>
 
-**Report Manager** — filters (last 30 days by default), KPIs, seven reports and CSV export.
+**Report Manager** — the month's chosen KPIs sit on top (with a health ring, sparklines and a KPI trend chart), followed by the detail behind them: filters (last 30 days by default), volume, status, priority, category, role, a campus heat map and CSV export (which includes the KPI values).
 
 ![Report Manager](docs/screenshots/27-report-manager.png)
 
@@ -326,6 +326,7 @@ Base path: `/api` (proxied to `http://localhost:3001` in development).
 | GET | `/api/cancellation-requests?userId=` | Admin queue of all cancellation requests. |
 | PATCH | `/api/cancellation-requests/:code/status` | Admin accepts (ticket becomes Cancelled) or rejects. Body: `{ actorId, status, note? }`. |
 | GET | `/api/reports/summary?userId=&from=&to=&category=&role=` | Super admin only. SQL-aggregated data for the Report Manager. |
+| GET | `/api/kpi/trend?userId=&month=2026-10&count=6` | Super admin only. The last N months of every KPI (sparklines and the trend chart). |
 | GET | `/api/kpi?userId=&month=2026-10` | Super admin only. Every KPI value for the month and the previous one, the catalog, and the selected metrics. |
 | PUT | `/api/kpi/selection` | Super admin only. Body: `{ userId, month, metrics: [{ key, target? }] }`. |
 | GET | `/api/notifications?userId=` | Latest notifications and unread count. |

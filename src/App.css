@@ -3867,3 +3867,124 @@ html[data-theme="dark"] .button-dark {
     .kpi-target span { grid-column: 1 / -1 }
     .kpi-picker { padding: 22px 16px 16px }
 }
+
+/* ==========================================================================
+   KPI hero: health ring, sparklines, trend chips, section titles
+   ========================================================================== */
+.kpi-section {
+    background:
+        radial-gradient(circle at 100% 0, color-mix(in srgb, var(--lime) 22%, transparent), transparent 45%),
+        var(--card)
+}
+
+.kpi-title {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    min-width: 0
+}
+
+.kpi-health {
+    position: relative;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 12px
+}
+
+.kpi-health svg { transform: rotate(-90deg) }
+
+.kpi-health .ring-track,
+.kpi-health .ring-value {
+    fill: none;
+    stroke-width: 7;
+    stroke-linecap: round
+}
+
+.kpi-health .ring-track { stroke: var(--surface-2) }
+
+.kpi-health .ring-value {
+    transition: stroke-dashoffset 1s var(--ease), stroke .4s;
+    animation: ring-in 1.1s var(--ease) both
+}
+
+@keyframes ring-in {
+    from { stroke-dashoffset: 190 }
+}
+
+.ring-number {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 76px;
+    height: 76px;
+    display: grid;
+    place-items: center;
+    font: 800 20px Manrope, sans-serif;
+    letter-spacing: -.5px;
+    color: var(--ink)
+}
+
+.ring-text { display: grid; gap: 1px }
+.ring-text strong { font-size: 13px; white-space: nowrap }
+.ring-text small { color: var(--muted); font-size: 11px }
+
+.kpi-title > div:last-child h2 { margin: 4px 0 0 }
+
+.kpi-main {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 10px
+}
+
+.kpi-spark {
+    flex: 1;
+    min-width: 70px;
+    max-width: 130px;
+    height: 44px
+}
+
+.kpi-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0 0 14px
+}
+
+.kpi-chips button {
+    padding: 6px 12px;
+    border: 1.5px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface-1);
+    color: var(--ink-2);
+    font: 700 11px Manrope, sans-serif;
+    letter-spacing: .4px;
+    transition: all .25s var(--ease)
+}
+
+.kpi-chips button:hover { border-color: var(--green); color: var(--green) }
+
+.kpi-chips button.active {
+    background: var(--green);
+    border-color: var(--green);
+    color: #fff
+}
+
+.report-section-title {
+    display: grid;
+    gap: 4px;
+    margin: 28px 2px 14px
+}
+
+.report-section-title h2 { margin: 0; font: 700 18px Manrope, sans-serif; letter-spacing: -.5px }
+
+.report-grid + .report-grid { margin-top: 16px }
+
+.kpi-section + .report-card,
+.kpi-section + .panel { margin-top: 0 }
+
+@media (max-width: 640px) {
+    .kpi-title { align-items: flex-start; flex-direction: column; gap: 10px }
+    .kpi-spark { max-width: 110px }
+}
