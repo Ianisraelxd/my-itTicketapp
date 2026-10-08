@@ -2,7 +2,9 @@ import "./App.css";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { api } from "./api";
+import { api, hasAuthToken, setAuthToken, setUnauthorizedHandler } from "./api";
+import MfaSettings from "./MfaSettings";
+import SuperAdminPanel from "./SuperAdminPanel";
 import ChartSkeleton from "./ChartSkeleton";
 import ChatInput from "./ChatInput";
 import { downloadCsv, reportToCsvRows } from "./csv";
@@ -43,8 +45,26 @@ const navFor = {
     ["superAdminDashboard", "◈", "Dashboard"],
     ["reportManagerPage", "▥", "Report Manager"],
     ["activityLogPage", "◷", "Activity Log Reports"],
+    ["superAdminPanel", "🛡", "Super Admin Panel"],
+  ],
+  // Read-only: the same dashboards and reports as the super admin, nothing that changes data.
+  report_viewer: [
+    ["superAdminDashboard", "◈", "Dashboard"],
+    ["reportManagerPage", "▥", "Report Manager"],
+    ["activityLogPage", "◷", "Activity Log Reports"],
   ],
 };
+
+const MFA_ROLES = ["technician", "admin", "superadmin", "report_viewer"];
+
+function landingFor(role) {
+  if (role === "superadmin" || role === "report_viewer") return "superAdminDashboard";
+  if (role === "admin") return "adminDashboard";
+  if (role === "technician") return "technicianDashboard";
+  return "userDashboard";
+}
+
+const PAGE_KEY = "helpdesk-page";
 
 // Technician + progress shown in the ticket tables. Derived from the ticket
 // itself (status, assigned technician, pending cancellation) so every role sees
@@ -102,6 +122,8 @@ function App() {
     password: "",
     role: "student",
   });
+  const [mfaChallenge, setMfaChallenge] = useState(null); // { token } while the code step is showing
+  const [mfaCode, setMfaCode] = useState("");
   const [signupForm, setSignupForm] = useState({
     fullName: "",
     id: "",
@@ -136,14 +158,10 @@ function App() {
     description: "",
   });
 
-  const roleType =
-    user?.role === "superadmin"
-      ? "superadmin"
-      : user?.role === "admin"
-        ? "admin"
-        : user?.role === "technician"
-          ? "technician"
-          : "user";
+  const roleType = ["superadmin", "admin", "technician", "report_viewer"].includes(user?.role)
+    ? user.role
+    : "user";
+  const canEdit = user?.role === "superadmin";
   const latestPwRequest = myPwRequests[0] || null;
   const addActivity = (activity) => {
     // Optimistically show it, then persist to the database.
@@ -157,10 +175,56 @@ function App() {
   };
   const showMessage = (title, message) => setModal({ title, message });
 
+  // After a page refresh: if a session token is still stored, ask the server who it belongs to.
+  useEffect(() => {
+    if (!hasAuthToken()) return;
+    let active = true;
+    api
+      .me()
+      .then((me) => {
+        if (!active) return;
+        setUser(me);
+        let saved = null;
+        try {
+          saved = sessionStorage.getItem(PAGE_KEY);
+        } catch {
+          saved = null;
+        }
+        const allowed = (navFor[me.role] || navFor.user).map(([id]) => id);
+        setPage(saved && allowed.includes(saved) ? saved : landingFor(me.role));
+      })
+      .catch(() => setAuthToken(null));
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Remember the current page so a refresh keeps you where you were.
+  useEffect(() => {
+    if (!user) return;
+    try {
+      sessionStorage.setItem(PAGE_KEY, page);
+    } catch {
+      // ignore
+    }
+  }, [user, page]);
+
+  // The server says the session is over (expired or access revoked): go back to the login screen.
+  const logoutRef = useRef(null);
+  useEffect(() => {
+    logoutRef.current = logout;
+  });
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      logoutRef.current?.();
+      setModal({ title: "Signed out", message: "Your session ended. Please sign in again." });
+    });
+  }, []);
+
   // Poll for notifications. Anything new pops up as a toast and refreshes the
   // ticket data so statuses stay current without a manual reload.
   useEffect(() => {
-    if (!user || user.role === "superadmin") return;
+    if (!user || user.role === "superadmin" || user.role === "report_viewer") return;
     let active = true;
     seenNotifications.current = null;
     const load = () =>
@@ -196,11 +260,12 @@ function App() {
     let active = true;
     const isPrivateUser =
       user.role === "student" || user.role === "employee";
-    const needsAdminData = ["technician", "admin", "superadmin"].includes(user.role);
+    const needsAdminData = ["technician", "admin", "superadmin", "report_viewer"].includes(user.role);
+    const seesActivityLog = ["superadmin", "report_viewer"].includes(user.role);
 
     Promise.all([
       api.getTickets(isPrivateUser ? { mine: true, userId: user.userId } : {}),
-      api.getActivities(),
+      seesActivityLog ? api.getActivities() : Promise.resolve([]),
       ...(needsAdminData ? [api.getUsers()] : []),
     ])
       .then(([ticketRows, activityRows, userRows]) => {
@@ -265,11 +330,24 @@ function App() {
     localStorage.setItem(ASSIGNMENT_STORAGE_KEY, JSON.stringify(ticketAssignments));
   }, [ticketAssignments]);
 
+  // Called once the server has accepted the sign-in (password, and code if required).
+  function completeLogin(account) {
+    const { token, ...profileFields } = account;
+    setAuthToken(token);
+    playSound("login");
+    setUser(profileFields);
+    refreshData();
+    setPage(landingFor(account.role));
+    setCredentials((current) => ({ ...current, password: "" }));
+    setMfaChallenge(null);
+    setMfaCode("");
+  }
+
   async function login(event) {
     event.preventDefault();
-    let account;
+    let result;
     try {
-      account = await api.login(credentials);
+      result = await api.login(credentials);
     } catch (error) {
       showMessage(
         "Login failed",
@@ -277,19 +355,22 @@ function App() {
       );
       return;
     }
-    playSound("login");
-    setUser(account);
-    refreshData();
-    const landing =
-      account.role === "superadmin"
-        ? "superAdminDashboard"
-        : account.role === "admin"
-          ? "adminDashboard"
-          : account.role === "technician"
-            ? "technicianDashboard"
-            : "userDashboard";
-    setPage(landing);
-    setCredentials((current) => ({ ...current, password: "" }));
+    if (result.mfaRequired) {
+      setMfaChallenge({ token: result.mfaToken });
+      setMfaCode("");
+      return;
+    }
+    completeLogin(result);
+  }
+
+  async function submitMfa(event) {
+    event.preventDefault();
+    try {
+      completeLogin(await api.loginMfa({ mfaToken: mfaChallenge.token, code: mfaCode }));
+    } catch (error) {
+      showMessage("Could not verify the code", error.message || "Please try again.");
+      if (/expired|start/i.test(error.message || "")) setMfaChallenge(null);
+    }
   }
 
   async function submitRequest(event) {
@@ -380,6 +461,14 @@ function App() {
   }
 
   function logout() {
+    setAuthToken(null);
+    try {
+      sessionStorage.removeItem(PAGE_KEY);
+    } catch {
+      // ignore
+    }
+    setMfaChallenge(null);
+    setMfaCode("");
     setUser(null);
     setAuthPage("login");
     setCredentials({ id: "", password: "", role: "student" });
@@ -432,6 +521,11 @@ function App() {
     return (
       <>
       <AuthScreen
+        mfaChallenge={mfaChallenge}
+        mfaCode={mfaCode}
+        setMfaCode={setMfaCode}
+        submitMfa={submitMfa}
+        setMfaChallenge={setMfaChallenge}
         onOpenSettings={() => setSettingsOpen(true)}
         page={authPage}
         setPage={setAuthPage}
@@ -574,6 +668,7 @@ function App() {
         )}
         {page === "superAdminDashboard" && (
           <SuperAdminDashboard
+            canEdit={canEdit}
             me={user}
             showMessage={showMessage}
             setPage={setPage}
@@ -583,7 +678,17 @@ function App() {
           />
         )}
         {page === "reportManagerPage" && (
-          <ReportManager me={user} showMessage={showMessage} />
+          <ReportManager me={user} showMessage={showMessage} canEdit={canEdit} />
+        )}
+        {page === "superAdminPanel" && canEdit && (
+          <>
+            <PageHeader
+              eyebrow="SYSTEM / 04"
+              title="Super admin panel"
+              description="Archiving and who can see or manage what. Daily reporting belongs to Report Viewers."
+            />
+            <SuperAdminPanel showMessage={showMessage} />
+          </>
         )}
         {page === "manageRequestsPage" && (
           <ManageRequests
@@ -646,6 +751,8 @@ function App() {
           setPwForm={setPwForm}
           submitting={pwSubmitting}
           onSubmitRequest={submitPasswordChange}
+          onProfileChanged={() => api.getProfile(user.userId).then(setProfile).catch(() => {})}
+          showMessage={showMessage}
           onClose={() => setProfileOpen(false)}
           onLogout={logout}
         />
@@ -675,6 +782,11 @@ function Modal({ modal, setModal }) {
   );
 }
 function AuthScreen({
+  mfaChallenge,
+  mfaCode,
+  setMfaCode,
+  submitMfa,
+  setMfaChallenge,
   onOpenSettings,
   page,
   setPage,
@@ -731,7 +843,40 @@ function AuthScreen({
               <strong>HelpDesk</strong>
             </span>
           </div>
-          {page === "login" && (
+          {page === "login" && mfaChallenge && (
+            <>
+              <AuthHeading
+                title="Two-step verification"
+                detail="Enter the 6-digit code from your authenticator app."
+              />
+              <form onSubmit={submitMfa}>
+                <label className="field-label">
+                  6-digit code
+                  <input
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={7}
+                    value={mfaCode}
+                    onChange={(event) => setMfaCode(event.target.value)}
+                    placeholder="123456"
+                    autoFocus
+                    required
+                  />
+                </label>
+                <button
+                  className="button button-primary full-width"
+                  type="submit"
+                  disabled={mfaCode.replace(/\s/g, "").length !== 6}
+                >
+                  Verify <span>→</span>
+                </button>
+              </form>
+              <button type="button" className="text-button" onClick={() => setMfaChallenge(null)}>
+                ← Back to sign in
+              </button>
+            </>
+          )}
+          {page === "login" && !mfaChallenge && (
             <>
               <AuthHeading
                 title="Welcome back"
@@ -771,6 +916,7 @@ function AuthScreen({
                     <option value="technician">Technician</option>
                     <option value="admin">Student / Employee Admin</option>
                     <option value="superadmin">Super Admin</option>
+                    <option value="report_viewer">Report Viewer (read-only)</option>
                   </select>
                 </label>
                 <button
@@ -1096,13 +1242,13 @@ function ProfileModal({
   setPwForm,
   submitting,
   onSubmitRequest,
+  onProfileChanged,
+  showMessage,
   onClose,
   onLogout,
 }) {
-  const [showPassword, setShowPassword] = useState(false);
   const latest = requests[0] || null;
   const isPending = latest?.status === "Pending";
-  const password = profile?.password || "••••••";
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -1132,16 +1278,16 @@ function ProfileModal({
                 <span>Email</span>
                 <strong>{profile?.email || "Not provided"}</strong>
               </div>
-              <div className="profile-password">
+              <div>
                 <span>Password</span>
-                <strong className="profile-password-value">
-                  {showPassword ? password : "••••••••"}
-                </strong>
-                <EyeButton
-                  visible={showPassword}
-                  onToggle={() => setShowPassword((value) => !value)}
-                />
+                <strong>Stored securely (hidden)</strong>
               </div>
+              {MFA_ROLES.includes(user.role) && (
+                <div>
+                  <span>Two-step verification</span>
+                  <strong>{profile?.mfaEnabled ? "On" : "Off"}</strong>
+                </div>
+              )}
             </div>
             <RequestStatusBanner latest={latest} />
             <div className="profile-actions">
@@ -1153,6 +1299,15 @@ function ProfileModal({
               >
                 {isPending ? "Request pending approval" : "Change password"}
               </button>
+              {MFA_ROLES.includes(user.role) && (
+                <button
+                  type="button"
+                  className="button button-outline full-width"
+                  onClick={() => setView("mfa")}
+                >
+                  {profile?.mfaEnabled ? "Manage two-step verification" : "Set up two-step verification"}
+                </button>
+              )}
               <button
                 type="button"
                 className="button button-outline full-width"
@@ -1176,6 +1331,13 @@ function ProfileModal({
               </div>
             )}
           </>
+        ) : view === "mfa" ? (
+          <MfaSettings
+            enabled={Boolean(profile?.mfaEnabled)}
+            onBack={() => setView("details")}
+            onChanged={onProfileChanged}
+            showMessage={showMessage}
+          />
         ) : (
           <ChangePasswordForm
             pwForm={pwForm}
@@ -2996,7 +3158,7 @@ function ReportCard({ title, note, children, wide = false }) {
   );
 }
 
-function SuperAdminDashboard({ me, showMessage, setPage, tickets = [], users = [], activities = [] }) {
+function SuperAdminDashboard({ me, canEdit, showMessage, setPage, tickets = [], users = [], activities = [] }) {
   const total = tickets.length;
   const resolved = tickets.filter((t) => t.status === "Resolved").length;
   const open = tickets.filter((t) => t.status === "Open").length;
@@ -3028,7 +3190,7 @@ function SuperAdminDashboard({ me, showMessage, setPage, tickets = [], users = [
           </div>
         ))}
       </div>
-      <KpiScorecard me={me} showMessage={showMessage} />
+      <KpiScorecard me={me} showMessage={showMessage} canEdit={canEdit} />
       <div className="dash-split">
         <section className="panel kpi-panel">
           <span className="eyebrow">KPI · RESOLUTION RATE</span>
@@ -3080,7 +3242,7 @@ const REQUESTER_ROLES = [
 
 const formatDay = (value) => (typeof value === "string" ? value.slice(5) : value);
 
-function ReportManager({ me, showMessage }) {
+function ReportManager({ me, showMessage, canEdit = true }) {
   // Defaults load immediately: last 30 days, all categories, all roles.
   const [filters, setFilters] = useState(defaultReportFilters);
   const { data, isLoading, error, reload } = useReportData(filters, me.userId);
@@ -3135,14 +3297,18 @@ function ReportManager({ me, showMessage }) {
         title={`KPIs for ${monthLabel(kpiMonth)}`}
         note="KPIs always cover the whole month of the To date and ignore the category and role filters."
         controls={
-          <button
-            type="button"
-            className="button button-primary"
-            disabled={!kpi.data}
-            onClick={() => setPicking(true)}
-          >
-            Choose KPIs
-          </button>
+          canEdit ? (
+            <button
+              type="button"
+              className="button button-primary"
+              disabled={!kpi.data}
+              onClick={() => setPicking(true)}
+            >
+              Choose KPIs
+            </button>
+          ) : (
+            <span className="gov-badge muted">Read-only</span>
+          )
         }
       />
       <KpiTrendCard cards={cards} trend={trend} isLoading={kpi.isLoading || !trend} />

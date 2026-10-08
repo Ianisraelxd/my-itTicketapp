@@ -1,10 +1,38 @@
 import "dotenv/config";
 import express from "express";
+import { authenticate, verifyReportViewer } from "./auth.js";
 import { pool, query } from "./db.js";
 import { registerKpiRoutes } from "./kpi.js";
+import {
+  hashPassword,
+  isHashed,
+  newTotpSecret,
+  otpauthUrl,
+  signMfaChallenge,
+  signSession,
+  verifyPassword,
+  verifyToken,
+  verifyTotp,
+} from "./security.js";
+import { registerSuperAdminRoutes } from "./superadmin.js";
 
 const app = express();
-app.use(express.json());
+app.disable("x-powered-by");
+app.use(express.json({ limit: "100kb" }));
+
+// Basic hardening headers; API responses are never cached.
+app.use("/api", (_req, res, next) => {
+  res.set({
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
+  });
+  next();
+});
+
+// Everything under /api needs a signed-in user except login, signup and the health check.
+app.use("/api", authenticate);
 
 const PORT = Number(process.env.PORT) || 3001;
 
@@ -13,10 +41,16 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 
 // Next sequential code such as #HD007. `table` and `prefix` are fixed strings
 // from this file. Run inside the same transaction as the INSERT.
-async function nextCode(conn, table, prefix) {
+async function nextCode(conn, table, prefix, archiveTable = null) {
+  const position = prefix.length + 1;
   const [rows] = await conn.execute(
-    `SELECT COALESCE(MAX(CAST(SUBSTRING(code, ?) AS UNSIGNED)), 0) + 1 AS n FROM ${table}`,
-    [prefix.length + 1],
+    archiveTable
+      ? `SELECT GREATEST(
+           COALESCE((SELECT MAX(CAST(SUBSTRING(code, ?) AS UNSIGNED)) FROM ${table}), 0),
+           COALESCE((SELECT MAX(CAST(SUBSTRING(code, ?) AS UNSIGNED)) FROM ${archiveTable}), 0)
+         ) + 1 AS n`
+      : `SELECT COALESCE(MAX(CAST(SUBSTRING(code, ?) AS UNSIGNED)), 0) + 1 AS n FROM ${table}`,
+    archiveTable ? [position, position] : [position],
   );
   return `${prefix}${String(rows[0].n).padStart(3, "0")}`;
 }
@@ -76,9 +110,12 @@ app.post("/api/signup", wrap(async (req, res) => {
     });
   }
 
+  if (String(password).length < 6) {
+    return res.status(400).json({ error: "Password must be at least 6 characters." });
+  }
   await query(
     "INSERT INTO users (id_number, password, name, role, role_name, email) VALUES (?, ?, ?, ?, ?, ?)",
-    [trimmedId, password, trimmedName, role, roleName, trimmedEmail],
+    [trimmedId, await hashPassword(password), trimmedName, role, roleName, trimmedEmail],
   );
 
   res.status(201).json({
@@ -87,30 +124,160 @@ app.post("/api/signup", wrap(async (req, res) => {
   });
 }));
 
+const MAX_FAILED_LOGINS = 5;
+const LOCK_MINUTES = 15;
+
+// Everything a client needs after signing in.
+async function sessionFor(account) {
+  await query(
+    "UPDATE users SET failed_logins = 0, locked_until = NULL, last_login_at = NOW() WHERE user_pk = ?",
+    [account.user_pk],
+  );
+  await query(
+    "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
+    [account.name, account.role_name, "Logged into the HelpDesk system"],
+  );
+  return {
+    token: signSession(account),
+    userId: account.user_pk,
+    id: account.id_number,
+    name: account.name,
+    role: account.role,
+    roleName: account.role_name,
+    mfaEnabled: Boolean(account.mfa_enabled),
+  };
+}
+
+// Counts a wrong password / code and locks the account after too many.
+async function recordFailure(account) {
+  const failed = Number(account.failed_logins) + 1;
+  if (failed >= MAX_FAILED_LOGINS) {
+    await query(
+      "UPDATE users SET failed_logins = 0, locked_until = DATE_ADD(NOW(), INTERVAL ? MINUTE) WHERE user_pk = ?",
+      [LOCK_MINUTES, account.user_pk],
+    );
+    await query(
+      "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
+      [account.name, account.role_name, `Account locked for ${LOCK_MINUTES} minutes after ${MAX_FAILED_LOGINS} failed sign-ins`],
+    );
+    return true;
+  }
+  await query("UPDATE users SET failed_logins = ? WHERE user_pk = ?", [failed, account.user_pk]);
+  return false;
+}
+
+const lockMessage = (account) => {
+  const minutes = Math.max(1, Math.ceil((new Date(account.locked_until) - new Date()) / 60000));
+  return `This account is locked. Try again in ${minutes} minute${minutes === 1 ? "" : "s"}, or ask the super admin to unlock it.`;
+};
+
+const isLocked = (account) => Boolean(account.locked_until && new Date(account.locked_until) > new Date());
+
+const ACCOUNT_COLUMNS =
+  "user_pk, id_number, password, name, role, role_name, failed_logins, locked_until, mfa_enabled, mfa_secret";
+
 app.post("/api/login", wrap(async (req, res) => {
   const { id, password, role } = req.body ?? {};
   if (!id || !password || !role) {
     return res.status(400).json({ error: "id, password, and role are required." });
   }
   const rows = await query(
-    "SELECT user_pk, id_number, password, name, role, role_name FROM users WHERE id_number = ? AND role = ? LIMIT 1",
+    `SELECT ${ACCOUNT_COLUMNS} FROM users WHERE id_number = ? AND role = ? LIMIT 1`,
     [id, role],
   );
   const account = rows[0];
-  if (!account || account.password !== password) {
+  if (account && isLocked(account)) {
+    return res.status(423).json({ error: lockMessage(account) });
+  }
+  if (!account || !(await verifyPassword(password, account.password))) {
+    if (account && (await recordFailure(account))) {
+      return res.status(423).json({ error: `Too many failed attempts. The account is locked for ${LOCK_MINUTES} minutes.` });
+    }
     return res.status(401).json({ error: "Incorrect ID, password, or selected role." });
   }
-  await query(
-    "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
-    [account.name, account.role_name, "Logged into the HelpDesk system"],
+
+  // Upgrade an old plaintext password to a hash the first time it is used.
+  if (!isHashed(account.password)) {
+    await query("UPDATE users SET password = ? WHERE user_pk = ?", [await hashPassword(password), account.user_pk]);
+  }
+
+  if (account.mfa_enabled) {
+    return res.json({ mfaRequired: true, mfaToken: signMfaChallenge(account) });
+  }
+  res.json(await sessionFor(account));
+}));
+
+// Second step when two-step verification is on.
+app.post("/api/login/mfa", wrap(async (req, res) => {
+  const { mfaToken, code } = req.body ?? {};
+  const payload = verifyToken(mfaToken, "mfa");
+  if (!payload) return res.status(401).json({ error: "That sign-in expired. Start again." });
+  const rows = await query(`SELECT ${ACCOUNT_COLUMNS} FROM users WHERE user_pk = ? LIMIT 1`, [payload.sub]);
+  const account = rows[0];
+  if (!account || !account.mfa_enabled) return res.status(401).json({ error: "Start the sign-in again." });
+  if (isLocked(account)) return res.status(423).json({ error: lockMessage(account) });
+
+  if (!verifyTotp(account.mfa_secret, code)) {
+    if (await recordFailure(account)) {
+      return res.status(423).json({ error: `Too many failed attempts. The account is locked for ${LOCK_MINUTES} minutes.` });
+    }
+    return res.status(401).json({ error: "That code is not correct. Check the app and try again." });
+  }
+  res.json(await sessionFor(account));
+}));
+
+// Who am I? Lets the app restore a session after a page refresh.
+app.get("/api/me", wrap(async (req, res) => {
+  const rows = await query(
+    "SELECT user_pk AS userId, id_number AS id, name, role, role_name AS roleName, email, mfa_enabled FROM users WHERE user_pk = ?",
+    [req.user.userId],
   );
-  res.json({
-    userId: account.user_pk,
-    id: account.id_number,
-    name: account.name,
-    role: account.role,
-    roleName: account.role_name,
-  });
+  const me = rows[0];
+  res.json({ ...me, mfaEnabled: Boolean(me.mfa_enabled), mfa_enabled: undefined });
+}));
+
+// --- Two-step verification (TOTP authenticator app) ----------------------------------
+const MFA_ROLES = ["technician", "admin", "superadmin", "report_viewer"];
+
+app.post("/api/mfa/setup", wrap(async (req, res) => {
+  if (!MFA_ROLES.includes(req.user.role)) {
+    return res.status(403).json({ error: "Two-step verification is for staff accounts." });
+  }
+  const rows = await query("SELECT mfa_enabled, id_number FROM users WHERE user_pk = ?", [req.user.userId]);
+  if (rows[0].mfa_enabled) return res.status(409).json({ error: "Two-step verification is already on." });
+  const secret = newTotpSecret();
+  await query("UPDATE users SET mfa_secret = ?, mfa_enabled = 0 WHERE user_pk = ?", [secret, req.user.userId]);
+  res.json({ secret, otpauthUrl: otpauthUrl(secret, rows[0].id_number) });
+}));
+
+app.post("/api/mfa/enable", wrap(async (req, res) => {
+  const rows = await query("SELECT mfa_secret, mfa_enabled FROM users WHERE user_pk = ?", [req.user.userId]);
+  if (!rows[0].mfa_secret) return res.status(409).json({ error: "Start the setup first." });
+  if (!verifyTotp(rows[0].mfa_secret, req.body?.code)) {
+    return res.status(400).json({ error: "That code is not correct. Check the app and try again." });
+  }
+  await query("UPDATE users SET mfa_enabled = 1 WHERE user_pk = ?", [req.user.userId]);
+  await query("INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)", [
+    req.user.name,
+    req.user.roleName,
+    "Turned on two-step verification",
+  ]);
+  res.json({ ok: true });
+}));
+
+app.post("/api/mfa/disable", wrap(async (req, res) => {
+  const rows = await query("SELECT mfa_secret, mfa_enabled FROM users WHERE user_pk = ?", [req.user.userId]);
+  if (!rows[0].mfa_enabled) return res.json({ ok: true });
+  if (!verifyTotp(rows[0].mfa_secret, req.body?.code)) {
+    return res.status(400).json({ error: "That code is not correct." });
+  }
+  await query("UPDATE users SET mfa_enabled = 0, mfa_secret = NULL WHERE user_pk = ?", [req.user.userId]);
+  await query("INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)", [
+    req.user.name,
+    req.user.roleName,
+    "Turned off two-step verification",
+  ]);
+  res.json({ ok: true });
 }));
 
 // --- Tickets ----------------------------------------------------------------
@@ -194,7 +361,7 @@ app.post("/api/tickets", wrap(async (req, res) => {
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
-    const code = await nextCode(conn, "tickets", "#HD");
+    const code = await nextCode(conn, "tickets", "#HD", "tickets_archive");
     await conn.execute(
       "INSERT INTO tickets (code, subject, category, priority, status, location, description, created_by) VALUES (?, ?, ?, ?, 'Open', ?, ?, ?)",
       [code, subject, category, priority, location ?? null, description ?? null, createdBy ?? null],
@@ -576,11 +743,7 @@ app.patch("/api/cancellation-requests/:code/status", wrap(async (req, res) => {
 // breakdowns respect the same filters: date range, ticket category, requester role.
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-app.get("/api/reports/summary", wrap(async (req, res) => {
-  const actors = await query("SELECT role FROM users WHERE user_pk = ? LIMIT 1", [req.query.userId ?? 0]);
-  if (!actors[0] || actors[0].role !== "superadmin") {
-    return res.status(403).json({ error: "Only the super admin can view reports." });
-  }
+app.get("/api/reports/summary", verifyReportViewer, wrap(async (req, res) => {
 
   const from = ISO_DATE.test(req.query.from ?? "") ? req.query.from : null;
   const to = ISO_DATE.test(req.query.to ?? "") ? req.query.to : null;
@@ -593,7 +756,7 @@ app.get("/api/reports/summary", wrap(async (req, res) => {
   if (to) { where.push("t.created_at < DATE_ADD(?, INTERVAL 1 DAY)"); params.push(to); }
   if (category) { where.push("t.category = ?"); params.push(category); }
   if (role) { where.push("u.role = ?"); params.push(role); }
-  const filter = `FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to WHERE ${where.join(" AND ")}`;
+  const filter = `FROM tickets_all t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to WHERE ${where.join(" AND ")}`;
 
   // `expression` and `order` are fixed strings from this file, never user input.
   const grouped = async (expression, { order = "value DESC", limit = 50 } = {}) => {
@@ -896,7 +1059,7 @@ app.post("/api/messages", wrap(async (req, res) => {
 // the login NOTE above) and must be hashed before any real deployment.
 app.get("/api/profile/:userId", wrap(async (req, res) => {
   const rows = await query(
-    "SELECT user_pk AS userId, id_number AS id, name, role, role_name AS roleName, email, password FROM users WHERE user_pk = ? LIMIT 1",
+    "SELECT user_pk AS userId, id_number AS id, name, role, role_name AS roleName, email, mfa_enabled AS mfaEnabled FROM users WHERE user_pk = ? LIMIT 1",
     [req.params.userId],
   );
   if (rows.length === 0) {
@@ -964,7 +1127,7 @@ app.post("/api/password-requests", wrap(async (req, res) => {
     const code = await nextCode(conn, "password_requests", "#PW");
     await conn.execute(
       "INSERT INTO password_requests (code, user_pk, new_password, reason) VALUES (?, ?, ?, ?)",
-      [code, userId, String(newPassword), reason?.trim() || null],
+      [code, userId, await hashPassword(newPassword), reason?.trim() || null],
     );
     await conn.commit();
     await notify(await adminIds(), {
@@ -1049,6 +1212,7 @@ app.patch("/api/password-requests/:id/status", wrap(async (req, res) => {
 
 // --- Monthly KPI scorecard -------------------------------------------------------
 registerKpiRoutes(app, wrap);
+registerSuperAdminRoutes(app, { wrap, notify });
 
 // --- Error handler ----------------------------------------------------------
 app.use((err, _req, res, _next) => {

@@ -25,10 +25,32 @@ const ADMIN = 4;
 const SOFTWARE_TECH = 6;
 const NETWORK_TECH = 7;
 
-async function call(method, path, body) {
+// The API needs a signed-in user for everything, so sign in as each seeded account once.
+const ACCOUNTS = {
+  [STUDENT]: ["2404154", "student", "123456student"],
+  [EMPLOYEE]: ["2404154", "employee", "123456employee"],
+  [HARDWARE_TECH]: ["2404154", "technician", "123456technician"],
+  [ADMIN]: ["2404154", "admin", "123456admin"],
+  [SOFTWARE_TECH]: ["2404155", "technician", "123456technician"],
+  [NETWORK_TECH]: ["2404156", "technician", "123456technician"],
+};
+const tokens = {};
+for (const [userId, [id, role, password]] of Object.entries(ACCOUNTS)) {
+  const response = await fetch(`${API}/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, role, password }),
+  });
+  const data = await response.json();
+  if (!data.token) throw new Error(`Could not sign in as ${role} ${id}: ${data.error}`);
+  tokens[userId] = data.token;
+}
+
+// `as` is the user id of whoever performs the action.
+async function call(method, path, body, as) {
   const response = await fetch(`${API}${path}`, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens[as]}` },
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await response.json().catch(() => ({}));
@@ -47,14 +69,14 @@ async function ticket(spec) {
     location: spec.location,
     description: spec.description,
     createdBy: spec.by,
-  });
+  }, spec.by);
   created.push({ id, daysAgo: spec.daysAgo ?? 0, assigned: Boolean(spec.assign), resolved: Boolean(spec.resolve) });
-  if (spec.assign) await call("PATCH", `/tickets/${enc(id)}/assign`, { actorId: ADMIN, technicianId: spec.assign });
+  if (spec.assign) await call("PATCH", `/tickets/${enc(id)}/assign`, { actorId: ADMIN, technicianId: spec.assign }, ADMIN);
   for (const [userId, text] of spec.chat || []) {
-    await call("POST", `/tickets/${enc(id)}/messages`, { userId, text });
+    await call("POST", `/tickets/${enc(id)}/messages`, { userId, text }, userId);
   }
   if (spec.resolve) {
-    await call("PATCH", `/tickets/${enc(id)}/status`, { status: "Resolved", actorId: spec.resolve });
+    await call("PATCH", `/tickets/${enc(id)}/status`, { status: "Resolved", actorId: spec.resolve }, spec.resolve);
   }
   return id;
 }
@@ -82,7 +104,7 @@ const wifi = await ticket({
 await call("POST", `/tickets/${enc(wifi)}/cancellation-requests`, {
   userId: STUDENT,
   reason: "I moved to another room and it works fine there now.",
-});
+}, STUDENT);
 
 await ticket({
   subject: "Office 365 keeps asking me to sign in",
@@ -141,7 +163,7 @@ await call("POST", "/password-requests", {
   userId: STUDENT,
   newPassword: "new-demo-pass",
   reason: "I think someone saw me typing my password.",
-});
+}, STUDENT);
 
 // Spread creation dates over the last 30 days so the volume chart has a shape.
 const db = await mysql.createConnection({

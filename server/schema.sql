@@ -12,6 +12,11 @@ CREATE DATABASE IF NOT EXISTS helpdesk
 USE helpdesk;
 
 -- Drop in dependency order so re-running the script is safe.
+DROP VIEW IF EXISTS tickets_all;
+DROP TABLE IF EXISTS archive_runs;
+DROP TABLE IF EXISTS cancellation_requests_archive;
+DROP TABLE IF EXISTS ticket_messages_archive;
+DROP TABLE IF EXISTS tickets_archive;
 DROP TABLE IF EXISTS kpi_selections;
 DROP TABLE IF EXISTS notifications;
 DROP TABLE IF EXISTS cancellation_requests;
@@ -27,10 +32,15 @@ CREATE TABLE users (
   id_number  VARCHAR(32)  NOT NULL,
   password   VARCHAR(255) NOT NULL,
   name       VARCHAR(120) NOT NULL,
-  role       VARCHAR(32)  NOT NULL,          -- student | employee | technician | admin | superadmin
+  role       VARCHAR(32)  NOT NULL,          -- student | employee | technician | admin | superadmin | report_viewer (read-only)
   role_name  VARCHAR(120) NOT NULL,
   email      VARCHAR(160) NULL,
   skills     VARCHAR(255) NOT NULL DEFAULT '',  -- comma-separated ticket categories a technician is recommended for
+  failed_logins  INT NOT NULL DEFAULT 0,        -- wrong passwords in a row (5 locks the account)
+  locked_until   DATETIME NULL,                 -- set while the account is locked
+  mfa_enabled    TINYINT(1) NOT NULL DEFAULT 0, -- two-step verification (authenticator app)
+  mfa_secret     VARCHAR(64) NULL,
+  last_login_at  TIMESTAMP NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_user_role (id_number, role)
 );
@@ -104,6 +114,10 @@ INSERT INTO users (id_number, password, name, role, role_name, email, skills) VA
   ('2404156', '123456technician', 'Network Technician',  'technician', 'Technician', 'network.tech@campus.edu',  'Network / Internet');
 UPDATE users SET skills = 'Hardware,Printer' WHERE id_number = '2404154' AND role = 'technician';
 
+-- Read-only account for dashboards (kept after the technicians so existing user ids stay the same).
+INSERT INTO users (id_number, password, name, role, role_name, email) VALUES
+  ('2404154', '123456viewer', 'Report Viewer', 'report_viewer', 'Report Viewer', 'viewer@campus.edu');
+
 -- Instant messages between admins and technicians (chat dock).
 CREATE TABLE messages (
   message_pk   INT AUTO_INCREMENT PRIMARY KEY,
@@ -172,3 +186,30 @@ CREATE TABLE kpi_selections (
   position   INT          NOT NULL DEFAULT 0,
   PRIMARY KEY (month, metric_key)
 );
+
+-- Data archiving (see server/migrations/2026-10-enterprise.sql for the explanation).
+-- Same structure as the live tables; if you add a column to one of them, add it here too.
+CREATE TABLE tickets_archive LIKE tickets;
+CREATE TABLE ticket_messages_archive LIKE ticket_messages;
+CREATE TABLE cancellation_requests_archive LIKE cancellation_requests;
+
+CREATE TABLE archive_runs (
+  run_pk        INT AUTO_INCREMENT PRIMARY KEY,
+  run_by        INT NULL,
+  before_date   DATE NOT NULL,
+  ticket_count  INT NOT NULL,
+  message_count INT NOT NULL,
+  request_count INT NOT NULL,
+  json_file     VARCHAR(255) NOT NULL,
+  csv_file      VARCHAR(255) NOT NULL,
+  created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_archive_run_user FOREIGN KEY (run_by) REFERENCES users(user_pk) ON DELETE SET NULL
+);
+
+-- Live + archived tickets together, for reports and KPIs, so archiving does not change history.
+-- If you ever add a column to tickets, add it to tickets_archive AND re-run this statement
+-- (views expand SELECT * when they are created).
+CREATE OR REPLACE VIEW tickets_all AS
+  SELECT * FROM tickets
+  UNION ALL
+  SELECT * FROM tickets_archive;
