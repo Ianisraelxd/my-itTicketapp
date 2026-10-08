@@ -118,7 +118,8 @@ const categories = ["Hardware", "Software", "Network / Internet", "Account / Log
 const locations = ["Computer Laboratory 1", "Computer Laboratory 2", "Main Library", "Registrar's Office", "Dormitory B", "Faculty Room 204", "Cafeteria"];
 const priorities = ["Low", "Medium", "High"];
 const techs = [HARDWARE_TECH, SOFTWARE_TECH, NETWORK_TECH];
-for (let i = 0; i < 26; i += 1) {
+// About half of them in the last 30 days, the rest spread back ~5 months so the KPI trends have a history.
+for (let i = 0; i < 70; i += 1) {
   const category = categories[(i * 5 + 2) % categories.length];
   const tech = techs[i % techs.length];
   const stage = i % 4; // 0 open, 1 in progress, 2/3 resolved
@@ -128,7 +129,7 @@ for (let i = 0; i < 26; i += 1) {
     priority: priorities[(i * 7) % 3],
     location: locations[(i * 3) % locations.length],
     by: i % 3 === 0 ? EMPLOYEE : STUDENT,
-    daysAgo: 1 + ((i * 5) % 29),
+    daysAgo: i < 32 ? 1 + ((i * 5) % 29) : 30 + ((i * 7) % 130),
     description: "Routine request created for demo data.",
     assign: stage >= 1 ? tech : undefined,
     resolve: stage >= 2 ? tech : undefined,

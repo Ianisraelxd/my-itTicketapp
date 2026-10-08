@@ -14,6 +14,14 @@ The super admin dashboard has a **Monthly KPI Scorecard**. The system can calcul
 
 ![Choosing the month's KPIs](screenshots/30-kpi-picker.png)
 
+## Where the chosen KPIs show up
+
+- **Dashboard**: the scorecard, with its own month picker.
+- **Report Manager**: the same chosen KPIs sit at the top of the page for the month of the *To* date in the filters, followed by a **KPI trend** chart (pick any chosen KPI and see six months with its target as a dashed line) and then the detailed charts. KPIs always cover the whole month and ignore the category and role filters. The CSV export includes the KPI values.
+- Every card has a **sparkline** of the last six months, and the ring in the header shows how many of the chosen KPIs are on target ("KPI health").
+
+![Report Manager with the chosen KPIs](screenshots/27-report-manager.png)
+
 ## The 15 metrics
 
 All time values are shown as minutes, hours or days. "Tickets created this month" is the group each metric looks at, except where noted.
@@ -82,4 +90,4 @@ Tickets that existed before these timestamps were added have no `assigned_at`, `
 2. Calculate its value in `computeMonth()` in `server/kpi.js` and add it to the returned object.
 3. It then appears automatically in the **Choose KPIs** dialog and on the scorecard. SLA time limits per priority are also in `server/kpiCatalog.js` (`SLA_MINUTES`).
 
-The values come from `GET /api/kpi?userId=&month=2026-10` and the choice is saved with `PUT /api/kpi/selection` (both super admin only).
+The values come from `GET /api/kpi?userId=&month=2026-10`, the six-month history from `GET /api/kpi/trend?userId=&month=2026-10&count=6`, and the choice is saved with `PUT /api/kpi/selection` (all super admin only).

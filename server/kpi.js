@@ -176,6 +176,22 @@ export function registerKpiRoutes(app, wrap) {
     });
   }));
 
+  // The last N months (ending at `month`) of every metric, for sparklines and the trend chart.
+  app.get("/api/kpi/trend", wrap(async (req, res) => {
+    const admin = await requireSuperAdmin(req.query.userId);
+    if (!admin) return res.status(403).json({ error: "Only the super admin can view KPIs." });
+
+    const month = MONTH.test(req.query.month ?? "") ? req.query.month : currentMonth();
+    const count = Math.min(12, Math.max(2, Number(req.query.count) || 6));
+    const months = [month];
+    while (months.length < count) months.unshift(previousMonth(months[0]));
+
+    const results = await Promise.all(months.map((item) => computeMonth(item)));
+    const series = {};
+    for (const key of KPI_KEYS) series[key] = results.map((result) => result[key].value);
+    res.json({ months, series });
+  }));
+
   // Choose the KPIs (and optional targets) for a month.
   app.put("/api/kpi/selection", wrap(async (req, res) => {
     const admin = await requireSuperAdmin(req.body?.userId);

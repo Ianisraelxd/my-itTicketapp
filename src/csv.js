@@ -29,7 +29,7 @@ export function downloadCsv(filename, rows) {
 }
 
 // Flattens the report JSON into one tidy table: Report, Label, Value.
-export function reportToCsvRows(report) {
+export function reportToCsvRows(report, kpiRows = []) {
   const rows = [["Report", "Label", "Value"]];
   const { filters, totals } = report;
   rows.push(["Filters", "From", filters.from || "All time"]);
@@ -41,6 +41,7 @@ export function reportToCsvRows(report) {
   rows.push(["Summary", "Open backlog", totals.backlog]);
   rows.push(["Summary", "Cancelled", totals.cancelled]);
   rows.push(["Summary", "High priority", totals.high]);
+  kpiRows.forEach((row) => rows.push(row));
   const sections = [
     ["Tickets by status", report.byStatus],
     ["Tickets by category", report.byCategory],

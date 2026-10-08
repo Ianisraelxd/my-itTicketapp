@@ -6,7 +6,11 @@ import { api } from "./api";
 import ChartSkeleton from "./ChartSkeleton";
 import ChatInput from "./ChatInput";
 import { downloadCsv, reportToCsvRows } from "./csv";
-import KpiScorecard from "./KpiScorecard";
+import { buildKpiCards, formatKpiValue, monthKey, monthLabel } from "./kpiFormat";
+import KpiScorecard, { KpiPicker, KpiScorecardView } from "./KpiScorecard";
+import KpiTrendCard from "./KpiTrendCard";
+import useKpiData from "./useKpiData";
+import useKpiTrend from "./useKpiTrend";
 import ReportChartContainer from "./ReportChartContainer";
 import ReportFilters from "./ReportFilters";
 import { defaultReportFilters } from "./reportDefaults";
@@ -579,7 +583,7 @@ function App() {
           />
         )}
         {page === "reportManagerPage" && (
-          <ReportManager me={user} />
+          <ReportManager me={user} showMessage={showMessage} />
         )}
         {page === "manageRequestsPage" && (
           <ManageRequests
@@ -3075,20 +3079,18 @@ const REQUESTER_ROLES = [
 ];
 
 const formatDay = (value) => (typeof value === "string" ? value.slice(5) : value);
-const percentOf = (part, whole) => (whole ? Math.round((part / whole) * 100) : 0);
 
-function ReportManager({ me }) {
+function ReportManager({ me, showMessage }) {
   // Defaults load immediately: last 30 days, all categories, all roles.
   const [filters, setFilters] = useState(defaultReportFilters);
   const { data, isLoading, error, reload } = useReportData(filters, me.userId);
 
-  const totals = data?.totals;
-  const kpis = [
-    ["Resolution rate", totals ? `${percentOf(totals.resolved, totals.total)}%` : null],
-    ["Open backlog", totals ? String(totals.backlog) : null],
-    ["High-priority share", totals ? `${percentOf(totals.high, totals.total)}%` : null],
-    ["Tickets in view", totals ? String(totals.total) : null],
-  ];
+  // The KPI scorecard is monthly: it follows the month of the "To" date.
+  const kpiMonth = (filters.to || monthKey()).slice(0, 7);
+  const kpi = useKpiData(kpiMonth, me.userId);
+  const trend = useKpiTrend(kpiMonth, me.userId);
+  const [picking, setPicking] = useState(false);
+  const cards = buildKpiCards(kpi.data);
 
   const locationRows = data?.byLocation || [];
   const locationMax = Math.max(1, ...locationRows.map((row) => row.value));
@@ -3097,7 +3099,14 @@ function ReportManager({ me }) {
     if (!data) return;
     const from = data.filters.from || "all";
     const to = data.filters.to || "today";
-    downloadCsv(`helpdesk-report_${from}_to_${to}.csv`, reportToCsvRows(data));
+    const kpiRows = cards.map((card) => [
+      `KPI scorecard ${kpiMonth}`,
+      card.target !== null && card.target !== undefined
+        ? `${card.metric.name} (target ${formatKpiValue(card.target, card.metric.unit)})`
+        : card.metric.name,
+      card.reading?.value ?? "",
+    ]);
+    downloadCsv(`helpdesk-report_${from}_to_${to}.csv`, reportToCsvRows(data, kpiRows));
   }
 
   return (
@@ -3105,7 +3114,7 @@ function ReportManager({ me }) {
       <PageHeader
         eyebrow="SYSTEM / 02"
         title="Report manager"
-        description="Charts and KPIs across the system. Showing the last 30 days by default."
+        description="Your chosen KPIs on top, the detail behind them below. Showing the last 30 days by default."
       />
       <ReportFilters
         filters={filters}
@@ -3115,6 +3124,42 @@ function ReportManager({ me }) {
         onExport={exportCsv}
         canExport={Boolean(data) && !isLoading}
       />
+
+      <KpiScorecardView
+        data={kpi.data}
+        trend={trend}
+        isLoading={kpi.isLoading}
+        error={kpi.error}
+        reload={kpi.reload}
+        eyebrow="KPI SCORECARD"
+        title={`KPIs for ${monthLabel(kpiMonth)}`}
+        note="KPIs always cover the whole month of the To date and ignore the category and role filters."
+        controls={
+          <button
+            type="button"
+            className="button button-primary"
+            disabled={!kpi.data}
+            onClick={() => setPicking(true)}
+          >
+            Choose KPIs
+          </button>
+        }
+      />
+      <KpiTrendCard cards={cards} trend={trend} isLoading={kpi.isLoading || !trend} />
+      {picking && kpi.data && (
+        <KpiPicker
+          data={kpi.data}
+          month={kpiMonth}
+          me={me}
+          showMessage={showMessage}
+          onClose={() => setPicking(false)}
+          onSaved={() => {
+            setPicking(false);
+            kpi.reload();
+          }}
+        />
+      )}
+
       {error && (
         <section className="panel report-error" role="alert">
           <strong>Could not load the report.</strong>
@@ -3124,53 +3169,18 @@ function ReportManager({ me }) {
           </button>
         </section>
       )}
-      <div className="stats-grid">
-        {kpis.map(([label, value]) => (
-          <div className="stat-card" key={label}>
-            <span>KPI · {label}</span>
-            {value === null ? (
-              <strong className="kpi-loading" aria-busy="true"></strong>
-            ) : (
-              <strong>
-                <CountUp value={value} />
-              </strong>
-            )}
-          </div>
-        ))}
+
+      <div className="report-section-title">
+        <span className="eyebrow">DETAIL</span>
+        <h2>
+          {data?.totals
+            ? `${data.totals.total} ticket${data.totals.total === 1 ? "" : "s"} in the selected period`
+            : "Tickets in the selected period"}
+        </h2>
       </div>
       <div className="report-grid">
         <ReportChartContainer
-          title="1 · Tickets by status"
-          note="Donut chart"
-          type="pie"
-          data={data?.byStatus}
-          colorFor={(row) => STATUS_COLORS[row.label]}
-          isLoading={isLoading}
-        />
-        <ReportChartContainer
-          title="2 · Tickets by category"
-          note="Bar graph"
-          data={data?.byCategory}
-          horizontal
-          isLoading={isLoading}
-        />
-        <ReportChartContainer
-          title="3 · Tickets by priority"
-          note="Bar graph"
-          data={data?.byPriority}
-          colorFor={(row) => PRIORITY_COLORS[row.label] || "#1c6b56"}
-          isLoading={isLoading}
-        />
-        <ReportChartContainer
-          title="4 · Requests by requester role"
-          note="Bar graph"
-          data={data?.byRole}
-          horizontal
-          series={[{ key: "value", label: "Tickets", color: "#39759d" }]}
-          isLoading={isLoading}
-        />
-        <ReportChartContainer
-          title="5 · Ticket volume over time"
+          title="Ticket volume over time"
           note="Line chart · per day"
           type="line"
           data={data?.byDay}
@@ -3179,7 +3189,37 @@ function ReportManager({ me }) {
           isLoading={isLoading}
           wide
         />
-        <ReportCard title="6 · Campus location map" note="Heat map of where requests come from" wide>
+        <ReportChartContainer
+          title="Tickets by status"
+          note="Donut chart"
+          type="pie"
+          data={data?.byStatus}
+          colorFor={(row) => STATUS_COLORS[row.label]}
+          isLoading={isLoading}
+        />
+        <ReportChartContainer
+          title="Tickets by priority"
+          note="Bar graph"
+          data={data?.byPriority}
+          colorFor={(row) => PRIORITY_COLORS[row.label] || "#1c6b56"}
+          isLoading={isLoading}
+        />
+        <ReportChartContainer
+          title="Tickets by category"
+          note="Bar graph"
+          data={data?.byCategory}
+          horizontal
+          isLoading={isLoading}
+        />
+        <ReportChartContainer
+          title="Requests by requester role"
+          note="Bar graph"
+          data={data?.byRole}
+          horizontal
+          series={[{ key: "value", label: "Tickets", color: "#39759d" }]}
+          isLoading={isLoading}
+        />
+        <ReportCard title="Campus location map" note="Heat map of where requests come from" wide>
           {isLoading ? (
             <ChartSkeleton height={140} label="Loading location map" />
           ) : locationRows.length ? (
@@ -3203,7 +3243,7 @@ function ReportManager({ me }) {
           )}
         </ReportCard>
         <ReportChartContainer
-          title="7 · Registered users by role"
+          title="Registered users by role"
           note="Not affected by filters"
           data={data?.usersByRole}
           horizontal
