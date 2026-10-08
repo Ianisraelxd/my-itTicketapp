@@ -319,7 +319,7 @@ export function KpiScorecardView({ data, trend, isLoading, error, reload, contro
 }
 
 // Monthly KPI scorecard for the super admin dashboard (has its own month picker).
-export default function KpiScorecard({ me, showMessage }) {
+export default function KpiScorecard({ me, showMessage, canEdit = true }) {
   const months = recentMonths(12);
   const [month, setMonth] = useState(months[0]);
   const [picking, setPicking] = useState(false);
@@ -346,18 +346,22 @@ export default function KpiScorecard({ me, showMessage }) {
                 ))}
               </select>
             </label>
-            <button
-              type="button"
-              className="button button-primary"
-              disabled={!data}
-              onClick={() => setPicking(true)}
-            >
-              Choose KPIs
-            </button>
+            {canEdit ? (
+              <button
+                type="button"
+                className="button button-primary"
+                disabled={!data}
+                onClick={() => setPicking(true)}
+              >
+                Choose KPIs
+              </button>
+            ) : (
+              <span className="gov-badge muted">Read-only</span>
+            )}
           </>
         }
       />
-      {picking && data && (
+      {canEdit && picking && data && (
         <KpiPicker
           data={data}
           month={month}

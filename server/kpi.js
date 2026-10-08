@@ -1,5 +1,6 @@
 // Monthly KPI scorecard: calculates every catalog metric from ticket data and
 // stores which metrics (and targets) the super admin chose for each month.
+import { verifyReportViewer, verifySuperAdmin } from "./auth.js";
 import { pool, query } from "./db.js";
 import { DEFAULT_SELECTION, KPI_CATALOG, KPI_KEYS, SLA_MINUTES } from "./kpiCatalog.js";
 
@@ -26,6 +27,8 @@ const ratio = (part, whole) => (Number(whole) > 0 ? round((Number(part) / Number
 // SLA target (minutes) by priority, built from the catalog constants (numbers only).
 const slaCase = `CASE t.priority WHEN 'High' THEN ${Number(SLA_MINUTES.High)} WHEN 'Medium' THEN ${Number(SLA_MINUTES.Medium)} ELSE ${Number(SLA_MINUTES.Low)} END`;
 
+// History comes from `tickets_all` (live + archived tickets) so archiving never changes
+// the KPIs of past months. The backlog only needs live tickets: archived ones are finished.
 // Every number for one month. Tickets are grouped by the month they were
 // created in ("cohort"), except throughput (by resolved date) and backlog
 // (a snapshot at the end of the month, or right now for the current month).
@@ -56,7 +59,7 @@ async function computeMonth(month) {
        SUM(CASE WHEN t.assigned_to IS NOT NULL AND t.category <> 'Others' AND a.skills <> '' THEN 1 ELSE 0 END) AS skillEligible,
        SUM(CASE WHEN t.assigned_to IS NOT NULL AND t.category <> 'Others' AND a.skills <> ''
                  AND FIND_IN_SET(t.category, a.skills) > 0 THEN 1 ELSE 0 END) AS skillMatched
-     FROM tickets t LEFT JOIN users a ON a.user_pk = t.assigned_to
+     FROM tickets_all t LEFT JOIN users a ON a.user_pk = t.assigned_to
      WHERE t.created_at >= ? AND t.created_at < DATE_ADD(?, INTERVAL 1 MONTH)`,
     [start, start],
   );
@@ -74,7 +77,7 @@ async function computeMonth(month) {
   );
 
   const [throughput] = await query(
-    `SELECT COUNT(*) AS n FROM tickets
+    `SELECT COUNT(*) AS n FROM tickets_all
      WHERE resolved_at >= ? AND resolved_at < DATE_ADD(?, INTERVAL 1 MONTH)`,
     [start, start],
   );
@@ -131,21 +134,10 @@ async function selectionFor(month) {
   return { rows: DEFAULT_SELECTION.map((key) => ({ key, target: null })), source: null };
 }
 
-async function requireSuperAdmin(userId) {
-  const rows = await query(
-    "SELECT user_pk, name, role, role_name FROM users WHERE user_pk = ? LIMIT 1",
-    [userId ?? 0],
-  );
-  return rows[0] && rows[0].role === "superadmin" ? rows[0] : null;
-}
-
 export function registerKpiRoutes(app, wrap) {
   // Scorecard data for one month: every metric's value (and last month's), plus
   // which ones are selected for the dashboard.
-  app.get("/api/kpi", wrap(async (req, res) => {
-    const admin = await requireSuperAdmin(req.query.userId);
-    if (!admin) return res.status(403).json({ error: "Only the super admin can view KPIs." });
-
+  app.get("/api/kpi", verifyReportViewer, wrap(async (req, res) => {
     const month = MONTH.test(req.query.month ?? "") ? req.query.month : currentMonth();
     const prior = previousMonth(month);
     const [values, previous, selection] = await Promise.all([
@@ -177,10 +169,7 @@ export function registerKpiRoutes(app, wrap) {
   }));
 
   // The last N months (ending at `month`) of every metric, for sparklines and the trend chart.
-  app.get("/api/kpi/trend", wrap(async (req, res) => {
-    const admin = await requireSuperAdmin(req.query.userId);
-    if (!admin) return res.status(403).json({ error: "Only the super admin can view KPIs." });
-
+  app.get("/api/kpi/trend", verifyReportViewer, wrap(async (req, res) => {
     const month = MONTH.test(req.query.month ?? "") ? req.query.month : currentMonth();
     const count = Math.min(12, Math.max(2, Number(req.query.count) || 6));
     const months = [month];
@@ -193,10 +182,7 @@ export function registerKpiRoutes(app, wrap) {
   }));
 
   // Choose the KPIs (and optional targets) for a month.
-  app.put("/api/kpi/selection", wrap(async (req, res) => {
-    const admin = await requireSuperAdmin(req.body?.userId);
-    if (!admin) return res.status(403).json({ error: "Only the super admin can choose KPIs." });
-
+  app.put("/api/kpi/selection", verifySuperAdmin, wrap(async (req, res) => {
     const month = String(req.body?.month ?? "");
     if (!MONTH.test(month)) return res.status(400).json({ error: "month must look like 2026-10." });
 
@@ -237,7 +223,7 @@ export function registerKpiRoutes(app, wrap) {
 
     await query(
       "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
-      [admin.name, admin.role_name, `Chose ${rows.length} KPIs for ${month}`],
+      [req.user.name, req.user.roleName, `Chose ${rows.length} KPIs for ${month}`],
     );
     res.json({ ok: true, month, count: rows.length });
   }));

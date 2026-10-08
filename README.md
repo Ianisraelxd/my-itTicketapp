@@ -13,6 +13,7 @@ The project ships in two forms:
 
 - [Features](#features)
 - [Screenshots](#screenshots)
+- [Security and governance](#security-and-governance)
 - [Tech stack](#tech-stack)
 - [Project structure](#project-structure)
 - [Getting started](#getting-started)
@@ -34,7 +35,8 @@ The project ships in two forms:
 ## Features
 
 **Everyone**
-- **Role-based access** — Student, Employee, Technician, Admin and Super Admin, each with its own navigation and dashboard.
+- **Role-based access** — Student, Employee, Technician, Admin, Super Admin and a read-only Report Viewer, each with its own navigation and dashboard.
+- **Secure sign-in** — hashed passwords, session tokens, account lockout after repeated failures and optional two-step verification (authenticator app).
 - **Sign in / sign up** — login checked against the database, plus a signup and password-reset-request flow (prototype).
 - **Notifications** — an in-app Notifications page with an unread badge and pop-up banners for everything that changes on your tickets and account.
 - **Settings** — theme (light, dark or follow the device), animations (on, follow device, off), mute and volume, saved in the browser's localStorage, plus an About dialog (v1.0.2).
@@ -60,6 +62,7 @@ The project ships in two forms:
 - Ticket conversations and the admin/technician chat dock.
 
 **Super admin**
+- A **Super Admin Panel** for governance: archive old tickets (with a downloadable JSON/CSV backup, never a hard delete) and manage who is an admin or read-only Report Viewer, including lockout and two-step-verification overrides. See [Security and governance](#security-and-governance).
 - A **dashboard** with a **Monthly KPI Scorecard**: 15 IT performance metrics (AHT, first response time, SLA compliance, first-time fix rate, reopen rate, backlog and more) of which the super admin picks the ones that matter each month, with their own targets. See [docs/KPI-METRICS.md](docs/KPI-METRICS.md).
 - A **Report Manager** that shows the same chosen KPIs (health ring, sparklines, six-month trend with the target line) above the detailed charts (Recharts charts fed by SQL aggregation, skeleton loading, a campus location heat map, date / category / role filters that default to the last 30 days, CSV export) and **Activity Log Reports** of everything users did.
 
@@ -198,6 +201,35 @@ The screenshots come from a throwaway demo database, never your real one:
 4. Capture: `node scripts/capture-screenshots.mjs http://localhost:5175` (uses Chrome or Edge through `puppeteer-core`; set `CHROME_PATH` for another browser).
 
 ---
+## Security and governance
+
+**Sign-in and sessions**
+- Passwords are stored as **scrypt hashes**. Older plaintext rows from the seed data are upgraded to a hash the first time they are used.
+- Logging in returns a **JWT session token** (8 hours). Every API call except login, signup and the health check must send it (`Authorization: Bearer ...`), and the user is re-read from the database on each request, so a revoked admin loses access immediately.
+- The server stamps the caller's id on every "acting user" field (`userId`, `actorId`, `senderId`, `createdBy`, `reviewedBy`), so one user can't act as another by editing a request. Requesters only ever receive their own tickets and password requests.
+- The session survives a page refresh (it lives in `sessionStorage`) and ends when the tab closes or you log out.
+- **Account lockout**: 5 wrong passwords or codes in a row lock the account for 15 minutes. A super admin can clear it.
+- **Two-step verification** (authenticator app, TOTP) for technicians, admins, report viewers and the super admin: set it up from the profile. Lost phone? A super admin resets it.
+- Sessions are signed with `JWT_SECRET` if you set it in the environment; otherwise a random secret is created on first start and kept in `server/.jwt-secret` (gitignored), so sessions survive restarts.
+
+**Roles**
+- `report_viewer` is a **read-only** role: it sees the dashboards, KPIs, Report Manager and activity log (so the super admin does not need to log in for daily reporting) and every write is refused by the server. `verifyReportViewer` allows Super Admin and Report Viewer on the analytics endpoints; `verifySuperAdmin` guards everything that writes governance data.
+
+**Super Admin panel** (Super Admin only)
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/32-super-admin-panel.png" alt="Super admin panel"><br><sub>Archiving and privileged accounts</sub></td>
+  </tr>
+</table>
+
+- **Archiving**: pick a retention date (finished tickets last active before it; at least the last 30 days always stay), check how many tickets would move, then **Mass Export & Archive** (you type `ARCHIVE` to confirm). In one SQL transaction the tickets, their conversations and cancellation requests are copied into `tickets_archive`, `ticket_messages_archive` and `cancellation_requests_archive`, a **JSON and CSV backup** is written to `backups/archives/`, and only then are they removed from the live tables. Each run is recorded in `archive_runs` with download buttons. Nothing is permanently deleted, and new ticket numbers never reuse archived ones.
+- **IT Ops Admins & Report Viewers**: a table of privileged accounts with **Revoke access**, **Override lockout** and **Reset MFA**, plus a form to grant Admin or Report Viewer access to an employee or technician.
+
+The SQL for all of this (only the new tables and columns) is in [`server/migrations/2026-10-enterprise.sql`](server/migrations/2026-10-enterprise.sql).
+
+---
+
 ## Tech stack
 
 | Layer      | Technology                          |
@@ -218,12 +250,19 @@ my-react-app/
 ├─ public/                 # Static assets served as-is (sound effects in sounds/)
 ├─ scripts/                # DB backup, demo-data seeding and screenshot capture
 ├─ server/                 # Express + MySQL backend
+│  ├─ auth.js              # JWT middleware: authenticate, verifyReportViewer, verifySuperAdmin
+│  ├─ security.js          # Password hashing, JWT and two-step (TOTP) helpers
+│  ├─ superadmin.js        # Archiving pipeline + privileged-account management
+│  ├─ kpi.js, kpiCatalog.js # Monthly KPI calculation and the metric catalog
+│  ├─ migrations/          # SQL for upgrading an existing database
 │  ├─ db.js                # MySQL connection pool + query helper
-│  ├─ index.js             # API server and routes
+│  ├─ index.js             # API server and the remaining routes
 │  ├─ schema.sql           # Database schema + seed data
 │  └─ .env                 # Your DB credentials (create it; gitignored)
 ├─ src/                    # React frontend
-│  ├─ api.js               # Fetch client for the /api backend
+│  ├─ api.js               # Fetch client for the /api backend (attaches the session token)
+│  ├─ hooks/               # Logic hooks for the super admin panel (useArchive, useAdminManagement)
+│  ├─ SuperAdminPanel.jsx  # Super admin settings UI (ArchivePanel + AdminTable)
 │  ├─ App.jsx              # Main application (all views/components)
 │  ├─ App.css              # Application styles
 │  ├─ index.css            # Base styles
@@ -303,6 +342,7 @@ Most seed accounts share the ID `2404154`; select the matching role on the login
 | Network Technician (Network / Internet) | `2404156` | `123456technician` |
 | Student / Employee Admin   | `2404154` | `123456admin`       |
 | Super Admin                | `2404154` | `123456superadmin`  |
+| Report Viewer (read-only)  | `2404154` | `123456viewer`      |
 
 ---
 
@@ -313,7 +353,16 @@ Base path: `/api` (proxied to `http://localhost:3001` in development).
 | Method | Endpoint | Description |
 | ------ | -------- | ----------- |
 | GET | `/api/health` | Health check; verifies the DB connection. |
-| POST | `/api/login` | Authenticate. Body: `{ id, password, role }`. |
+| POST | `/api/login` | Authenticate. Body: `{ id, password, role }`. Returns a session `token`, or `{ mfaRequired, mfaToken }` when two-step verification is on. All other routes (except signup and health) need `Authorization: Bearer <token>`. |
+| POST | `/api/login/mfa` | Second step. Body: `{ mfaToken, code }`. |
+| GET | `/api/me` | The signed-in user (used to restore a session after a refresh). |
+| POST | `/api/mfa/setup`, `/api/mfa/enable`, `/api/mfa/disable` | Two-step verification for staff accounts. |
+| GET | `/api/superadmin/overview` | Super admin only. Active / archived ticket counts. |
+| POST | `/api/superadmin/archive` | Super admin only. Body: `{ before: "2023-10-08", dryRun?, confirm? }`. Exports then archives finished tickets older than the date, in one transaction. |
+| GET | `/api/superadmin/archive/runs` | Super admin only. Archive history. |
+| GET | `/api/superadmin/archive/runs/:id/download?format=json\|csv` | Super admin only. Download a backup file. |
+| GET | `/api/superadmin/admins` | Super admin only. Admins, report viewers and people who could be given access. |
+| PUT | `/api/superadmin/manage-admins/:id` | Super admin only. Body: `{ action: "revoke" \| "grant" \| "grant_viewer" \| "unlock" \| "reset_mfa" }`. |
 | POST | `/api/signup` | Create a student or employee account. |
 | GET | `/api/tickets` | List tickets (newest first); `?mine=1&userId=` limits to one requester. Includes `location` and `createdAt`. |
 | POST | `/api/tickets` | Create a ticket. Body: `{ subject, category, priority, location?, description?, createdBy? }`. |
@@ -348,7 +397,7 @@ All queries use parameterized statements to guard against SQL injection.
 
 ## Database schema
 
-The `helpdesk` database contains nine tables (see `server/schema.sql` for full definitions):
+The `helpdesk` database contains these tables (see `server/schema.sql` for full definitions):
 
 - **`users`** — accounts with `id_number`, `password`, `name`, `role`, `role_name`, `email`, and `skills` (comma-separated ticket categories, used for technicians).
 - **`tickets`** — support requests with a unique `code` (e.g. `#HD001`), `subject`, `category`, `priority`, `status`, and optional `location`/`description`. Links back to `users` via `created_by`.
@@ -357,10 +406,11 @@ The `helpdesk` database contains nine tables (see `server/schema.sql` for full d
 - **`ticket_messages`** — per-ticket conversation, including cancellation requests (`kind`).
 - **`cancellation_requests`** — requester-initiated cancellation requests awaiting an admin decision.
 - **`notifications`** — per-user in-app notifications with a read timestamp.
+- **`tickets_archive`, `ticket_messages_archive`, `cancellation_requests_archive`** — same structure as the live tables; finished tickets (with their conversations) older than the retention date are moved here. **`archive_runs`** records each archive run. The **`tickets_all`** view (live + archived) feeds reports and KPIs so archiving never changes history.
 - **`kpi_selections`** — which KPI metrics (and targets) the super admin chose for each month.
 - **`messages`** — chat messages between admins and technicians, with a read timestamp.
 
-Re-running `schema.sql` drops and recreates the tables, restoring the seed data. If you already have a database from an earlier version, add the new pieces by hand instead (`ALTER TABLE users ADD COLUMN skills ...`, `ALTER TABLE tickets ADD COLUMN assigned_to ...` and `reopen_count INT NOT NULL DEFAULT 0`, the three KPI timestamps (`assigned_at`, `first_response_at`, `resolved_at`, all `TIMESTAMP NULL`) and the `kpi_selections` table, and the `messages`, `ticket_messages`, `cancellation_requests` and `notifications` tables from `schema.sql`) to avoid losing data.
+Re-running `schema.sql` drops and recreates the tables, restoring the seed data. If you already have a database from an earlier version, add the new pieces by hand instead (`ALTER TABLE users ADD COLUMN skills ...`, `ALTER TABLE tickets ADD COLUMN assigned_to ...` and `reopen_count INT NOT NULL DEFAULT 0`, the security columns on `users` (`failed_logins`, `locked_until`, `mfa_enabled`, `mfa_secret`, `last_login_at`), the archive tables and the `tickets_all` view (all in `server/migrations/2026-10-enterprise.sql`), the three KPI timestamps (`assigned_at`, `first_response_at`, `resolved_at`, all `TIMESTAMP NULL`) and the `kpi_selections` table, and the `messages`, `ticket_messages`, `cancellation_requests` and `notifications` tables from `schema.sql`) to avoid losing data.
 
 ---
 

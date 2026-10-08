@@ -101,12 +101,28 @@ async function openTicket(page, subjectPart) {
   await sleep(1800);
 }
 
-const api = (route, body, method = "POST") =>
-  fetch(`${BASE}/api${route}`, {
+// Direct API calls (the API needs a signed-in user, so sign in as the account that acts).
+const ACCOUNTS = {
+  technician: ["technician", "123456technician"],
+  superadmin: ["superadmin", "123456superadmin"],
+};
+const tokens = {};
+async function api(route, body, method = "POST", as = "superadmin") {
+  if (!tokens[as]) {
+    const [role, password] = ACCOUNTS[as];
+    const response = await fetch(`${BASE}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: "2404154", role, password }),
+    });
+    tokens[as] = (await response.json()).token;
+  }
+  return fetch(`${BASE}/api${route}`, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${tokens[as]}` },
     body: JSON.stringify(body),
   });
+}
 
 // ------------------------------------------------------------------ login screens
 {
@@ -235,11 +251,12 @@ const api = (route, body, method = "POST") =>
   await shot(page, "24-password-requests");
 
   // Chat dock: the technician has already written, the admin answers.
-  await api("/messages", {
-    senderId: 3,
-    recipientId: 4,
-    body: "Hi! I am heading to Lab 1 to look at the projector now.",
-  });
+  await api(
+    "/messages",
+    { senderId: 3, recipientId: 4, body: "Hi! I am heading to Lab 1 to look at the projector now." },
+    "POST",
+    "technician",
+  );
   await sleep(500);
   await page.click(".chat-launcher");
   await sleep(700);
@@ -279,6 +296,26 @@ const api = (route, body, method = "POST") =>
   await sleep(800);
   await shot(page, "30-kpi-picker");
   await closeTopModal(page);
+  await page.setViewport(DESKTOP);
+
+  // Super Admin panel: run one archive so the history has a row, then capture.
+  await nav(page, "Super Admin Panel", 2500);
+  const sixtyDaysAgo = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
+  await page.evaluate((value) => {
+    const input = document.querySelector('.gov-policy input[type="date"]');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }, sixtyDaysAgo);
+  await clickText(page, ".gov-actions button", "Check what would move");
+  await sleep(1200);
+  await clickText(page, ".gov-actions button", "Mass Export");
+  await sleep(600);
+  await page.type(".modal-box input", "ARCHIVE");
+  await clickText(page, ".modal-box button", "Export & archive");
+  await sleep(2500);
+  await page.setViewport({ ...DESKTOP, height: 1500 });
+  await sleep(800);
+  await shot(page, "32-super-admin-panel");
   await page.setViewport(DESKTOP);
 
   await nav(page, "Report Manager", 3200);

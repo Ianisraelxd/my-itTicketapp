@@ -27,3 +27,4 @@ dist-ssr
 .env
 server/.env
 backups/
+server/.jwt-secret

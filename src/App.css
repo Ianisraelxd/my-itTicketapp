@@ -3988,3 +3988,171 @@ html[data-theme="dark"] .button-dark {
     .kpi-title { align-items: flex-start; flex-direction: column; gap: 10px }
     .kpi-spark { max-width: 110px }
 }
+
+/* ==========================================================================
+   Super admin panel (archiving + privileged accounts), two-step verification
+   ========================================================================== */
+.gov-panel { margin-bottom: 20px }
+
+.gov-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 18px
+}
+
+.gov-head h2 { margin: 6px 0 6px }
+.gov-head p { max-width: 640px }
+
+.gov-stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 20px
+}
+
+.gov-stats > div {
+    display: grid;
+    gap: 6px;
+    padding: 14px 16px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface-1)
+}
+
+.gov-stats small { color: var(--muted); font-size: 11.5px }
+.gov-stats strong { font: 800 20px Manrope, sans-serif; letter-spacing: -.5px; line-height: 1.2 }
+
+.gov-skeleton,
+.table-skeleton-row span {
+    display: block;
+    height: 14px;
+    border-radius: 7px;
+    background: var(--surface-2);
+    animation: skeleton-pulse 1.3s ease-in-out infinite
+}
+
+.gov-skeleton-stat { width: 60%; height: 22px }
+
+.table-skeleton { display: grid; gap: 10px; padding: 6px 0 }
+
+.table-skeleton-row {
+    display: flex;
+    gap: 16px;
+    padding: 12px 8px;
+    border-bottom: 1px solid var(--line);
+    animation: fade .4s both
+}
+
+.gov-policy {
+    display: grid;
+    gap: 12px;
+    padding: 18px;
+    margin-bottom: 22px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--surface-1)
+}
+
+.gov-policy .field-label { margin: 0; max-width: 320px }
+.gov-policy .kpi-chips { margin: 0 }
+.gov-hint { color: var(--muted) !important; font-size: 12px !important }
+
+.gov-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center }
+
+.gov-preview {
+    margin: 0 !important;
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: var(--info-bg);
+    color: var(--blue) !important;
+    font-size: 13px !important;
+    font-weight: 600
+}
+
+.gov-preview.none { background: var(--surface-2); color: var(--muted) !important }
+
+.gov-result {
+    display: grid;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: var(--good-bg);
+    color: var(--good-ink);
+    font-size: 13px
+}
+
+.gov-error {
+    margin: 0 0 14px !important;
+    padding: 10px 14px;
+    border-radius: 12px;
+    background: var(--bad-bg);
+    color: var(--bad-ink) !important;
+    font-size: 13px !important
+}
+
+.gov-history { display: grid; gap: 10px }
+
+.gov-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--muted);
+    font: 700 10.5px Manrope, sans-serif;
+    letter-spacing: .3px;
+    white-space: nowrap
+}
+
+.gov-badge.good { background: var(--good-bg); color: var(--good-ink) }
+.gov-badge.warn { background: var(--warn-bg); color: var(--warn-ink) }
+.gov-badge.bad { background: var(--bad-bg); color: var(--bad-ink) }
+.gov-badge.info { background: var(--info-bg); color: var(--blue) }
+
+.cell-sub { color: var(--muted); font-size: 11px; margin-top: 2px }
+
+.gov-grant {
+    display: grid;
+    gap: 10px;
+    margin-top: 22px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line)
+}
+
+.gov-grant-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px
+}
+
+.gov-grant-row .field-label { flex: 1 1 220px; margin: 0 }
+
+/* Two-step verification */
+.mfa-settings { text-align: left }
+.mfa-settings h3 { margin: 4px 0 12px }
+.mfa-note { margin: 0 0 16px !important; line-height: 1.55 }
+.mfa-steps { margin: 0 0 16px; padding-left: 20px; display: grid; gap: 10px; font-size: 12.5px; line-height: 1.5; color: var(--ink-2) }
+
+.mfa-secret {
+    display: block;
+    margin: 6px 0;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--surface-2);
+    color: var(--ink);
+    font: 600 14px/1.4 Consolas, "Courier New", monospace;
+    letter-spacing: 1px;
+    word-break: break-all;
+    user-select: all
+}
+
+@media (max-width: 900px) {
+    .gov-stats { grid-template-columns: repeat(2, minmax(0, 1fr)) }
+}
+
+@media (max-width: 640px) {
+    .gov-policy .field-label { max-width: none }
+    .gov-grant-row .button { width: 100% }
+}
