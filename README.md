@@ -60,7 +60,8 @@ The project ships in two forms:
 - Ticket conversations and the admin/technician chat dock.
 
 **Super admin**
-- A **dashboard** with system KPIs, a **Report Manager** (Recharts charts fed by SQL aggregation, skeleton loading, a campus location heat map, date / category / role filters that default to the last 30 days, CSV export) and **Activity Log Reports** of everything users did.
+- A **dashboard** with a **Monthly KPI Scorecard**: 15 IT performance metrics (AHT, first response time, SLA compliance, first-time fix rate, reopen rate, backlog and more) of which the super admin picks the ones that matter each month, with their own targets. See [docs/KPI-METRICS.md](docs/KPI-METRICS.md).
+- A **Report Manager** (Recharts charts fed by SQL aggregation, skeleton loading, a campus location heat map, date / category / role filters that default to the last 30 days, CSV export) and **Activity Log Reports** of everything users did.
 
 ---
 
@@ -133,7 +134,6 @@ All screenshots are generated from a demo database by [`scripts/capture-screensh
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/26-superadmin-dashboard.png" alt="Super admin dashboard"><br><sub>Dashboard with a resolution-rate KPI</sub></td>
     <td><img src="docs/screenshots/28-activity-log.png" alt="Activity log reports"><br><sub>Activity log reports</sub></td>
   </tr>
 </table>
@@ -141,6 +141,15 @@ All screenshots are generated from a demo database by [`scripts/capture-screensh
 **Report Manager** — filters (last 30 days by default), KPIs, seven reports and CSV export.
 
 ![Report Manager](docs/screenshots/27-report-manager.png)
+
+**Monthly KPI scorecard** — the dashboard shows the KPIs chosen for the month, each with its target, status and change versus last month. "Choose KPIs" picks the month's metrics and targets from the catalog of 15 (full definitions in [docs/KPI-METRICS.md](docs/KPI-METRICS.md)).
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/26-superadmin-dashboard.png" alt="Super admin dashboard with the KPI scorecard"><br><sub>Dashboard with the scorecard</sub></td>
+    <td><img src="docs/screenshots/30-kpi-picker.png" alt="Choosing the month's KPIs"><br><sub>Choosing the month's KPIs and targets</sub></td>
+  </tr>
+</table>
 
 ### Settings, themes and About
 
@@ -152,6 +161,12 @@ All screenshots are generated from a demo database by [`scripts/capture-screensh
   <tr>
     <td><img src="docs/screenshots/12-student-dashboard-dark.png" alt="Student dashboard in dark mode"><br><sub>Dark mode dashboard</sub></td>
     <td><img src="docs/screenshots/13-ticket-details-dark.png" alt="Ticket popup in dark mode"><br><sub>Dark mode ticket popup</sub></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/31-superadmin-dashboard-dark.png" alt="KPI scorecard in dark mode"><br><sub>Dark mode scorecard</sub></td>
   </tr>
 </table>
 
@@ -199,7 +214,7 @@ The screenshots come from a throwaway demo database, never your real one:
 
 ```
 my-react-app/
-├─ docs/screenshots/       # Screenshots used in this README
+├─ docs/                   # KPI-METRICS.md and the screenshots used in this README
 ├─ public/                 # Static assets served as-is (sound effects in sounds/)
 ├─ scripts/                # DB backup, demo-data seeding and screenshot capture
 ├─ server/                 # Express + MySQL backend
@@ -311,6 +326,8 @@ Base path: `/api` (proxied to `http://localhost:3001` in development).
 | GET | `/api/cancellation-requests?userId=` | Admin queue of all cancellation requests. |
 | PATCH | `/api/cancellation-requests/:code/status` | Admin accepts (ticket becomes Cancelled) or rejects. Body: `{ actorId, status, note? }`. |
 | GET | `/api/reports/summary?userId=&from=&to=&category=&role=` | Super admin only. SQL-aggregated data for the Report Manager. |
+| GET | `/api/kpi?userId=&month=2026-10` | Super admin only. Every KPI value for the month and the previous one, the catalog, and the selected metrics. |
+| PUT | `/api/kpi/selection` | Super admin only. Body: `{ userId, month, metrics: [{ key, target? }] }`. |
 | GET | `/api/notifications?userId=` | Latest notifications and unread count. |
 | POST | `/api/notifications/read` | Mark notifications read. Body: `{ userId, ids? }` (all when `ids` is omitted). |
 | GET / POST | `/api/activities` | List or add activity log entries. |
@@ -330,7 +347,7 @@ All queries use parameterized statements to guard against SQL injection.
 
 ## Database schema
 
-The `helpdesk` database contains eight tables (see `server/schema.sql` for full definitions):
+The `helpdesk` database contains nine tables (see `server/schema.sql` for full definitions):
 
 - **`users`** — accounts with `id_number`, `password`, `name`, `role`, `role_name`, `email`, and `skills` (comma-separated ticket categories, used for technicians).
 - **`tickets`** — support requests with a unique `code` (e.g. `#HD001`), `subject`, `category`, `priority`, `status`, and optional `location`/`description`. Links back to `users` via `created_by`.
@@ -339,9 +356,10 @@ The `helpdesk` database contains eight tables (see `server/schema.sql` for full 
 - **`ticket_messages`** — per-ticket conversation, including cancellation requests (`kind`).
 - **`cancellation_requests`** — requester-initiated cancellation requests awaiting an admin decision.
 - **`notifications`** — per-user in-app notifications with a read timestamp.
+- **`kpi_selections`** — which KPI metrics (and targets) the super admin chose for each month.
 - **`messages`** — chat messages between admins and technicians, with a read timestamp.
 
-Re-running `schema.sql` drops and recreates the tables, restoring the seed data. If you already have a database from an earlier version, add the new pieces by hand instead (`ALTER TABLE users ADD COLUMN skills ...`, `ALTER TABLE tickets ADD COLUMN assigned_to ...` and `reopen_count INT NOT NULL DEFAULT 0`, and the `messages`, `ticket_messages`, `cancellation_requests` and `notifications` tables from `schema.sql`) to avoid losing data.
+Re-running `schema.sql` drops and recreates the tables, restoring the seed data. If you already have a database from an earlier version, add the new pieces by hand instead (`ALTER TABLE users ADD COLUMN skills ...`, `ALTER TABLE tickets ADD COLUMN assigned_to ...` and `reopen_count INT NOT NULL DEFAULT 0`, the three KPI timestamps (`assigned_at`, `first_response_at`, `resolved_at`, all `TIMESTAMP NULL`) and the `kpi_selections` table, and the `messages`, `ticket_messages`, `cancellation_requests` and `notifications` tables from `schema.sql`) to avoid losing data.
 
 ---
 

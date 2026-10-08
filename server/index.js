@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import { pool, query } from "./db.js";
+import { registerKpiRoutes } from "./kpi.js";
 
 const app = express();
 app.use(express.json());
@@ -157,7 +158,11 @@ app.patch("/api/tickets/:id/status", wrap(async (req, res) => {
     return res.status(409).json({ error: "This ticket was cancelled and cannot be changed." });
   }
 
-  await query("UPDATE tickets SET status = ? WHERE ticket_pk = ?", [status, ticket.ticket_pk]);
+  // resolved_at feeds the KPI times (AHT, ART, SLA); clear it if the ticket is worked on again.
+  await query(
+    "UPDATE tickets SET status = ?, resolved_at = IF(? = 'Resolved', COALESCE(resolved_at, NOW()), NULL) WHERE ticket_pk = ?",
+    [status, status, ticket.ticket_pk],
+  );
 
   // Keep the requester in the loop.
   if (ticket.status !== status && ticket.created_by !== actorId) {
@@ -263,7 +268,7 @@ app.patch("/api/tickets/:id/assign", wrap(async (req, res) => {
 
   const placeholders = CLOSED_STATUSES.map(() => "?").join(", ");
   const [result] = await pool.execute(
-    `UPDATE tickets SET assigned_to = ?, status = 'In Progress' WHERE ticket_pk = ? AND status NOT IN (${placeholders})`,
+    `UPDATE tickets SET assigned_to = ?, status = 'In Progress', assigned_at = COALESCE(assigned_at, NOW()), first_response_at = COALESCE(first_response_at, NOW()) WHERE ticket_pk = ? AND status NOT IN (${placeholders})`,
     [technician.user_pk, ticket.ticket_pk, ...CLOSED_STATUSES],
   );
   if (result.affectedRows === 0) {
@@ -335,6 +340,14 @@ app.post("/api/tickets/:id/messages", wrap(async (req, res) => {
     "INSERT INTO ticket_messages (ticket_pk, sender_pk, message_text, kind) VALUES (?, ?, ?, 'chat')",
     [ticket.ticket_pk, user.user_pk, body],
   );
+  // The first reply from technician/admin counts as the first response (KPI: FRT).
+  if (user.role === "technician" || user.role === "admin") {
+    await query(
+      "UPDATE tickets SET first_response_at = COALESCE(first_response_at, NOW()) WHERE ticket_pk = ?",
+      [ticket.ticket_pk],
+    );
+  }
+
   // Group-chat style: everyone on the ticket except the sender hears about it.
   const everyone = [ticket.created_by, ticket.assigned_to, ...(await adminIds())];
   await notify(everyone.filter((id) => id && id !== user.user_pk), {
@@ -442,7 +455,7 @@ app.post("/api/tickets/:id/reopen", wrap(async (req, res) => {
 
   const nextStatus = ticket.assigned_to ? "In Progress" : "Open";
   const [result] = await pool.execute(
-    "UPDATE tickets SET status = ?, reopen_count = reopen_count + 1 WHERE ticket_pk = ? AND status = 'Resolved' AND reopen_count < ?",
+    "UPDATE tickets SET status = ?, reopen_count = reopen_count + 1, resolved_at = NULL WHERE ticket_pk = ? AND status = 'Resolved' AND reopen_count < ?",
     [nextStatus, ticket.ticket_pk, MAX_REOPENS],
   );
   if (result.affectedRows === 0) {
@@ -1033,6 +1046,9 @@ app.patch("/api/password-requests/:id/status", wrap(async (req, res) => {
 
   res.json({ ok: true, id, status });
 }));
+
+// --- Monthly KPI scorecard -------------------------------------------------------
+registerKpiRoutes(app, wrap);
 
 // --- Error handler ----------------------------------------------------------
 app.use((err, _req, res, _next) => {

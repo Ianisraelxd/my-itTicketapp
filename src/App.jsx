@@ -6,6 +6,7 @@ import { api } from "./api";
 import ChartSkeleton from "./ChartSkeleton";
 import ChatInput from "./ChatInput";
 import { downloadCsv, reportToCsvRows } from "./csv";
+import KpiScorecard from "./KpiScorecard";
 import ReportChartContainer from "./ReportChartContainer";
 import ReportFilters from "./ReportFilters";
 import { defaultReportFilters } from "./reportDefaults";
@@ -569,6 +570,8 @@ function App() {
         )}
         {page === "superAdminDashboard" && (
           <SuperAdminDashboard
+            me={user}
+            showMessage={showMessage}
             setPage={setPage}
             tickets={allTickets.length ? allTickets : tickets}
             users={allUsers}
@@ -2989,7 +2992,7 @@ function ReportCard({ title, note, children, wide = false }) {
   );
 }
 
-function SuperAdminDashboard({ setPage, tickets = [], users = [], activities = [] }) {
+function SuperAdminDashboard({ me, showMessage, setPage, tickets = [], users = [], activities = [] }) {
   const total = tickets.length;
   const resolved = tickets.filter((t) => t.status === "Resolved").length;
   const open = tickets.filter((t) => t.status === "Open").length;
@@ -3021,6 +3024,7 @@ function SuperAdminDashboard({ setPage, tickets = [], users = [], activities = [
           </div>
         ))}
       </div>
+      <KpiScorecard me={me} showMessage={showMessage} />
       <div className="dash-split">
         <section className="panel kpi-panel">
           <span className="eyebrow">KPI · RESOLUTION RATE</span>

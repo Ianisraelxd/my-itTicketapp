@@ -12,6 +12,7 @@ CREATE DATABASE IF NOT EXISTS helpdesk
 USE helpdesk;
 
 -- Drop in dependency order so re-running the script is safe.
+DROP TABLE IF EXISTS kpi_selections;
 DROP TABLE IF EXISTS notifications;
 DROP TABLE IF EXISTS cancellation_requests;
 DROP TABLE IF EXISTS ticket_messages;
@@ -46,6 +47,9 @@ CREATE TABLE tickets (
   created_by  INT NULL,
   assigned_to INT NULL,                      -- technician assigned by an admin
   reopen_count INT NOT NULL DEFAULT 0,       -- times the requester reopened it after Resolved
+  assigned_at TIMESTAMP NULL,                -- first time an admin assigned it (KPI: TTA, AHT)
+  first_response_at TIMESTAMP NULL,          -- first IT reply or assignment (KPI: FRT)
+  resolved_at TIMESTAMP NULL,                -- when it was marked Resolved (KPI: AHT, ART, SLA)
   created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_ticket_user FOREIGN KEY (created_by)
     REFERENCES users(user_pk) ON DELETE SET NULL
@@ -157,4 +161,14 @@ CREATE TABLE notifications (
   read_at         TIMESTAMP NULL,
   KEY idx_notif_user (user_pk, notification_pk),
   CONSTRAINT fk_notif_user FOREIGN KEY (user_pk) REFERENCES users(user_pk) ON DELETE CASCADE
+);
+
+-- Which KPI metrics (and targets) the super admin chose to show for each month.
+-- A month with no rows inherits the latest earlier month's choice.
+CREATE TABLE kpi_selections (
+  month      CHAR(7)      NOT NULL,              -- e.g. 2026-10
+  metric_key VARCHAR(16)  NOT NULL,              -- see server/kpiCatalog.js
+  target     DECIMAL(10,2) NULL,                 -- NULL = use the catalog default
+  position   INT          NOT NULL DEFAULT 0,
+  PRIMARY KEY (month, metric_key)
 );
