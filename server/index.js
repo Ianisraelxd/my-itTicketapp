@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import { authenticate, verifyReportViewer } from "./auth.js";
+import { createBot, shapeMessage } from "./bot.js";
 import { pool, query } from "./db.js";
 import { registerKpiRoutes } from "./kpi.js";
 import {
@@ -340,6 +341,19 @@ app.patch("/api/tickets/:id/status", wrap(async (req, res) => {
         body: `${ticket.code}: ${ticket.subject} was marked as resolved.`,
         ticketCode: ticket.code,
       });
+      try {
+        const [who] = await query(
+          "SELECT u.name AS requester, a.name AS tech FROM users u LEFT JOIN users a ON a.user_pk = ? WHERE u.user_pk = ?",
+          [actorId, ticket.created_by],
+        );
+        if (who) {
+          await bot.postResolvedPrompt({
+            ticketPk: ticket.ticket_pk, code: ticket.code, requesterName: who.requester, techName: who.tech,
+          });
+        }
+      } catch (err) {
+        console.error("assistant resolved prompt failed", err.message);
+      }
     } else {
       await notify([ticket.created_by], {
         type: "status",
@@ -374,6 +388,16 @@ app.post("/api/tickets", wrap(async (req, res) => {
       body: `${submitters[0]?.name || "A user"} filed ${code} (${category}): ${subject}`,
       ticketCode: code,
     });
+    try {
+      const [created] = await query("SELECT ticket_pk FROM tickets WHERE code = ?", [code]);
+      if (created && createdBy) {
+        await bot.postGreeting({
+          ticketPk: created.ticket_pk, code, subject, category, requesterName: submitters[0]?.name,
+        });
+      }
+    } catch (err) {
+      console.error("assistant greeting failed", err.message);
+    }
     res.status(201).json({ id: code, subject, category, priority, status: "Open" });
   } catch (err) {
     await conn.rollback();
@@ -484,14 +508,15 @@ app.get("/api/tickets/:id/participants", wrap(async (req, res) => {
 app.get("/api/tickets/:id/messages", wrap(async (req, res) => {
   const access = await ticketAccess(req.params.id, req.query.userId);
   if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
+  // Staff-only assistant notes (what the requester already tried) are hidden from the requester.
   const rows = await query(
     `SELECT m.message_pk AS id, m.sender_pk AS senderId, u.name AS senderName, u.role_name AS senderRole,
-       m.message_text AS text, m.kind, m.created_at AS createdAt
+       m.message_text AS text, m.kind, m.meta, m.created_at AS createdAt
      FROM ticket_messages m JOIN users u ON u.user_pk = m.sender_pk
-     WHERE m.ticket_pk = ? ORDER BY m.message_pk ASC LIMIT 500`,
+     WHERE m.ticket_pk = ? ${access.isOwner ? "AND m.kind <> 'bot_note'" : ""} ORDER BY m.message_pk ASC LIMIT 500`,
     [access.ticket.ticket_pk],
   );
-  res.json(rows);
+  res.json(rows.map(shapeMessage));
 }));
 
 app.post("/api/tickets/:id/messages", wrap(async (req, res) => {
@@ -527,24 +552,17 @@ app.post("/api/tickets/:id/messages", wrap(async (req, res) => {
 }));
 
 // Requesters never cancel directly: they file a request and an admin decides.
-app.post("/api/tickets/:id/cancellation-requests", wrap(async (req, res) => {
-  const access = await ticketAccess(req.params.id, req.body?.userId);
-  if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
-  const { ticket, user, isOwner } = access;
-  if (!isOwner) {
-    return res.status(403).json({ error: "Only the person who submitted the ticket can request cancellation." });
-  }
-  const reason = String(req.body?.reason ?? "").trim().slice(0, 500);
-  if (!reason) return res.status(400).json({ error: "Please give a reason." });
+async function fileCancellationRequest({ ticket, user, reason }) {
+  if (!reason) return { error: [400, "Please give a reason."] };
   if (CLOSED_STATUSES.includes(ticket.status)) {
-    return res.status(409).json({ error: `This ticket is ${ticket.status} and can no longer be cancelled.` });
+    return { error: [409, `This ticket is ${ticket.status} and can no longer be cancelled.`] };
   }
   const pending = await query(
     "SELECT code FROM cancellation_requests WHERE ticket_pk = ? AND status = 'Pending' LIMIT 1",
     [ticket.ticket_pk],
   );
   if (pending.length > 0) {
-    return res.status(409).json({ error: `A cancellation request (${pending[0].code}) is already waiting for an admin.` });
+    return { error: [409, `A cancellation request (${pending[0].code}) is already waiting for an admin.`] };
   }
 
   const conn = await pool.getConnection();
@@ -584,7 +602,20 @@ app.post("/api/tickets/:id/cancellation-requests", wrap(async (req, res) => {
     "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
     [user.name, user.role_name, `Requested cancellation of ticket ${ticket.code}`],
   );
-  res.status(201).json({ ok: true, id: code, status: "Pending" });
+  return { code };
+}
+
+app.post("/api/tickets/:id/cancellation-requests", wrap(async (req, res) => {
+  const access = await ticketAccess(req.params.id, req.body?.userId);
+  if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
+  const { ticket, user, isOwner } = access;
+  if (!isOwner) {
+    return res.status(403).json({ error: "Only the person who submitted the ticket can request cancellation." });
+  }
+  const reason = String(req.body?.reason ?? "").trim().slice(0, 500);
+  const result = await fileCancellationRequest({ ticket, user, reason });
+  if (result.error) return res.status(result.error[0]).json({ error: result.error[1] });
+  res.status(201).json({ ok: true, id: result.code, status: "Pending" });
 }));
 
 app.get("/api/tickets/:id/cancellation-requests", wrap(async (req, res) => {
@@ -603,21 +634,12 @@ app.get("/api/tickets/:id/cancellation-requests", wrap(async (req, res) => {
 // reopen it twice, and the number of reopens is capped.
 const MAX_REOPENS = 3;
 
-app.post("/api/tickets/:id/reopen", wrap(async (req, res) => {
-  const access = await ticketAccess(req.params.id, req.body?.userId);
-  if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
-  const { ticket, user, isOwner } = access;
-  if (!isOwner) {
-    return res.status(403).json({ error: "Only the person who submitted the ticket can reopen it." });
-  }
-  const reason = String(req.body?.reason ?? "").trim().slice(0, 500);
-  if (!reason) return res.status(400).json({ error: "Please explain what is still wrong." });
+async function reopenTicketFor({ ticket, user, reason }) {
+  if (!reason) return { error: [400, "Please explain what is still wrong."] };
 
   const counts = await query("SELECT reopen_count FROM tickets WHERE ticket_pk = ?", [ticket.ticket_pk]);
   if (Number(counts[0]?.reopen_count) >= MAX_REOPENS) {
-    return res.status(409).json({
-      error: `This ticket was already reopened ${MAX_REOPENS} times. Please submit a new request instead.`,
-    });
+    return { error: [409, `This ticket was already reopened ${MAX_REOPENS} times. Please submit a new request instead.`] };
   }
 
   const nextStatus = ticket.assigned_to ? "In Progress" : "Open";
@@ -626,7 +648,7 @@ app.post("/api/tickets/:id/reopen", wrap(async (req, res) => {
     [nextStatus, ticket.ticket_pk, MAX_REOPENS],
   );
   if (result.affectedRows === 0) {
-    return res.status(409).json({ error: "Only a resolved ticket can be reopened." });
+    return { error: [409, "Only a resolved ticket can be reopened."] };
   }
 
   await query(
@@ -644,8 +666,37 @@ app.post("/api/tickets/:id/reopen", wrap(async (req, res) => {
     "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
     [user.name, user.role_name, `Reopened ticket ${ticket.code}`],
   );
-  res.json({ ok: true, id: ticket.code, status: nextStatus });
+  return { status: nextStatus };
+}
+
+app.post("/api/tickets/:id/reopen", wrap(async (req, res) => {
+  const access = await ticketAccess(req.params.id, req.body?.userId);
+  if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
+  const { ticket, user, isOwner } = access;
+  if (!isOwner) {
+    return res.status(403).json({ error: "Only the person who submitted the ticket can reopen it." });
+  }
+  const reason = String(req.body?.reason ?? "").trim().slice(0, 500);
+  const result = await reopenTicketFor({ ticket, user, reason });
+  if (result.error) return res.status(result.error[0]).json({ error: result.error[1] });
+  res.json({ ok: true, id: ticket.code, status: result.status });
 }));
+
+// HelpDesk Assistant: guided multiple-choice chatbot in the ticket conversation (server/bot.js).
+const bot = createBot({
+  ticketAccess,
+  adminIds,
+  notify,
+  fileCancellationRequest: async (args) => {
+    const result = await fileCancellationRequest(args);
+    return result.error ? { error: result.error[1] } : result;
+  },
+  reopenTicketFor: async (args) => {
+    const result = await reopenTicketFor(args);
+    return result.error ? { error: result.error[1] } : result;
+  },
+});
+bot.registerBotRoutes(app, { wrap });
 
 // Admin queue of all cancellation requests (pending first).
 app.get("/api/cancellation-requests", wrap(async (req, res) => {
@@ -786,7 +837,7 @@ app.get("/api/reports/summary", verifyReportViewer, wrap(async (req, res) => {
       `SELECT DATE_FORMAT(t.created_at, '%Y-%m-%d') AS day, COUNT(*) AS value ${filter} GROUP BY day ORDER BY day`,
       params,
     ),
-    query("SELECT role_name AS label, COUNT(*) AS value FROM users GROUP BY role_name ORDER BY value DESC"),
+    query("SELECT role_name AS label, COUNT(*) AS value FROM users WHERE role <> 'bot' GROUP BY role_name ORDER BY value DESC"),
   ]);
 
   // Fill quiet days with zero so the line chart has no gaps (kept to a sane span).
@@ -897,7 +948,7 @@ const parseSkills = (value) =>
 
 app.get("/api/users", wrap(async (_req, res) => {
   const rows = await query(
-    "SELECT user_pk AS userId, id_number AS id, name, role_name AS role, role AS roleKey, email, skills FROM users ORDER BY user_pk",
+    "SELECT user_pk AS userId, id_number AS id, name, role_name AS role, role AS roleKey, email, skills FROM users WHERE role <> 'bot' ORDER BY user_pk",
   );
   res.json(rows.map((row) => ({ ...row, skills: parseSkills(row.skills) })));
 }));

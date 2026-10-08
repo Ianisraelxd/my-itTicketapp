@@ -13,6 +13,7 @@ The project ships in two forms:
 
 - [Features](#features)
 - [Screenshots](#screenshots)
+- [HelpDesk Assistant (ticket chatbot)](#helpdesk-assistant-ticket-chatbot)
 - [Security and governance](#security-and-governance)
 - [Tech stack](#tech-stack)
 - [Project structure](#project-structure)
@@ -201,6 +202,21 @@ The screenshots come from a throwaway demo database, never your real one:
 4. Capture: `node scripts/capture-screenshots.mjs http://localhost:5175` (uses Chrome or Edge through `puppeteer-core`; set `CHROME_PATH` for another browser).
 
 ---
+## HelpDesk Assistant (ticket chatbot)
+
+Every ticket conversation starts with the **HelpDesk Assistant**, a guided chatbot that talks to the person who submitted the ticket. Instead of typing, the requester taps **multiple-choice buttons** and the assistant answers. It is rule-based (no external AI service, no cost) and everything it says is saved in the conversation, so staff can see what was already covered.
+
+- **Greeting on submit** with quick-reply buttons, and a note on **who is available**: if a technician or admin is online it says they can chat now; if the whole team is offline it says so and keeps helping. A green/grey banner above the chat shows the same thing live.
+- **Where is my ticket?** status, assigned technician, queue position and how long it has waited.
+- **Quick fixes** for the ticket's category (Hardware, Software, Network, Account, Printer) with numbered steps and a "Did that fix it?" loop. If it worked, the assistant offers to send a cancellation request (an admin still approves it); if not, it passes **what was tried** to the technician so nobody repeats themselves.
+- **How long will it take?** the target time for the ticket's priority.
+- **It's urgent**: pick a reason and the admins/technician are notified (rate-limited, the priority is not changed automatically).
+- **Talk to a technician**: when staff are online they are told and can chat in the same thread; when everyone is offline the requester is told, can leave a message, and staff are notified for when they return.
+- **After resolution** the assistant asks for a 1-5 star rating (stored in `tickets.csat_rating`); a low rating alerts the admins and offers to reopen. It can also reopen the ticket with a reason.
+- Staff-only **assistant notes** (what the requester tried, urgency, low rating) appear to technicians and admins but are hidden from the requester.
+
+Design ideas taken from Intercom, Zendesk, ServiceNow and Freshdesk: guided buttons over free text, self-service before escalation, a clear human hand-off with context, actions as well as answers, and a satisfaction survey after resolution. The code is in `server/bot.js` (conversation tree and knowledge base: add new fixes to the `KNOWLEDGE` object) and the UI is in `src/TicketChat.jsx`. SQL for an existing database: `server/migrations/2026-10-chatbot.sql`.
+
 ## Security and governance
 
 **Sign-in and sessions**
@@ -369,6 +385,8 @@ Base path: `/api` (proxied to `http://localhost:3001` in development).
 | PATCH | `/api/tickets/:id/status` | Set status to Open, In Progress or Resolved. |
 | PATCH | `/api/tickets/:id/assign` | Admin only. Body: `{ actorId, technicianId }`; sets the technician and moves the ticket to In Progress. |
 | GET | `/api/tickets/:id/participants` | Who is in the ticket conversation: requester, assigned technician, admins. |
+| POST | `/api/tickets/:id/bot` | Requester picks one of the assistant's options. Body: `{ choice }`. Returns the new messages. |
+| GET | `/api/tickets/:id/availability` | Which technicians/admins are online (used for the chat banner). |
 | GET / POST | `/api/tickets/:id/messages` | Ticket conversation. POST body: `{ userId, text }`. |
 | POST | `/api/tickets/:id/reopen` | Owner reopens a Resolved ticket. Body: `{ userId, reason }`; max 3 reopens. |
 | POST / GET | `/api/tickets/:id/cancellation-requests` | Owner files a cancellation request (`{ userId, reason }`) / lists the ticket's requests. |
@@ -403,7 +421,7 @@ The `helpdesk` database contains these tables (see `server/schema.sql` for full 
 - **`tickets`** — support requests with a unique `code` (e.g. `#HD001`), `subject`, `category`, `priority`, `status`, and optional `location`/`description`. Links back to `users` via `created_by`.
 - **`activities`** — audit log of actor name, role, action, and timestamp.
 - **`password_requests`** — password-change requests awaiting admin approval.
-- **`ticket_messages`** — per-ticket conversation, including cancellation requests (`kind`).
+- **`ticket_messages`** — per-ticket conversation, including cancellation requests and the assistant's messages (`kind`: `bot`, `bot_choice`, `bot_note`; `meta` holds its quick-reply options).
 - **`cancellation_requests`** — requester-initiated cancellation requests awaiting an admin decision.
 - **`notifications`** — per-user in-app notifications with a read timestamp.
 - **`tickets_archive`, `ticket_messages_archive`, `cancellation_requests_archive`** — same structure as the live tables; finished tickets (with their conversations) older than the retention date are moved here. **`archive_runs`** records each archive run. The **`tickets_all`** view (live + archived) feeds reports and KPIs so archiving never changes history.

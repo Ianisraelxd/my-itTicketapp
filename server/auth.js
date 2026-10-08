@@ -105,6 +105,14 @@ export async function authenticate(req, res, next) {
     };
     req.user = user;
 
+    // Presence: staff who are using the app count as available (see staffAvailability in bot.js).
+    if (["technician", "admin"].includes(user.role)) {
+      query(
+        "UPDATE users SET last_seen_at = NOW() WHERE user_pk = ? AND (last_seen_at IS NULL OR last_seen_at < NOW() - INTERVAL 20 SECOND)",
+        [user.userId],
+      ).catch(() => {});
+    }
+
     const refusal = policy(req, user);
     if (refusal) return res.status(refusal[0]).json({ error: refusal[1] });
 

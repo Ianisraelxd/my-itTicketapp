@@ -4156,3 +4156,103 @@ html[data-theme="dark"] .button-dark {
     .gov-policy .field-label { max-width: none }
     .gov-grant-row .button { width: 100% }
 }
+
+/* --- HelpDesk Assistant (ticket chatbot) --- */
+.chat-msg.bot { max-width: 92% }
+.chat-msg.bot .chat-bubble {
+    background: var(--info-bg);
+    color: var(--ink);
+    border: 1px solid var(--line);
+    white-space: pre-line
+}
+.chat-msg.bot.dim { opacity: .72 }
+.bot-tag {
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--muted);
+    font: 700 9px Manrope, sans-serif;
+    letter-spacing: .6px;
+    text-transform: uppercase
+}
+.chat-msg.choice .chat-bubble { padding: 6px 12px; font-size: 12.5px }
+
+.quick-replies {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px
+}
+.quick-replies.solo { align-self: flex-start; margin: 4px 0 0 }
+.quick-replies button {
+    padding: 7px 12px;
+    border: 1.5px solid var(--green);
+    border-radius: 999px;
+    background: var(--card);
+    color: var(--green);
+    font: 600 12.5px Manrope, sans-serif;
+    text-align: left;
+    cursor: pointer;
+    animation: rise .35s var(--ease) both;
+    transition: background .2s, color .2s, transform .15s
+}
+.quick-replies button:nth-child(2) { animation-delay: .05s }
+.quick-replies button:nth-child(3) { animation-delay: .1s }
+.quick-replies button:nth-child(4) { animation-delay: .15s }
+.quick-replies button:nth-child(5) { animation-delay: .2s }
+.quick-replies button:nth-child(n+6) { animation-delay: .25s }
+.quick-replies button:hover { background: var(--green); color: #fff }
+.quick-replies button:active { transform: scale(.96) }
+.quick-replies button:focus-visible { outline: 3px solid var(--info-bg); outline-offset: 2px }
+
+.chat-bubble.typing {
+    display: inline-flex;
+    gap: 4px;
+    padding: 12px 14px
+}
+.chat-bubble.typing i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--muted);
+    animation: bot-dot 1s infinite ease-in-out
+}
+.chat-bubble.typing i:nth-child(2) { animation-delay: .15s }
+.chat-bubble.typing i:nth-child(3) { animation-delay: .3s }
+@keyframes bot-dot {
+    0%, 80%, 100% { transform: translateY(0); opacity: .45 }
+    40% { transform: translateY(-4px); opacity: 1 }
+}
+
+.chat-botnote {
+    align-self: stretch;
+    margin: 6px 0;
+    padding: 8px 12px;
+    border: 1px dashed var(--line);
+    border-radius: 10px;
+    background: var(--surface-1);
+    color: var(--ink-2);
+    font-size: 12px;
+    line-height: 1.4
+}
+.chat-botnote b { display: block; margin-bottom: 2px; color: var(--muted); font-size: 10.5px }
+.chat-botnote time { display: block; margin-top: 2px; font-size: 9px; opacity: .65 }
+
+.presence {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    padding: 7px 14px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface-1);
+    color: var(--ink-2);
+    font-size: 12px
+}
+.presence i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted) }
+.presence.online { background: var(--good-bg); color: var(--good-ink) }
+.presence.online i { background: var(--good-ink); box-shadow: 0 0 0 0 currentColor; animation: presence-pulse 2s infinite }
+@keyframes presence-pulse {
+    70% { box-shadow: 0 0 0 6px transparent }
+    100% { box-shadow: 0 0 0 0 transparent }
+}

@@ -29,6 +29,9 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
   const [messages, setMessages] = useState([]);
   const [requests, setRequests] = useState([]);
   const [participants, setParticipants] = useState([]);
+  const [availability, setAvailability] = useState(null);
+  const [botBusy, setBotBusy] = useState(false);
+  const [pendingChoice, setPendingChoice] = useState(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -53,9 +56,11 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
         api.getTicketMessages(ticket.id, me.userId),
         api.getTicketCancellations(ticket.id, me.userId),
         api.getTicketParticipants(ticket.id, me.userId),
+        isOwner ? api.getTicketAvailability(ticket.id, me.userId) : Promise.resolve(null),
       ])
-        .then(([rows, cancellations, people]) => {
+        .then(([rows, cancellations, people, presence]) => {
           setParticipants(people);
+          setAvailability(presence);
           const newest = rows.at(-1);
           if (
             lastSeenId.current !== null &&
@@ -72,7 +77,7 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
           setRequests(cancellations);
         })
         .catch(() => {}),
-    [ticket.id, me.userId],
+    [ticket.id, me.userId, isOwner],
   );
 
   useEffect(() => {
@@ -83,7 +88,39 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
 
   useEffect(() => {
     if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
-  }, [messages.length]);
+  }, [messages.length, botBusy]);
+
+  // The requester taps one of the assistant's choices; show it at once, then a short
+  // "typing" pause so the reply feels like a conversation.
+  async function chooseOption(option) {
+    if (botBusy) return;
+    setBotBusy(true);
+    setPendingChoice(option.label);
+    playSound("sent");
+    try {
+      const [result] = await Promise.all([
+        api.botReply(ticket.id, { userId: me.userId, choice: option.id }),
+        new Promise((resolve) => setTimeout(resolve, 700)),
+      ]);
+      void result;
+      await load();
+      onChanged();
+    } catch (error) {
+      showMessage("Assistant", error.message || "Please try again.");
+      await load();
+    } finally {
+      setPendingChoice(null);
+      setBotBusy(false);
+    }
+  }
+
+  const lastBotIndex = messages.findLastIndex((message) => message.kind === "bot");
+  const lastBot = lastBotIndex >= 0 ? messages[lastBotIndex] : null;
+  const chipsFor =
+    isOwner && lastBot && !messages.slice(lastBotIndex + 1).some((m) => m.kind === "bot_choice")
+      ? lastBot.options
+      : null;
+  const hasAssistant = messages.some((message) => message.kind === "bot");
 
   async function send(event) {
     event?.preventDefault();
@@ -190,6 +227,14 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
           ))}
         </div>
       )}
+      {isOwner && availability && (
+        <p className={`presence ${availability.anyOnline ? "online" : "offline"}`} role="status">
+          <i aria-hidden="true" />
+          {availability.anyOnline
+            ? availability.message
+            : "The team is offline right now. The assistant can help, and you can still leave a message for them."}
+        </p>
+      )}
       {isOwner && lastDeclined && !closed && (
         <p className="ticket-chat-note">
           Your last cancellation request was declined
@@ -212,16 +257,48 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
               </div>
             );
           }
+          if (message.kind === "bot_note") {
+            return (
+              <div className="chat-botnote" key={message.id}>
+                <b>🤖 Assistant note · staff only</b>
+                {message.text.replace(/^Assistant note:\s*/, "")}
+                <time>{formatTime(message.createdAt)}</time>
+              </div>
+            );
+          }
+          if (message.kind === "bot") {
+            const showChips = message.id === lastBot?.id && chipsFor && chipsFor.length > 0 && !botBusy;
+            return (
+              <div className={`chat-msg theirs bot ${isOwner ? "" : "dim"}`} key={message.id}>
+                <span className="chat-meta">
+                  <b>🤖 HelpDesk Assistant</b> · <span className="bot-tag">Bot</span>
+                </span>
+                <span className="chat-bubble">
+                  {message.text}
+                  <time>{formatTime(message.createdAt)}</time>
+                </span>
+                {showChips && (
+                  <span className="quick-replies" role="group" aria-label="Choose a reply">
+                    {chipsFor.map((option) => (
+                      <button type="button" key={option.id} onClick={() => chooseOption(option)}>
+                        {option.label}
+                      </button>
+                    ))}
+                  </span>
+                )}
+              </div>
+            );
+          }
           const mine = message.senderId === me.userId;
           const newSender = messages[index - 1]?.senderId !== message.senderId;
           return (
             <div
               className={`chat-msg ${mine ? "mine" : "theirs"} ${
                 message.kind === "cancellation_request" || message.kind === "reopen" ? "cancel-request" : ""
-              }`}
+              } ${message.kind === "bot_choice" ? "choice" : ""}`}
               key={message.id}
             >
-              {newSender && (
+              {newSender && message.kind !== "bot_choice" && (
                 <span className="chat-meta">
                   <b>{mine ? "You" : message.senderName}</b> · {message.senderRole}
                 </span>
@@ -237,6 +314,27 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
             </div>
           );
         })}
+        {pendingChoice && (
+          <div className="chat-msg mine choice">
+            <span className="chat-bubble">{pendingChoice}</span>
+          </div>
+        )}
+        {botBusy && (
+          <div className="chat-msg theirs bot" aria-label="The assistant is typing">
+            <span className="chat-bubble typing">
+              <i />
+              <i />
+              <i />
+            </span>
+          </div>
+        )}
+        {isOwner && hasAssistant && !botBusy && !(chipsFor && chipsFor.length) && (
+          <div className="quick-replies solo">
+            <button type="button" onClick={() => chooseOption({ id: "menu", label: "Show me the menu" })}>
+              🤖 Ask the assistant
+            </button>
+          </div>
+        )}
       </div>
 
       {closed ? (

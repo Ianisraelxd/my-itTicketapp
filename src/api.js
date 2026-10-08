@@ -216,6 +216,17 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  botReply: (ticketId, payload) =>
+    request(`/tickets/${encodeURIComponent(ticketId)}/bot`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  getTicketAvailability: (ticketId, userId) =>
+    request(
+      `/tickets/${encodeURIComponent(ticketId)}/availability?userId=${encodeURIComponent(userId)}`,
+    ),
+
   getTicketParticipants: (ticketId, userId) =>
     request(
       `/tickets/${encodeURIComponent(ticketId)}/participants?userId=${encodeURIComponent(userId)}`,
