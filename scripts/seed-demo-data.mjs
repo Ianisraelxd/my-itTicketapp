@@ -48,7 +48,7 @@ async function ticket(spec) {
     description: spec.description,
     createdBy: spec.by,
   });
-  created.push({ id, daysAgo: spec.daysAgo ?? 0 });
+  created.push({ id, daysAgo: spec.daysAgo ?? 0, assigned: Boolean(spec.assign), resolved: Boolean(spec.resolve) });
   if (spec.assign) await call("PATCH", `/tickets/${enc(id)}/assign`, { actorId: ADMIN, technicianId: spec.assign });
   for (const [userId, text] of spec.chat || []) {
     await call("POST", `/tickets/${enc(id)}/messages`, { userId, text });
@@ -150,11 +150,37 @@ const db = await mysql.createConnection({
   password: process.env.DB_PASSWORD || "",
   database: DB_NAME,
 });
-for (const { id, daysAgo } of created) {
+// Realistic timeline for the KPI scorecard: assigned/first response within
+// minutes-hours, fixes taking from under an hour to about a day.
+for (const [index, { id, daysAgo, assigned, resolved }] of created.entries()) {
+  const respond = 3 + ((index * 11) % 40); // minutes until IT first reacts
+  const assign = respond + 2 + ((index * 17) % 70); // minutes until it is assigned
+  const work = 35 + ((index * 53) % 900); // minutes from assignment to fix
   await db.execute(
-    "UPDATE tickets SET created_at = DATE_SUB(NOW(), INTERVAL ? DAY) WHERE code = ?",
-    [daysAgo, id],
+    `UPDATE tickets SET
+       created_at = DATE_SUB(NOW(), INTERVAL ? DAY),
+       first_response_at = IF(?, DATE_ADD(DATE_SUB(NOW(), INTERVAL ? DAY), INTERVAL ? MINUTE), NULL),
+       assigned_at = IF(?, DATE_ADD(DATE_SUB(NOW(), INTERVAL ? DAY), INTERVAL ? MINUTE), NULL),
+       resolved_at = IF(?, LEAST(NOW(), DATE_ADD(DATE_SUB(NOW(), INTERVAL ? DAY), INTERVAL ? MINUTE)), NULL)
+     WHERE code = ?`,
+    [
+      daysAgo,
+      assigned, daysAgo, respond,
+      assigned, daysAgo, assign,
+      resolved, daysAgo, assign + work,
+      id,
+    ],
   );
+}
+
+// A few reopened and cancelled tickets so Reopen Rate and Cancellation Rate have values.
+const resolvedFillers = created.filter((item, index) => item.resolved && index > 6).slice(0, 3);
+for (const { id } of resolvedFillers) {
+  await db.execute("UPDATE tickets SET reopen_count = 1 WHERE code = ?", [id]);
+}
+const openFillers = created.filter((item, index) => !item.assigned && index > 6).slice(0, 2);
+for (const { id } of openFillers) {
+  await db.execute("UPDATE tickets SET status = 'Cancelled' WHERE code = ?", [id]);
 }
 await db.end();
 

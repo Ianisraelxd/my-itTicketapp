@@ -101,9 +101,9 @@ async function openTicket(page, subjectPart) {
   await sleep(1800);
 }
 
-const api = (route, body) =>
+const api = (route, body, method = "POST") =>
   fetch(`${BASE}/api${route}`, {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -256,7 +256,30 @@ const api = (route, body) =>
 {
   const { context, page } = await open();
   await login(page, "superadmin", "123456superadmin");
+  // Pick this month's KPIs the way a super admin would, then show the scorecard.
+  const thisMonth = new Date().toISOString().slice(0, 7);
+  await api(
+    "/kpi/selection",
+    {
+      userId: 5,
+      month: thisMonth,
+      metrics: ["AHT", "ART", "FRT", "SLA", "RR", "FCR", "REO", "BKL", "SKM"].map((key) => ({ key })),
+    },
+    "PUT",
+  );
+  // Leave and come back so the scorecard reloads with the new choice.
+  await nav(page, "Activity Log Reports", 600);
+  await nav(page, "Dashboard", 2200);
+  await page.setViewport({ ...DESKTOP, height: 1500 });
+  await sleep(1500);
   await shot(page, "26-superadmin-dashboard");
+  await page.setViewport({ ...DESKTOP, height: 1100 });
+  await sleep(500);
+  await clickText(page, ".kpi-controls button", "Choose KPIs");
+  await sleep(800);
+  await shot(page, "30-kpi-picker");
+  await closeTopModal(page);
+  await page.setViewport(DESKTOP);
 
   await nav(page, "Report Manager", 3200);
   await page.setViewport({ ...DESKTOP, height: 2250 });
@@ -275,6 +298,10 @@ const api = (route, body) =>
   await page.setViewport({ ...DESKTOP, height: 2250 });
   await sleep(1200);
   await shot(page, "29-report-manager-dark");
+  await nav(page, "Dashboard", 2500);
+  await page.setViewport({ ...DESKTOP, height: 1500 });
+  await sleep(1500);
+  await shot(page, "31-superadmin-dashboard-dark");
   await context.close();
 }
 

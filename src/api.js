@@ -112,6 +112,12 @@ export const api = {
     return request(`/reports/summary?${query.toString()}`);
   },
 
+  getKpi: (userId, month) =>
+    request(`/kpi?userId=${encodeURIComponent(userId)}&month=${encodeURIComponent(month)}`),
+
+  saveKpiSelection: (payload) =>
+    request("/kpi/selection", { method: "PUT", body: JSON.stringify(payload) }),
+
   getNotifications: (userId) =>
     request(`/notifications?userId=${encodeURIComponent(userId)}`),
 
