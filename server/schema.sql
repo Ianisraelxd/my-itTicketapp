@@ -41,6 +41,7 @@ CREATE TABLE users (
   mfa_enabled    TINYINT(1) NOT NULL DEFAULT 0, -- two-step verification (authenticator app)
   mfa_secret     VARCHAR(64) NULL,
   last_login_at  TIMESTAMP NULL,
+  last_seen_at   TIMESTAMP NULL,                -- last API call by a technician/admin (presence for the assistant)
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_user_role (id_number, role)
 );
@@ -60,6 +61,8 @@ CREATE TABLE tickets (
   assigned_at TIMESTAMP NULL,                -- first time an admin assigned it (KPI: TTA, AHT)
   first_response_at TIMESTAMP NULL,          -- first IT reply or assignment (KPI: FRT)
   resolved_at TIMESTAMP NULL,                -- when it was marked Resolved (KPI: AHT, ART, SLA)
+  csat_rating TINYINT NULL,                  -- 1-5 stars the requester gave via the assistant
+  csat_at     TIMESTAMP NULL,
   created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_ticket_user FOREIGN KEY (created_by)
     REFERENCES users(user_pk) ON DELETE SET NULL
@@ -118,6 +121,10 @@ UPDATE users SET skills = 'Hardware,Printer' WHERE id_number = '2404154' AND rol
 INSERT INTO users (id_number, password, name, role, role_name, email) VALUES
   ('2404154', '123456viewer', 'Report Viewer', 'report_viewer', 'Report Viewer', 'viewer@campus.edu');
 
+-- The HelpDesk Assistant chatbot posts in ticket conversations. Its password is not a valid hash, so nobody can sign in as it.
+INSERT INTO users (id_number, password, name, role, role_name, email) VALUES
+  ('assistant', 'scrypt$locked$locked', 'HelpDesk Assistant', 'bot', 'Assistant Bot', NULL);
+
 -- Instant messages between admins and technicians (chat dock).
 CREATE TABLE messages (
   message_pk   INT AUTO_INCREMENT PRIMARY KEY,
@@ -139,7 +146,8 @@ CREATE TABLE ticket_messages (
   ticket_pk    INT NOT NULL,
   sender_pk    INT NOT NULL,
   message_text VARCHAR(1000) NOT NULL,
-  kind         VARCHAR(24)   NOT NULL DEFAULT 'chat',  -- chat | cancellation_request | cancellation_decision | reopen
+  kind         VARCHAR(24)   NOT NULL DEFAULT 'chat',  -- chat | cancellation_request | cancellation_decision | reopen | bot | bot_choice | bot_note
+  meta         TEXT NULL,                              -- JSON quick-reply options on assistant messages
   created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   KEY idx_ticket_msg (ticket_pk, message_pk),
   CONSTRAINT fk_tmsg_ticket FOREIGN KEY (ticket_pk) REFERENCES tickets(ticket_pk) ON DELETE CASCADE,
