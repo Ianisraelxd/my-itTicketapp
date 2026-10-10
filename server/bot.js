@@ -754,6 +754,58 @@ async function lastOffered(ticketPk) {
   }
 }
 
+
+// --- Understanding typed messages (keyword intents, no external AI) -----------------------
+const PROBLEM_WORDS = {
+  power: ["turn on", "turns on", "power", "boot", "won't start", "wont start", "dead"],
+  screen: ["screen", "display", "monitor", "blank", "flicker", "black"],
+  peripheral: ["keyboard", "mouse", "usb", "touchpad"],
+  slow: ["slow", "freez", "lag", "hang", "stuck", "not responding"],
+  heat: ["hot", "heat", "fan", "noise", "overheat", "burning"],
+  crash: ["crash", "won't open", "wont open", "not opening", "closes", "error", "not working"],
+  install: ["install", "setup", "set up"],
+  office: ["office", "microsoft", "365", "word", "excel", "powerpoint", "teams"],
+  update: ["update", "updating", "upgrade"],
+  wifi: ["wifi", "wi-fi", "wireless", "connect"],
+  nointernet: ["no internet", "internet", "offline", "cannot browse"],
+  slownet: ["slow internet", "speed", "buffering"],
+  portal: ["website", "portal", "page", "load", "site"],
+  password: ["password", "forgot", "reset"],
+  locked: ["locked", "lockout", "too many attempts"],
+  signin: ["login", "log in", "sign in", "email", "cannot access my account"],
+  access: ["access", "permission", "folder", "not allowed"],
+  noprint: ["print", "printer", "printing"],
+  jam: ["jam", "paper stuck", "stuck paper"],
+  quality: ["faded", "streak", "blur", "ink", "toner", "lines"],
+  missing: ["find the printer", "printer not found", "add printer", "no printer"],
+};
+
+const INTENTS = [
+  ["urgent:ask", /\b(urgent|asap|emergency|immediately|right now|deadline|exam|class (is )?(starting|in))\b/i],
+  ["cancel:ask", /\b(cancel|never ?mind|no need|don'?t need|do not need|by mistake|duplicate)\b/i],
+  ["human", /\b(technician|human|person|someone|real person|staff|admin|talk to|speak to)\b/i],
+  ["time", /\b(how long|when will|how soon|eta|how many (days|hours|minutes)|estimated|taking so long|so long)\b/i],
+  ["status", /\b(status|update|progress|where is|any news|assigned|who is|queue|waiting)\b/i],
+  ["thanks", /\b(thanks|thank you|salamat|ty|appreciate)\b/i],
+  ["fixedit", /\b(works now|working now|it works|fixed it|solved|ok now|okay now|nawala na|gumana na)\b/i],
+  ["hello", /^\s*(hi|hello|hey|good (morning|afternoon|evening)|help|menu|options)\b/i],
+];
+
+function detectChoice(text, category) {
+  for (const [choice, pattern] of INTENTS) if (pattern.test(text)) return choice;
+  const lower = text.toLowerCase();
+  let best = null;
+  let bestScore = 0;
+  for (const problem of [...problemsFor(category), ...FALLBACK_PROBLEMS]) {
+    const score = (PROBLEM_WORDS[problem.key] || []).filter((word) => lower.includes(word)).length;
+    if (score > bestScore) {
+      best = problem.key;
+      bestScore = score;
+    }
+  }
+  return best ? `fix:${best}` : null;
+}
+
 export function createBot(deps) {
   // First message of every ticket: a greeting that says what happens next.
   async function postGreeting({ ticketPk, code, subject, category, requesterName }) {
@@ -783,6 +835,94 @@ export function createBot(deps) {
     );
   }
 
+  // Runs one choice: saves the replies (and the staff note), returns the new message ids.
+  // `echo` is the requester's pick shown as their bubble; typed messages pass null.
+  async function execute(choice, ctx, user, echo) {
+    const botId = await getBotId();
+    const result = await handle(choice, ctx, {
+      fileCancellationRequest: deps.fileCancellationRequest,
+      reopenTicketFor: deps.reopenTicketFor,
+      saveRating: async ({ ticket, rating }) => {
+        await query(
+          "UPDATE tickets SET csat_rating = ?, csat_at = NOW() WHERE ticket_pk = ? AND status = 'Resolved' AND csat_rating IS NULL",
+          [rating, ticket.ticket_pk],
+        );
+      },
+    });
+
+    // Reload what changed (status, rating) so the options on the new messages match reality.
+    const fresh = (await loadContext(ctx.ticket.code, user)).ticket;
+    const ids = (echo ? [await insertMessage(fresh.ticket_pk, user.user_pk, echo, "bot_choice")] : []);
+    for (const reply of result.replies) {
+      // Menus built before an action ran may be stale: rebuild the generic ones.
+      const options = reply.options && reply.options.length ? reply.options : null;
+      ids.push(await insertMessage(fresh.ticket_pk, botId, reply.text, "bot", options));
+    }
+
+    if (result.note) {
+      ids.push(await insertMessage(fresh.ticket_pk, botId, result.note.text, "bot_note"));
+      if (result.note.notify) {
+        const recent = result.note.throttle
+          ? await query(
+              "SELECT message_pk FROM ticket_messages WHERE ticket_pk = ? AND kind = 'bot_note' AND message_text = ? AND created_at > DATE_SUB(NOW(), INTERVAL 15 MINUTE) AND message_pk < ?",
+              [fresh.ticket_pk, result.note.text, ids.at(-1)],
+            )
+          : [];
+        if (recent.length === 0) {
+          const recipients = result.note.notify.adminsOnly
+            ? await deps.adminIds()
+            : fresh.assigned_to
+              ? [fresh.assigned_to, ...(result.note.notify.type === "bot_urgent" ? await deps.adminIds() : [])]
+              : await deps.adminIds();
+          await deps.notify(recipients, {
+            type: result.note.notify.type,
+            title: result.note.notify.title,
+            body: result.note.notify.body,
+            ticketCode: fresh.code,
+          });
+        }
+      }
+    }
+    return ids;
+  }
+
+
+  // The requester typed a message instead of tapping a button. If no staff member has
+  // answered recently, understand it and reply automatically; otherwise stay quiet.
+  async function autoReply({ code, user, text }) {
+    const ctx = await loadContext(code, user);
+    const { ticket } = ctx;
+    if (["Cancelled"].includes(ticket.status)) return [];
+    const [active] = await query(
+      `SELECT COUNT(*) AS n FROM ticket_messages m JOIN users u ON u.user_pk = m.sender_pk
+       WHERE m.ticket_pk = ? AND m.kind = 'chat' AND u.role IN ('technician', 'admin')
+         AND m.created_at > DATE_SUB(NOW(), INTERVAL 10 MINUTE)`,
+      [ticket.ticket_pk],
+    );
+    if (Number(active.n) > 0) return [];
+
+    const choice = detectChoice(String(text), ticket.category);
+    const botId = await getBotId();
+    if (choice === "thanks") {
+      const id = await insertMessage(ticket.ticket_pk, botId, "You're welcome! 😊 Anything else I can help with?", "bot", mainMenu(ctx));
+      return [id];
+    }
+    if (choice === "hello" || !choice || (choice === "fixedit" && ticket.status === "Resolved")) {
+      const fallback = choice === "hello"
+        ? `Hi ${ctx.firstName}! What can I help you with?`
+        : "I'm not sure I understood that, but your message went to the team. In the meantime, here is what I can do:";
+      const [last] = await query(
+        "SELECT message_text FROM ticket_messages WHERE ticket_pk = ? AND kind = 'bot' ORDER BY message_pk DESC LIMIT 1",
+        [ticket.ticket_pk],
+      );
+      if (choice !== "hello" && last?.message_text.startsWith(fallback)) return [];
+      return [await insertMessage(ticket.ticket_pk, botId, `${fallback}
+${ctx.availability.anyOnline ? availabilityLine(ctx.availability) : "The team is offline right now and will reply when they're back."}`, "bot", mainMenu(ctx))];
+    }
+    const real = choice === "fixedit" ? "fixed:generic" : choice;
+    return execute(real, ctx, user, null);
+  }
+
   function registerBotRoutes(app, { wrap }) {
     // Who can chat right now (shown as a banner in the ticket conversation).
     app.get("/api/tickets/:id/availability", wrap(async (req, res) => {
@@ -809,58 +949,12 @@ export function createBot(deps) {
         return res.status(409).json({ error: "That option is no longer available. Open the menu to start again." });
       }
 
-      const botId = await getBotId();
-      const result = await handle(choice, ctx, {
-        fileCancellationRequest: deps.fileCancellationRequest,
-        reopenTicketFor: deps.reopenTicketFor,
-        saveRating: async ({ ticket, rating }) => {
-          await query(
-            "UPDATE tickets SET csat_rating = ?, csat_at = NOW() WHERE ticket_pk = ? AND status = 'Resolved' AND csat_rating IS NULL",
-            [rating, ticket.ticket_pk],
-          );
-        },
-      });
-
-      // Reload what changed (status, rating) so the options on the new messages match reality.
-      const fresh = (await loadContext(base.code, user)).ticket;
-      const freshCtx = { ...ctx, ticket: fresh };
-      const ids = [await insertMessage(fresh.ticket_pk, user.user_pk, picked.label, "bot_choice")];
-      for (const reply of result.replies) {
-        // Menus built before an action ran may be stale: rebuild the generic ones.
-        const options = reply.options && reply.options.length ? reply.options : null;
-        ids.push(await insertMessage(fresh.ticket_pk, botId, reply.text, "bot", options));
-      }
-      void freshCtx;
-
-      if (result.note) {
-        ids.push(await insertMessage(fresh.ticket_pk, botId, result.note.text, "bot_note"));
-        if (result.note.notify) {
-          const recent = result.note.throttle
-            ? await query(
-                "SELECT message_pk FROM ticket_messages WHERE ticket_pk = ? AND kind = 'bot_note' AND message_text = ? AND created_at > DATE_SUB(NOW(), INTERVAL 15 MINUTE) AND message_pk < ?",
-                [fresh.ticket_pk, result.note.text, ids.at(-1)],
-              )
-            : [];
-          if (recent.length === 0) {
-            const recipients = result.note.notify.adminsOnly
-              ? await deps.adminIds()
-              : fresh.assigned_to
-                ? [fresh.assigned_to, ...(result.note.notify.type === "bot_urgent" ? await deps.adminIds() : [])]
-                : await deps.adminIds();
-            await deps.notify(recipients, {
-              type: result.note.notify.type,
-              title: result.note.notify.title,
-              body: result.note.notify.body,
-              ticketCode: fresh.code,
-            });
-          }
-        }
-      }
+      const ids = await execute(choice, ctx, user, picked.label);
       res.status(201).json({ messages: await loadMessages(ids, { staff: false }) });
     }));
   }
 
-  return { registerBotRoutes, postGreeting, postResolvedPrompt };
+  return { registerBotRoutes, postGreeting, postResolvedPrompt, autoReply };
 }
 
 export { MESSAGE_SELECT };
