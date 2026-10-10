@@ -522,7 +522,7 @@ app.get("/api/tickets/:id/messages", wrap(async (req, res) => {
 app.post("/api/tickets/:id/messages", wrap(async (req, res) => {
   const access = await ticketAccess(req.params.id, req.body?.userId);
   if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
-  const { ticket, user } = access;
+  const { ticket, user, isOwner } = access;
   const body = String(req.body?.text ?? "").trim().slice(0, 1000);
   if (!body) return res.status(400).json({ error: "Message cannot be empty." });
   if (CLOSED_STATUSES.includes(ticket.status)) {
@@ -548,6 +548,14 @@ app.post("/api/tickets/:id/messages", wrap(async (req, res) => {
     body: `${user.name}: ${body.slice(0, 90)}`,
     ticketCode: ticket.code,
   });
+  // Typed by the requester: the assistant understands it and answers if no staff is already replying.
+  if (isOwner) {
+    try {
+      await bot.autoReply({ code: ticket.code, user, text: body });
+    } catch (err) {
+      console.error("assistant auto-reply failed", err.message);
+    }
+  }
   res.status(201).json({ ok: true, id: result.insertId });
 }));
 

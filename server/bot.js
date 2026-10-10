@@ -754,6 +754,174 @@ async function lastOffered(ticketPk) {
   }
 }
 
+
+// --- Understanding typed messages (keyword intents, no external AI) -----------------------
+const PROBLEM_WORDS = {
+  power: ["turn on", "turns on", "power", "boot", "won't start", "wont start", "dead"],
+  screen: ["screen", "display", "monitor", "blank", "flicker", "black"],
+  peripheral: ["keyboard", "mouse", "usb", "touchpad"],
+  slow: ["slow", "freez", "lag", "hang", "stuck", "not responding"],
+  heat: ["hot", "heat", "fan", "noise", "overheat", "burning"],
+  crash: ["crash", "won't open", "wont open", "not opening", "closes", "error", "not working"],
+  install: ["install", "setup", "set up"],
+  office: ["office", "microsoft", "365", "word", "excel", "powerpoint", "teams"],
+  update: ["update", "updating", "upgrade"],
+  wifi: ["wifi", "wi-fi", "wireless", "connect"],
+  nointernet: ["no internet", "internet", "offline", "cannot browse"],
+  slownet: ["slow internet", "speed", "buffering"],
+  portal: ["website", "portal", "page", "load", "site"],
+  password: ["password", "forgot", "reset"],
+  locked: ["locked", "lockout", "too many attempts"],
+  signin: ["login", "log in", "sign in", "email", "cannot access my account"],
+  access: ["access", "permission", "folder", "not allowed"],
+  noprint: ["won't print", "wont print", "not printing", "cannot print", "can't print", "doesn't print", "no print", "ayaw mag-print"],
+  jam: ["jam", "paper stuck", "stuck paper", "naipit", "papel"],
+  quality: ["faded", "streak", "blur", "ink", "toner", "lines"],
+  missing: ["find the printer", "printer not found", "add printer", "no printer"],
+};
+
+const INTENTS = [
+  ["urgent:ask", /\b(urgent|asap|emergency|immediately|right now|deadline|exam|class (is )?(starting|in))\b/i],
+  ["cancel:ask", /\b(cancel|never ?mind|no need|don'?t need|do not need|by mistake|duplicate)\b/i],
+  ["human", /\b(technician|human|person|someone|real person|staff|admin|talk to|speak to)\b/i],
+  ["time", /\b(how long|when will|how soon|eta|how many (days|hours|minutes)|estimated|taking so long|so long)\b/i],
+  ["status", /\b(status|update|progress|where is|any news|assigned|who is|queue|waiting)\b/i],
+  ["thanks", /\b(thanks|thank you|salamat|ty|appreciate)\b/i],
+  ["fixedit", /\b(works now|working now|it works|fixed it|solved|ok now|okay now|nawala na|gumana na)\b/i],
+  ["hello", /^\s*(hi|hello|hey|good (morning|afternoon|evening)|help|menu|options)\b/i],
+];
+
+
+// --- Tagalog (Filipino) support: understands typed Tagalog and answers in Tagalog ----------
+const TAGALOG_MARKERS = /\b(ang|ng|mga|po|ako|ko|ka|mo|ayaw|hindi|di|wala|pa|kasi|namin|natin|paano|bakit|gaano|kailan|salamat|naman|lang|ba|nasaan|kumusta|musta|puwede|pwede|gusto|kailangan|sira|mabagal|ito|yung|yong|na po|opo)\b/gi;
+
+export function isTagalog(text) {
+  const found = new Set((String(text).match(TAGALOG_MARKERS) || []).map((word) => word.toLowerCase()));
+  return found.size >= 2 || TL_INTENTS.some(([, pattern]) => pattern.test(text));
+}
+
+const TL_INTENTS = [
+  ["urgent:ask", /\b(madalian|apurahan|agad|ngayon na|ngayon din|kailangan na|importante|exam|klase|deadline)\b/i],
+  ["cancel:ask", /\b(kanselahin|i-cancel|ikansela|huwag na|wag na|hindi na kailangan|di na kailangan|nagkamali|mali ang)\b/i],
+  ["human", /\b(kausapin|makausap|pakausap|tao|teknisyan|technician|staff)\b/i],
+  ["time", /\b(gaano katagal|kailan|ilang araw|ilang oras|hanggang kailan|ang tagal|matagal na)\b/i],
+  ["status", /\b(anong balita|may balita|may update|nasaan na|ano na|pila|sino ang gumagawa|progress)\b/i],
+  ["thanks", /\b(salamat|maraming salamat|thank)\b/i],
+  ["fixedit", /\b(gumagana na|gumana na|ok na|okay na|naayos na|nawala na)\b/i],
+  ["hello", /^\s*(kumusta|musta|magandang (umaga|hapon|gabi)|tulong|pakitulong)\b/i],
+];
+
+const TL_PROBLEM_WORDS = {
+  power: ["ayaw bumukas", "di bumubukas", "ayaw mag-on", "walang kuryente", "patay"],
+  screen: ["itim", "walang display", "blangko", "kumikislap", "screen"],
+  peripheral: ["keyboard", "mouse"],
+  slow: ["mabagal", "nag-hang", "nag-freeze", "bumabagal", "nahihirapan"],
+  heat: ["mainit", "umiinit", "maingay"],
+  crash: ["nag-crash", "nagsasara", "may error", "ayaw bumukas ang"],
+  install: ["i-install", "ma-install", "hindi ma-install"],
+  update: ["nag-a-update", "update"],
+  wifi: ["wifi", "wi-fi", "ayaw kumonekta", "hindi makakonekta", "mahina ang wifi"],
+  nointernet: ["walang internet", "walang signal"],
+  slownet: ["mabagal ang internet"],
+  portal: ["ayaw mag-load", "hindi bumubukas ang website"],
+  password: ["nakalimutan", "nalimutan", "password"],
+  locked: ["na-lock", "naka-lock"],
+  signin: ["hindi makapag-login", "ayaw mag-login", "hindi makapasok"],
+  access: ["walang access", "hindi ako pinapayagan"],
+  noprint: ["ayaw mag-print", "hindi nagpi-print", "hindi nagpi-print"],
+  jam: ["naipit", "nasiksik", "jam"],
+  quality: ["malabo", "may guhit", "kupas"],
+  missing: ["hindi makita ang printer"],
+};
+
+const TL_LABELS = {
+  "📍 Where is my ticket?": "📍 Nasaan na ang ticket ko?",
+  "🛠 Try a quick fix": "🛠 Subukan ang mabilisang ayos",
+  "⏱ How long will it take?": "⏱ Gaano katagal ito?",
+  "🚨 It's urgent": "🚨 Urgent ito",
+  "👤 Talk to a technician": "👤 Kausapin ang technician",
+  "💡 More help": "💡 Iba pang tulong",
+  "🏠 Back to the menu": "🏠 Bumalik sa menu",
+  "✅ That fixed it": "✅ Naayos nito",
+  "❌ Still not working": "❌ Hindi pa rin gumagana",
+  "🔁 Show a different fix": "🔁 Ibang ayos naman",
+  "None of these": "Wala sa mga ito",
+  "Never mind": "Huwag na",
+  "I have a class, exam or deadline soon": "May klase, exam o deadline ako malapit na",
+  "I can't work at all without this": "Hindi ako makagawa nang wala ito",
+  "There is a safety concern": "May alalahanin sa kaligtasan",
+};
+
+// Ordered sentence patterns: [regex on one line, replacement]. Unknown lines stay in English.
+const TL_LINES = [
+  [/^What can I help you with, (.+)\?$/, "Ano ang maitutulong ko sa iyo, $1?"],
+  [/^(#HD\d+) is waiting for a technician\.$/, "Naghihintay pa ng technician ang $1."],
+  [/^(\d+) other requests? (?:is|are) ahead of yours\.$/, "May $1 pang request na nauuna sa iyo."],
+  [/^Yours is next in line\.$/, "Ikaw na ang susunod."],
+  [/^(.+) is working on (#HD\d+)\.$/, "Si $1 ay gumagawa na sa $2."],
+  [/^(#HD\d+) is being worked on\.$/, "Ginagawa na ang $1."],
+  [/^(#HD\d+) was marked as resolved\.$/, "Na-mark na bilang resolved ang $1."],
+  [/^Submitted (.+) ago · Priority: (.+)\.$/, "Isinumite $1 na ang nakalipas · Priority: $2."],
+  [/^A cancellation request is waiting for an admin to decide\.$/, "May cancellation request na naghihintay ng desisyon ng admin."],
+  [/^Our target times by priority: (.+)$/, "Ang target namin ayon sa priority: $1"],
+  [/^Yours is (\w+), so we aim to fix it within (.+) of submitting \(around (.+)\)\.$/, "Ang sa iyo ay $1, kaya target naming maayos ito sa loob ng $2 mula nang isumite (mga $3)."],
+  [/^These are targets, not guarantees.*$/, "Target lang ito at hindi garantiya: maaaring tumagal ang mas komplikadong problema."],
+  [/^That time has passed.*$/, "Lumampas na ang oras na iyon, pasensya na sa paghihintay. Piliin ang \"Kausapin ang technician\" at ipapaalala ko sa team."],
+  [/^I'll flag it to the team\. What best describes the urgency\?$/, "Ipapaalam ko ito sa team. Alin ang pinakaakma sa pagka-urgent?"],
+  [/^Done: I've flagged this as urgent.*$/, "Tapos na: minarkahan ko ito bilang urgent sa mga admin at sa technician, kasama ang dahilan mo."],
+  [/^If there is any danger.*$/, "Kung may panganib (usok, kislap, amoy ng sunog), i-unplug agad ang device at lumayo rito."],
+  [/^Good news: (.+) is online and can chat now\.$/, "Magandang balita: online si $1 at puwede kang makausap ngayon."],
+  [/^Good news: (.+), your technician, is online and can chat with you now\.$/, "Magandang balita: online si $1, ang technician mo, at puwede kang makausap ngayon."],
+  [/^(.+), your technician, is online and can chat with you now\.$/, "Online si $1, ang technician mo, at puwede kang makausap ngayon."],
+  [/^(.+) \((admin|technician)\) (?:is|are) online and can chat now\.$/, "Online ang $1 ($2) at puwede kang makausap ngayon."],
+  [/^Good news: (.+) \((admin|technician)\) (?:is|are) online and can chat now\.$/, "Magandang balita: online ang $1 ($2) at puwede kang makausap ngayon."],
+  [/^I've let them know you'd like to talk\..*$/, "Naipaalam ko na sa kanila na gusto mo silang makausap. I-type ang mensahe mo sa baba at doon sila sasagot."],
+  [/^Our technicians and admins are offline right now.*$/, "Offline ang mga technician at admin ngayon, kaya ako muna ang tutulong. Makikita nila ang lahat dito pagbalik nila."],
+  [/^I've notified them, so leave your message.*$/, "Naabisuhan ko na sila, kaya iwan ang mensahe mo sa baba nang may detalye. Sasagot sila rito pagbalik nila. Habang naghihintay, makakatulong pa rin ako sa mga mabilisang ayos."],
+  [/^You're welcome! .*$/, "Walang anuman! 😊 May iba pa ba akong maitutulong?"],
+  [/^Hi (.+)! What can I help you with\?$/, "Hi $1! Ano ang maitutulong ko?"],
+  [/^I'm not sure I understood that.*$/, "Hindi ko sigurado kung naintindihan ko iyon, pero naipadala na ang mensahe mo sa team. Habang naghihintay, ito ang magagawa ko:"],
+  [/^The team is offline right now and will reply when they're back\.$/, "Offline ang team ngayon at sasagot sila pagbalik nila."],
+  [/^Try these steps in order:$/, "Subukan ang mga hakbang na ito nang may ayos (nasa English):"],
+  [/^These are the most common .*problems I can help with\..*$/, "Ito ang mga pinakakaraniwang problema na matutulungan ko. Alin ang kahawig ng sa iyo?"],
+  [/^Wonderful, glad that worked!.*$/, "Mabuti at gumana! 🎉"],
+  [/^Since it's working again.*$/, "Dahil gumagana na ulit, gusto mo bang hilingin ko sa admin na isara ang ticket na ito? Puwede mo rin itong iwanang bukas."],
+  [/^Sorry that didn't solve it\..*$/, "Pasensya na at hindi ito nakatulong. Naipasa ko na ang mga sinubukan mo kaya hindi na kailangang ulitin ng technician."],
+  [/^I can send a cancellation request.*$/, "Maipapadala ko ang cancellation request sa mga admin (sila ang magpapasya). Bakit mo gustong kanselahin?"],
+];
+
+function localizeLine(line) {
+  for (const [pattern, replacement] of TL_LINES) {
+    if (pattern.test(line)) return line.replace(pattern, replacement);
+  }
+  return line;
+}
+
+export function toTagalog(text) {
+  return String(text).split("\n").map(localizeLine).join("\n");
+}
+
+export function toTagalogOptions(options) {
+  return options ? options.map((option) => ({ ...option, label: TL_LABELS[option.label] || option.label })) : options;
+}
+
+function detectChoice(text, category) {
+  for (const [choice, pattern] of INTENTS) if (pattern.test(text)) return choice;
+  for (const [choice, pattern] of TL_INTENTS) if (pattern.test(text)) return choice;
+  const lower = text.toLowerCase();
+  let best = null;
+  let bestScore = 0;
+  for (const problem of [...problemsFor(category), ...FALLBACK_PROBLEMS]) {
+    const words = [...(PROBLEM_WORDS[problem.key] || []), ...(TL_PROBLEM_WORDS[problem.key] || [])];
+    const score = words.filter((word) => lower.includes(word)).length;
+    if (score > bestScore) {
+      best = problem.key;
+      bestScore = score;
+    }
+  }
+  return best ? `fix:${best}` : null;
+}
+
 export function createBot(deps) {
   // First message of every ticket: a greeting that says what happens next.
   async function postGreeting({ ticketPk, code, subject, category, requesterName }) {
@@ -783,6 +951,101 @@ export function createBot(deps) {
     );
   }
 
+  // Runs one choice: saves the replies (and the staff note), returns the new message ids.
+  // `echo` is the requester's pick shown as their bubble; typed messages pass null.
+  async function execute(choice, ctx, user, echo, tl = false) {
+    const botId = await getBotId();
+    const result = await handle(choice, ctx, {
+      fileCancellationRequest: deps.fileCancellationRequest,
+      reopenTicketFor: deps.reopenTicketFor,
+      saveRating: async ({ ticket, rating }) => {
+        await query(
+          "UPDATE tickets SET csat_rating = ?, csat_at = NOW() WHERE ticket_pk = ? AND status = 'Resolved' AND csat_rating IS NULL",
+          [rating, ticket.ticket_pk],
+        );
+      },
+    });
+
+    // Reload what changed (status, rating) so the options on the new messages match reality.
+    const fresh = (await loadContext(ctx.ticket.code, user)).ticket;
+    const ids = (echo ? [await insertMessage(fresh.ticket_pk, user.user_pk, echo, "bot_choice")] : []);
+    for (const reply of result.replies) {
+      // Menus built before an action ran may be stale: rebuild the generic ones.
+    let options = reply.options && reply.options.length ? reply.options : null;
+    let text = reply.text;
+    if (tl) {
+      text = toTagalog(text);
+      options = toTagalogOptions(options);
+    }
+    ids.push(await insertMessage(fresh.ticket_pk, botId, text, "bot", options));
+    }
+
+    if (result.note) {
+      ids.push(await insertMessage(fresh.ticket_pk, botId, result.note.text, "bot_note"));
+      if (result.note.notify) {
+        const recent = result.note.throttle
+          ? await query(
+              "SELECT message_pk FROM ticket_messages WHERE ticket_pk = ? AND kind = 'bot_note' AND message_text = ? AND created_at > DATE_SUB(NOW(), INTERVAL 15 MINUTE) AND message_pk < ?",
+              [fresh.ticket_pk, result.note.text, ids.at(-1)],
+            )
+          : [];
+        if (recent.length === 0) {
+          const recipients = result.note.notify.adminsOnly
+            ? await deps.adminIds()
+            : fresh.assigned_to
+              ? [fresh.assigned_to, ...(result.note.notify.type === "bot_urgent" ? await deps.adminIds() : [])]
+              : await deps.adminIds();
+          await deps.notify(recipients, {
+            type: result.note.notify.type,
+            title: result.note.notify.title,
+            body: result.note.notify.body,
+            ticketCode: fresh.code,
+          });
+        }
+      }
+    }
+    return ids;
+  }
+
+
+  // The requester typed a message instead of tapping a button. If no staff member has
+  // answered recently, understand it and reply automatically; otherwise stay quiet.
+  async function autoReply({ code, user, text }) {
+    const ctx = await loadContext(code, user);
+    const { ticket } = ctx;
+    if (["Cancelled"].includes(ticket.status)) return [];
+    const [active] = await query(
+      `SELECT COUNT(*) AS n FROM ticket_messages m JOIN users u ON u.user_pk = m.sender_pk
+       WHERE m.ticket_pk = ? AND m.kind = 'chat' AND u.role IN ('technician', 'admin')
+         AND m.created_at > DATE_SUB(NOW(), INTERVAL 10 MINUTE)`,
+      [ticket.ticket_pk],
+    );
+    if (Number(active.n) > 0) return [];
+
+    const tl = isTagalog(text);
+    const say = (value) => (tl ? toTagalog(value) : value);
+    const choice = detectChoice(String(text), ticket.category);
+    const botId = await getBotId();
+    if (choice === "thanks") {
+      const id = await insertMessage(ticket.ticket_pk, botId, say("You're welcome! 😊 Anything else I can help with?"), "bot", tl ? toTagalogOptions(mainMenu(ctx)) : mainMenu(ctx));
+      return [id];
+    }
+    if (choice === "hello" || !choice || (choice === "fixedit" && ticket.status === "Resolved")) {
+      const fallback = choice === "hello"
+        ? `Hi ${ctx.firstName}! What can I help you with?`
+        : "I'm not sure I understood that, but your message went to the team. In the meantime, here is what I can do:";
+      const [last] = await query(
+        "SELECT message_text FROM ticket_messages WHERE ticket_pk = ? AND kind = 'bot' ORDER BY message_pk DESC LIMIT 1",
+        [ticket.ticket_pk],
+      );
+      if (choice !== "hello" && (last?.message_text.startsWith(fallback) || last?.message_text.startsWith(say(fallback)))) return [];
+      return [await insertMessage(ticket.ticket_pk, botId, say(`${fallback}
+${ctx.availability.anyOnline ? availabilityLine(ctx.availability) : "The team is offline right now and will reply when they're back."}`), "bot", tl ? toTagalogOptions(mainMenu(ctx)) : mainMenu(ctx))];
+    }
+    const real = choice === "fixedit" ? "fixed:generic" : choice;
+    return execute(real, ctx, user, null, tl);
+  }
+
   function registerBotRoutes(app, { wrap }) {
     // Who can chat right now (shown as a banner in the ticket conversation).
     app.get("/api/tickets/:id/availability", wrap(async (req, res) => {
@@ -809,58 +1072,12 @@ export function createBot(deps) {
         return res.status(409).json({ error: "That option is no longer available. Open the menu to start again." });
       }
 
-      const botId = await getBotId();
-      const result = await handle(choice, ctx, {
-        fileCancellationRequest: deps.fileCancellationRequest,
-        reopenTicketFor: deps.reopenTicketFor,
-        saveRating: async ({ ticket, rating }) => {
-          await query(
-            "UPDATE tickets SET csat_rating = ?, csat_at = NOW() WHERE ticket_pk = ? AND status = 'Resolved' AND csat_rating IS NULL",
-            [rating, ticket.ticket_pk],
-          );
-        },
-      });
-
-      // Reload what changed (status, rating) so the options on the new messages match reality.
-      const fresh = (await loadContext(base.code, user)).ticket;
-      const freshCtx = { ...ctx, ticket: fresh };
-      const ids = [await insertMessage(fresh.ticket_pk, user.user_pk, picked.label, "bot_choice")];
-      for (const reply of result.replies) {
-        // Menus built before an action ran may be stale: rebuild the generic ones.
-        const options = reply.options && reply.options.length ? reply.options : null;
-        ids.push(await insertMessage(fresh.ticket_pk, botId, reply.text, "bot", options));
-      }
-      void freshCtx;
-
-      if (result.note) {
-        ids.push(await insertMessage(fresh.ticket_pk, botId, result.note.text, "bot_note"));
-        if (result.note.notify) {
-          const recent = result.note.throttle
-            ? await query(
-                "SELECT message_pk FROM ticket_messages WHERE ticket_pk = ? AND kind = 'bot_note' AND message_text = ? AND created_at > DATE_SUB(NOW(), INTERVAL 15 MINUTE) AND message_pk < ?",
-                [fresh.ticket_pk, result.note.text, ids.at(-1)],
-              )
-            : [];
-          if (recent.length === 0) {
-            const recipients = result.note.notify.adminsOnly
-              ? await deps.adminIds()
-              : fresh.assigned_to
-                ? [fresh.assigned_to, ...(result.note.notify.type === "bot_urgent" ? await deps.adminIds() : [])]
-                : await deps.adminIds();
-            await deps.notify(recipients, {
-              type: result.note.notify.type,
-              title: result.note.notify.title,
-              body: result.note.notify.body,
-              ticketCode: fresh.code,
-            });
-          }
-        }
-      }
+      const ids = await execute(choice, ctx, user, picked.label);
       res.status(201).json({ messages: await loadMessages(ids, { staff: false }) });
     }));
   }
 
-  return { registerBotRoutes, postGreeting, postResolvedPrompt };
+  return { registerBotRoutes, postGreeting, postResolvedPrompt, autoReply };
 }
 
 export { MESSAGE_SELECT };
