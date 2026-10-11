@@ -359,7 +359,7 @@ async function handle(choice, ctx, deps) {
       } else {
         lines.push(`${ticket.code} is ${ticket.status.toLowerCase()}.`);
       }
-      lines.push(`Submitted ${duration(submittedMins)} ago · Priority: ${ticket.priority}.`);
+      lines.push(`Submitted ${duration(submittedMins)} ago · Priority: ${ticket.priority_tier ? `${ticket.priority_tier} (${ticket.priority})` : ticket.priority}.`);
       if (ctx.pendingCancellation) lines.push("A cancellation request is waiting for an admin to decide.");
       if (ticket.reopen_count > 0) lines.push(`It has been reopened ${ticket.reopen_count} time${ticket.reopen_count === 1 ? "" : "s"}.`);
       return { replies: [{ text: lines.join("\n"), options: [...mainMenu(ctx).filter((o) => o.id !== "status")] }] };
@@ -718,7 +718,7 @@ async function loadMessages(ids, { staff }) {
 async function loadContext(code, user) {
   const [ticket] = await query(
     `SELECT t.ticket_pk, t.code, t.subject, t.category, t.priority, t.status, t.created_by, t.assigned_to,
-       t.created_at, t.csat_rating, t.reopen_count, a.name AS techName
+       t.created_at, t.csat_rating, t.priority_tier, t.reopen_count, a.name AS techName
      FROM tickets t LEFT JOIN users a ON a.user_pk = t.assigned_to WHERE t.code = ? LIMIT 1`,
     [code],
   );

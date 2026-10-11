@@ -3,6 +3,7 @@ import express from "express";
 import { authenticate, verifyReportViewer } from "./auth.js";
 import { createBot, shapeMessage } from "./bot.js";
 import { pool, query } from "./db.js";
+import { calculatePriority } from "./priority.js";
 import { registerKpiRoutes } from "./kpi.js";
 import {
   hashPassword,
@@ -287,14 +288,14 @@ app.get("/api/tickets", wrap(async (req, res) => {
 
   if (mine === "1" && userId) {
     const rows = await query(
-      "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to WHERE t.created_by = ? ORDER BY t.ticket_pk DESC",
+      "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.location_id AS locationId, t.impact_level AS impactLevel, t.urgency_level AS urgencyLevel, t.priority_tier AS priorityTier, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to WHERE t.created_by = ? ORDER BY t.ticket_pk DESC",
       [userId],
     );
     return res.json(rows);
   }
 
   const rows = await query(
-    "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to ORDER BY t.ticket_pk DESC",
+    "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.location_id AS locationId, t.impact_level AS impactLevel, t.urgency_level AS urgencyLevel, t.priority_tier AS priorityTier, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to ORDER BY t.ticket_pk DESC",
   );
   res.json(rows);
 }));
@@ -366,19 +367,41 @@ app.patch("/api/tickets/:id/status", wrap(async (req, res) => {
   res.json({ ok: true, id, status });
 }));
 
-app.post("/api/tickets", wrap(async (req, res) => {
-  const { subject, category, priority, location, description, createdBy } = req.body ?? {};
-  if (!subject?.trim() || !category?.trim() || !priority?.trim()) {
-    return res.status(400).json({ error: "subject, category, and priority are required." });
+// Rooms for the cascading Campus zone > Building > Room dropdown.
+app.get("/api/locations", wrap(async (_req, res) => {
+  const rows = await query(
+    "SELECT location_id AS id, campus_zone AS campusZone, building_name AS buildingName, room_name AS roomName, room_type AS roomType FROM locations ORDER BY campus_zone, building_name, room_name",
+  );
+  res.json(rows);
+}));
+
+// The priority tier is calculated on the server (server/priority.js) from the two intake answers;
+// any priority sent by the client is ignored.
+app.post("/api/tickets", calculatePriority, wrap(async (req, res) => {
+  const { subject, category, locationId, description, createdBy } = req.body ?? {};
+  if (!subject?.trim() || !category?.trim()) {
+    return res.status(400).json({ error: "subject and category are required." });
   }
+  const rooms = await query(
+    "SELECT location_id, building_name, room_name FROM locations WHERE location_id = ? LIMIT 1",
+    [Number(locationId) || 0],
+  );
+  const room = rooms[0];
+  if (!room) return res.status(400).json({ error: "Please choose a campus zone, building and room." });
+  const { tier, label: priority } = req.priority;
+  // Readable snapshot of the room, kept for reports and the location heat map.
+  const locationText = `${room.room_name}, ${room.building_name}`;
 
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
     const code = await nextCode(conn, "tickets", "#HD", "tickets_archive");
     await conn.execute(
-      "INSERT INTO tickets (code, subject, category, priority, status, location, description, created_by) VALUES (?, ?, ?, ?, 'Open', ?, ?, ?)",
-      [code, subject, category, priority, location ?? null, description ?? null, createdBy ?? null],
+      "INSERT INTO tickets (code, subject, category, priority, status, location, location_id, impact_level, urgency_level, priority_tier, description, created_by) VALUES (?, ?, ?, ?, 'Open', ?, ?, ?, ?, ?, ?, ?)",
+      [
+        code, subject, category, priority, locationText, room.location_id,
+        req.body.impactLevel, req.body.urgencyLevel, tier, description ?? null, createdBy ?? null,
+      ],
     );
     await conn.commit();
     const submitters = await query("SELECT name FROM users WHERE user_pk = ?", [createdBy ?? 0]);
@@ -398,13 +421,84 @@ app.post("/api/tickets", wrap(async (req, res) => {
     } catch (err) {
       console.error("assistant greeting failed", err.message);
     }
-    res.status(201).json({ id: code, subject, category, priority, status: "Open" });
+    res.status(201).json({
+      id: code, subject, category, priority, priorityTier: tier, escalated: req.priority.escalated,
+      location: locationText, status: "Open",
+    });
   } catch (err) {
     await conn.rollback();
     throw err;
   } finally {
     conn.release();
   }
+}));
+
+// Queue-safe cancellation by an admin. The row is never deleted: the status guard in the UPDATE
+// means two admins (or an admin and a technician) cannot both win, and because only active
+// tickets (Open / In Progress) count toward a technician's load, cancelling frees the slot at once.
+// Requesters still use the cancellation-request flow below; they cannot cancel directly.
+const ACTIVE_STATUSES = ["Open", "In Progress"];
+
+app.put("/api/tickets/:id/cancel", wrap(async (req, res) => {
+  const admin = await requireAdmin(req.body?.actorId);
+  if (!admin) return res.status(403).json({ error: "Only admins can cancel a ticket directly." });
+  const reason = String(req.body?.reason ?? "").trim().slice(0, 500) || "Cancelled by an admin.";
+  const tickets = await query(
+    "SELECT ticket_pk, code, subject, status, created_by, assigned_to FROM tickets WHERE code = ? LIMIT 1",
+    [req.params.id],
+  );
+  const ticket = tickets[0];
+  if (!ticket) return res.status(404).json({ error: "Ticket not found." });
+
+  const marks = ACTIVE_STATUSES.map(() => "?").join(", ");
+  const [result] = await pool.execute(
+    `UPDATE tickets SET status = 'Cancelled' WHERE ticket_pk = ? AND status IN (${marks})`,
+    [ticket.ticket_pk, ...ACTIVE_STATUSES],
+  );
+  if (result.affectedRows === 0) {
+    return res.status(409).json({ error: `This ticket is already ${ticket.status.toLowerCase()} and cannot be cancelled.` });
+  }
+
+  // A waiting cancellation request is settled by this decision.
+  await query(
+    "UPDATE cancellation_requests SET status = 'Approved', review_note = ?, reviewed_by = ?, reviewed_at = NOW() WHERE ticket_pk = ? AND status = 'Pending'",
+    [reason, admin.user_pk, ticket.ticket_pk],
+  );
+  await query(
+    "INSERT INTO ticket_messages (ticket_pk, sender_pk, message_text, kind) VALUES (?, ?, ?, 'cancellation_decision')",
+    [ticket.ticket_pk, admin.user_pk, `Ticket cancelled by ${admin.name}: ${reason}`],
+  );
+  await notify([ticket.created_by], {
+    type: "cancellation_approved",
+    title: "Your request was cancelled",
+    body: `${ticket.code} was cancelled by an admin: ${reason.slice(0, 90)}`,
+    ticketCode: ticket.code,
+  });
+  await notify([ticket.assigned_to], {
+    type: "cancellation_approved",
+    title: "Ticket cancelled",
+    body: `${ticket.code} was cancelled. You can stop working on it.`,
+    ticketCode: ticket.code,
+  });
+  await query(
+    "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
+    [admin.name, admin.role_name, `Cancelled ticket ${ticket.code}`],
+  );
+  res.json({ ok: true, id: ticket.code, status: "Cancelled" });
+}));
+
+// Active tickets per technician (what an auto-assigner or the admin looks at when balancing work).
+app.get("/api/technicians/workload", wrap(async (req, res) => {
+  const admin = await requireAdmin(req.query.userId);
+  if (!admin) return res.status(403).json({ error: "Only admins can see technician workload." });
+  const marks = ACTIVE_STATUSES.map(() => "?").join(", ");
+  const rows = await query(
+    `SELECT u.user_pk AS userId, u.name, u.skills,
+       (SELECT COUNT(*) FROM tickets t WHERE t.assigned_to = u.user_pk AND t.status IN (${marks})) AS activeTickets
+     FROM users u WHERE u.role = 'technician' ORDER BY activeTickets ASC, u.name`,
+    ACTIVE_STATUSES,
+  );
+  res.json(rows);
 }));
 
 // --- Ticket assignment, messaging, and cancellation requests -------------------

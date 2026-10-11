@@ -25,6 +25,7 @@ DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS activities;
 DROP TABLE IF EXISTS password_requests;
 DROP TABLE IF EXISTS tickets;
+DROP TABLE IF EXISTS locations;
 DROP TABLE IF EXISTS users;
 
 CREATE TABLE users (
@@ -46,6 +47,17 @@ CREATE TABLE users (
   UNIQUE KEY uq_user_role (id_number, role)
 );
 
+-- Campus locations: the source of truth for the Campus zone > Building > Room dropdown.
+CREATE TABLE locations (
+  location_id   INT AUTO_INCREMENT PRIMARY KEY,
+  campus_zone   VARCHAR(80)  NOT NULL,
+  building_name VARCHAR(120) NOT NULL,
+  room_name     VARCHAR(120) NOT NULL,
+  room_type     VARCHAR(40)  NOT NULL,
+  UNIQUE KEY uq_location (campus_zone, building_name, room_name),
+  KEY idx_location_zone (campus_zone, building_name)
+);
+
 CREATE TABLE tickets (
   ticket_pk   INT AUTO_INCREMENT PRIMARY KEY,
   code        VARCHAR(16)  NOT NULL UNIQUE,  -- e.g. #HD001
@@ -63,9 +75,16 @@ CREATE TABLE tickets (
   resolved_at TIMESTAMP NULL,                -- when it was marked Resolved (KPI: AHT, ART, SLA)
   csat_rating TINYINT NULL,                  -- 1-5 stars the requester gave via the assistant
   csat_at     TIMESTAMP NULL,
+  location_id   INT NULL,                    -- structured location (replaces free-text entry)
+  impact_level  ENUM('Organization', 'Department', 'Individual') NULL,  -- who is affected
+  urgency_level ENUM('High', 'Medium', 'Low') NULL,                     -- when it is needed
+  priority_tier ENUM('P1', 'P2', 'P3', 'P4') NULL,                      -- calculated by server/priority.js
   created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_ticket_tier (priority_tier),
   CONSTRAINT fk_ticket_user FOREIGN KEY (created_by)
-    REFERENCES users(user_pk) ON DELETE SET NULL
+    REFERENCES users(user_pk) ON DELETE SET NULL,
+  CONSTRAINT fk_ticket_location FOREIGN KEY (location_id)
+    REFERENCES locations(location_id) ON DELETE SET NULL
 );
 
 CREATE TABLE activities (
@@ -124,6 +143,30 @@ INSERT INTO users (id_number, password, name, role, role_name, email) VALUES
 -- The HelpDesk Assistant chatbot posts in ticket conversations. Its password is not a valid hash, so nobody can sign in as it.
 INSERT INTO users (id_number, password, name, role, role_name, email) VALUES
   ('assistant', 'scrypt$locked$locked', 'HelpDesk Assistant', 'bot', 'Assistant Bot', NULL);
+
+-- Rooms offered in the ticket form.
+INSERT INTO locations (campus_zone, building_name, room_name, room_type) VALUES
+  ('Main Campus', 'Administration Building', 'Registrar''s Office', 'Office'),
+  ('Main Campus', 'Administration Building', 'Dean''s Office', 'Office'),
+  ('Main Campus', 'Administration Building', 'Faculty Room', 'Office'),
+  ('Main Campus', 'Library', 'Reading Hall', 'Library'),
+  ('Main Campus', 'Library', 'Computer Section', 'Computer Lab'),
+  ('Academic Zone', 'IT Building', 'Computer Laboratory 1', 'Computer Lab'),
+  ('Academic Zone', 'IT Building', 'Computer Laboratory 2', 'Computer Lab'),
+  ('Academic Zone', 'IT Building', 'Computer Laboratory 3', 'Computer Lab'),
+  ('Academic Zone', 'IT Building', 'Server Room', 'Server Room'),
+  ('Academic Zone', 'IT Building', 'Lecture Room 201', 'Classroom'),
+  ('Academic Zone', 'Science Building', 'Chemistry Laboratory', 'Laboratory'),
+  ('Academic Zone', 'Science Building', 'Physics Laboratory', 'Laboratory'),
+  ('Academic Zone', 'Science Building', 'Lecture Room 101', 'Classroom'),
+  ('Academic Zone', 'Engineering Building', 'Drafting Room', 'Laboratory'),
+  ('Academic Zone', 'Engineering Building', 'Engineering Laboratory', 'Laboratory'),
+  ('Academic Zone', 'Engineering Building', 'Lecture Room 301', 'Classroom'),
+  ('Student Services Zone', 'Student Center', 'Student Lounge', 'Common Area'),
+  ('Student Services Zone', 'Student Center', 'Cafeteria', 'Common Area'),
+  ('Student Services Zone', 'Student Center', 'Clinic', 'Office'),
+  ('Student Services Zone', 'Gymnasium', 'Main Court', 'Common Area'),
+  ('Student Services Zone', 'Gymnasium', 'Auditorium', 'Auditorium');
 
 -- Instant messages between admins and technicians (chat dock).
 CREATE TABLE messages (

@@ -61,12 +61,26 @@ async function call(method, path, body, as) {
 const enc = encodeURIComponent;
 const created = [];
 
+// The ticket form now picks a room from the locations table and answers two intake questions;
+// the server calculates the P1-P4 tier from them. Old specs (priority + room name) are translated.
+const rooms = await call("GET", "/locations", undefined, ADMIN);
+const INTAKE = {
+  High: { impactLevel: "Department", urgencyLevel: "High" }, // P1
+  Medium: { impactLevel: "Individual", urgencyLevel: "Medium" }, // P3
+  Low: { impactLevel: "Individual", urgencyLevel: "Low" }, // P4
+};
+function roomFor(name) {
+  const wanted = String(name).toLowerCase();
+  const match = rooms.find((room) => room.roomName.toLowerCase().includes(wanted.split(",")[0]));
+  return (match || rooms[Math.abs([...wanted].reduce((sum, ch) => sum + ch.charCodeAt(0), 0)) % rooms.length]).id;
+}
+
 async function ticket(spec) {
   const { id } = await call("POST", "/tickets", {
     subject: spec.subject,
     category: spec.category,
-    priority: spec.priority,
-    location: spec.location,
+    ...INTAKE[spec.priority],
+    locationId: roomFor(spec.location),
     description: spec.description,
     createdBy: spec.by,
   }, spec.by);

@@ -9,6 +9,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "server": "node server/index.js",
+    "test": "node --test server/",
     "db:init": "\"C:/xampp/mysql/bin/mysql.exe\" -u root -p < server/schema.sql",
     "screenshots": "node scripts/capture-screenshots.mjs"
   },

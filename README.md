@@ -218,6 +218,19 @@ Every ticket conversation starts with the **HelpDesk Assistant**, a guided chatb
 
 Design ideas taken from Intercom, Zendesk, ServiceNow and Freshdesk: guided buttons over free text, self-service before escalation, a clear human hand-off with context, actions as well as answers, and a satisfaction survey after resolution. The code is in `server/bot.js` (conversation tree and knowledge base: add new fixes to the `KNOWLEDGE` object) and the UI is in `src/TicketChat.jsx`. SQL for an existing database: `server/migrations/2026-10-chatbot.sql`.
 
+## Smart intake and automatic priority
+
+The ticket form no longer asks the requester to pick a priority or type a location.
+
+- **Structured location**: a cascading **Campus zone > Building > Room** dropdown fed by the `locations` table (no free text). It shows a loading state while the list loads and a Try again link if it fails.
+- **Two mandatory questions**: *Who is affected?* (Just me / My entire class / The whole building) and *When do you need this?* (Right now for a live class / Within 2 days / Next week).
+- **Priority matrix** (`server/priority.js`, a pure function with unit tests): impact x urgency gives P1 to P4. Organization: High P1, Medium P1, Low P2. Department: High P1, Medium P2, Low P3. Individual: High P2, Medium P3, Low P4.
+- **Escalation**: if the description contains *Exam*, *Graduation*, *Lecture* or *Dean*, or `IS_FINALS_WEEK` is on (start the API with `FINALS_WEEK=true`), the tier goes up by one (P1 stays P1, and it only ever goes up one step).
+- The tier is stored in `tickets.priority_tier` with `impact_level`, `urgency_level` and `location_id`. The older High / Medium / Low label (P1 and P2 = High, P3 = Medium, P4 = Low) is still stored so reports, KPIs and SLA targets keep working.
+- **Queue-safe cancellation**: `PUT /api/tickets/:id/cancel` (admin) sets the status to Cancelled only while the ticket is Open or In Progress, never deletes the row, and the technician's active load drops immediately. Requesters still use the approval-based cancellation request.
+
+SQL for an existing database: `server/migrations/2026-10-priority-locations.sql`.
+
 ## Security and governance
 
 **Sign-in and sessions**
@@ -382,7 +395,10 @@ Base path: `/api` (proxied to `http://localhost:3001` in development).
 | PUT | `/api/superadmin/manage-admins/:id` | Super admin only. Body: `{ action: "revoke" \| "grant" \| "grant_viewer" \| "unlock" \| "reset_mfa" }`. |
 | POST | `/api/signup` | Create a student or employee account. |
 | GET | `/api/tickets` | List tickets (newest first); `?mine=1&userId=` limits to one requester. Includes `location` and `createdAt`. |
-| POST | `/api/tickets` | Create a ticket. Body: `{ subject, category, priority, location?, description?, createdBy? }`. |
+| POST | `/api/tickets` | Create a ticket. Body: `{ subject, category, locationId, impactLevel, urgencyLevel, description }`. The server calculates the P1-P4 tier (any `priority` sent is ignored) and returns `priorityTier`. |
+| GET | `/api/locations` | Rooms for the cascading Campus zone > Building > Room dropdown. |
+| PUT | `/api/tickets/:id/cancel` | Admin only. Queue-safe cancel: `UPDATE ... WHERE status IN ('Open','In Progress')`; the row is kept, a second call gets 409. |
+| GET | `/api/technicians/workload` | Admin only. Active (Open / In Progress) tickets per technician. |
 | PATCH | `/api/tickets/:id/status` | Set status to Open, In Progress or Resolved. |
 | PATCH | `/api/tickets/:id/assign` | Admin only. Body: `{ actorId, technicianId }`; sets the technician and moves the ticket to In Progress. |
 | GET | `/api/tickets/:id/participants` | Who is in the ticket conversation: requester, assigned technician, admins. |
@@ -454,6 +470,7 @@ Because React and Babel load from a CDN, the machine needs internet access the f
 | `npm run dev`     | Start the Vite dev server (frontend).          |
 | `npm run server`  | Start the Express API server.                  |
 | `npm run db:init` | Import `server/schema.sql` into MySQL.         |
+| `npm test`        | Unit tests for the priority matrix (`server/priority.test.js`). |
 | `npm run build`   | Build the frontend for production (`dist/`).   |
 | `npm run preview` | Preview the production build locally.          |
 | `npm run lint`    | Run oxlint.                                    |

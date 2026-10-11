@@ -20,6 +20,7 @@ import useReportData from "./useReportData";
 import { SettingsModal } from "./SettingsModal";
 import { APP_VERSION, motionAllowed } from "./settings";
 import { playSound } from "./sounds";
+import { IntakeQuestions, LocationSelector } from "./SmartIntake";
 import { TicketDetailsModal } from "./TicketChat";
 
 const navFor = {
@@ -152,10 +153,12 @@ function App() {
   const [pwSubmitting, setPwSubmitting] = useState(false);
   const [request, setRequest] = useState({
     category: "",
-    priority: "Medium",
+    impact: "",
+    urgency: "",
     subject: "",
-    location: "",
+    locationId: "",
     description: "",
+    resetKey: 0,
   });
 
   const roleType = ["superadmin", "admin", "technician", "report_viewer"].includes(user?.role)
@@ -382,15 +385,16 @@ function App() {
       );
       return;
     }
-    if (
-      !request.subject.trim() ||
-      !request.location.trim() ||
-      !request.description.trim()
-    ) {
-      showMessage(
-        "Incomplete form",
-        "Please complete the subject, location, and description.",
-      );
+    if (!request.subject.trim() || !request.description.trim()) {
+      showMessage("Incomplete form", "Please complete the subject and the description.");
+      return;
+    }
+    if (!request.locationId) {
+      showMessage("Choose the room", "Pick the campus zone, building and room where the problem is.");
+      return;
+    }
+    if (!request.impact || !request.urgency) {
+      showMessage("Two quick questions", "Tell us who is affected and when you need this fixed.");
       return;
     }
     let created;
@@ -398,8 +402,9 @@ function App() {
       created = await api.createTicket({
         subject: request.subject,
         category: request.category,
-        priority: request.priority,
-        location: request.location,
+        locationId: Number(request.locationId),
+        impactLevel: request.impact,
+        urgencyLevel: request.urgency,
         description: request.description,
         createdBy: user.userId,
       });
@@ -413,14 +418,19 @@ function App() {
     setTickets((items) => [created, ...items]);
     refreshData();
     addActivity(`Submitted ${created.id}: ${created.subject}`);
-    setRequest({
+    setRequest((previous) => ({
       category: "",
-      priority: "Medium",
+      impact: "",
+      urgency: "",
       subject: "",
-      location: "",
+      locationId: "",
       description: "",
-    });
-    showMessage("Request submitted", `${created.id} was created successfully.`);
+      resetKey: previous.resetKey + 1,
+    }));
+    showMessage(
+      "Request submitted",
+      `${created.id} was created with priority ${created.priorityTier}${created.escalated ? " (raised because it affects exams or lectures)" : ""}.`,
+    );
   }
 
   function openProfile() {
@@ -1525,7 +1535,7 @@ function TicketTable({ tickets, showAssignmentMeta = false, onOpen }) {
               <td>{ticket.subject}</td>
               <td>{ticket.category}</td>
               <td>
-                <Priority value={ticket.priority} />
+                <Priority value={ticket.priority} tier={ticket.priorityTier} />
               </td>
               <td>
                 <Status value={ticket.status} />
@@ -1546,9 +1556,11 @@ function TicketTable({ tickets, showAssignmentMeta = false, onOpen }) {
     </div>
   );
 }
-function Priority({ value }) {
+function Priority({ value, tier }) {
   return (
-    <span className={`priority priority-${value.toLowerCase()}`}>{value}</span>
+    <span className={`priority priority-${value.toLowerCase()}`}>
+      {tier ? `${tier} · ${value}` : value}
+    </span>
   );
 }
 function Status({ value }) {
@@ -1583,24 +1595,23 @@ function RequestPage({ request, setRequest, submitRequest }) {
             placeholder="Select the type of problem"
             onChange={(value) => setRequest({ ...request, category: value })}
           />
-          <SelectField
-            label="Priority"
-            value={request.priority}
-            options={["Low", "Medium", "High"]}
-            onChange={(value) => setRequest({ ...request, priority: value })}
-          />
         </div>
+        <IntakeQuestions
+          impact={request.impact}
+          urgency={request.urgency}
+          onImpact={(value) => setRequest({ ...request, impact: value })}
+          onUrgency={(value) => setRequest({ ...request, urgency: value })}
+        />
         <Field
           label="Subject"
           placeholder="Example: Cannot connect to Wi-Fi"
           value={request.subject}
           onChange={(value) => setRequest({ ...request, subject: value })}
         />
-        <Field
-          label="Location"
-          placeholder="Example: Computer Laboratory 2"
-          value={request.location}
-          onChange={(value) => setRequest({ ...request, location: value })}
+        <LocationSelector
+          key={request.resetKey}
+          value={request.locationId}
+          onChange={(value) => setRequest((previous) => ({ ...previous, locationId: value }))}
         />
         <label className="field-label">
           Description
@@ -1939,7 +1950,7 @@ function TechnicianRequests({
                       {fit === "neutral" && <span className="fit-badge">—</span>}
                     </td>
                     <td>
-                      <Priority value={ticket.priority} />
+                      <Priority value={ticket.priority} tier={ticket.priorityTier} />
                     </td>
                     <td>
                       <Status value={ticket.status} />
