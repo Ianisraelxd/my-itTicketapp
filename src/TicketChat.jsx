@@ -249,7 +249,7 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
           </p>
         )}
         {messages.map((message, index) => {
-          if (message.kind === "cancellation_decision") {
+          if (message.kind === "cancellation_decision" || message.kind === "assignment") {
             return (
               <div className="chat-system" key={message.id}>
                 {message.text}
@@ -515,11 +515,24 @@ export function TicketDetailsModal({ ticket, me, onClose, onChanged, showMessage
   const submitted = ticket.createdAt ? formatTime(ticket.createdAt) : "";
   const facts = [
     ["Category", ticket.category],
-    ["Priority", `${ticket.priority}`],
+    ["Priority", ticket.priorityTier ? `${ticket.priorityTier} · ${ticket.priority}` : `${ticket.priority}`],
     ["Location", ticket.location || "Not provided"],
     ["Requested by", ticket.userName || "Unknown"],
     ["Submitted", submitted || "—"],
   ];
+  // Auto-assign: unresolved tickets move to another agent with the same specialty after 30 minutes.
+  if (Number(ticket.assignedManually) === 1 && ["Open", "In Progress"].includes(ticket.status)) {
+    facts.push(["Assignment", "Set by an admin (stays with this agent)"]);
+  } else if (ticket.autoAssignAt) {
+    const due = new Date(ticket.autoAssignAt);
+    const when = formatTime(due);
+    facts.push([
+      "Auto-assign",
+      ticket.assignedTo
+        ? `Moves to another ${ticket.category} agent at ${when} if not resolved`
+        : `Assigned to a ${ticket.category} agent at ${when} if nobody takes it`,
+    ]);
+  }
 
   return (
     <div className="modal-backdrop" onClick={onClose}>

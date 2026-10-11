@@ -231,6 +231,18 @@ The ticket form no longer asks the requester to pick a priority or type a locati
 
 SQL for an existing database: `server/migrations/2026-10-priority-locations.sql`.
 
+## Auto-assignment with a 30-minute expiry
+
+Admins can still assign any ticket by hand. When they do not, the system takes over (`server/autoassign.js`, checked every minute):
+
+- A ticket that stays **Open for 30 minutes** is assigned to an agent whose **skills match its category** (Hardware, Software, Network / Internet, Account / Login, Printer).
+- An auto-assigned ticket that is **not resolved 30 minutes after assignment expires**: it moves to a different agent with the same specialty, and the conversation, the old agent, the new agent, the requester and the admins are told.
+- Among matching agents it prefers one who is **online**, then the **lightest load**, then whoever has waited longest for work, and it rotates so the ticket does not bounce between the same two people.
+- A ticket assigned **by an admin is pinned** and never moved automatically (an admin can reassign it at any time). Reopening a resolved ticket restarts the 30 minutes.
+- If no agent has the skill (or the current agent is the only specialist), the ticket stays where it is, the timer restarts and the admins get a notification.
+- Settings (environment variables): `AUTO_ASSIGN_MINUTES` (default 30), `AUTO_ASSIGN_CHECK_SECONDS` (60), `AUTO_ASSIGN=false` to switch it off. Assignment history is stored in `ticket_assignments`.
+- The ticket details show when the next automatic move will happen. Unit tests: `npm test`. SQL for an existing database: `server/migrations/2026-10-autoassign.sql` (run `2026-10-roles.sql` too if you still have the old Employee / Technician roles).
+
 ## Security and governance
 
 **Sign-in and sessions**

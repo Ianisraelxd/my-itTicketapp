@@ -2865,6 +2865,9 @@ function ChatDock({ me }) {
 const NOTIFICATION_STYLES = {
   resolved: ["✓", "good"],
   assigned: ["➜", "info"],
+  reassigned: ["⟲", "warn"],
+  auto_assigned: ["⚙", "info"],
+  auto_unassigned: ["!", "warn"],
   in_progress: ["◔", "info"],
   status: ["•", "info"],
   message: ["✉", "info"],

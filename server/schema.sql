@@ -24,6 +24,7 @@ DROP TABLE IF EXISTS ticket_messages;
 DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS activities;
 DROP TABLE IF EXISTS password_requests;
+DROP TABLE IF EXISTS ticket_assignments;
 DROP TABLE IF EXISTS tickets;
 DROP TABLE IF EXISTS locations;
 DROP TABLE IF EXISTS users;
@@ -79,6 +80,9 @@ CREATE TABLE tickets (
   impact_level  ENUM('Organization', 'Department', 'Individual') NULL,  -- who is affected
   urgency_level ENUM('High', 'Medium', 'Low') NULL,                     -- when it is needed
   priority_tier ENUM('P1', 'P2', 'P3', 'P4') NULL,                      -- calculated by server/priority.js
+  assignment_started_at TIMESTAMP NULL,      -- start of the current assignment (auto-assign expires it after 30 min)
+  assigned_manually TINYINT(1) NOT NULL DEFAULT 0,  -- 1 = an admin assigned it, so it is never moved automatically
+  auto_assign_count INT NOT NULL DEFAULT 0,  -- how many times the engine assigned or reassigned it
   created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   KEY idx_ticket_tier (priority_tier),
   CONSTRAINT fk_ticket_user FOREIGN KEY (created_by)
@@ -144,6 +148,21 @@ INSERT INTO users (id_number, password, name, role, role_name, email) VALUES
 INSERT INTO users (id_number, password, name, role, role_name, email) VALUES
   ('assistant', 'scrypt$locked$locked', 'HelpDesk Assistant', 'bot', 'Assistant Bot', NULL);
 
+-- Who had each ticket and how it got to them (manual, auto, expired); used to rotate between specialists.
+CREATE TABLE ticket_assignments (
+  assignment_pk INT AUTO_INCREMENT PRIMARY KEY,
+  ticket_pk     INT NOT NULL,
+  agent_pk      INT NOT NULL,
+  assigned_by   INT NULL,                        -- the admin, or NULL when the engine did it
+  method        ENUM('manual', 'auto', 'expired') NOT NULL,
+  created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_assign_agent (agent_pk, created_at),
+  KEY idx_assign_ticket (ticket_pk),
+  CONSTRAINT fk_assign_ticket FOREIGN KEY (ticket_pk) REFERENCES tickets(ticket_pk) ON DELETE CASCADE,
+  CONSTRAINT fk_assign_agent FOREIGN KEY (agent_pk) REFERENCES users(user_pk) ON DELETE CASCADE,
+  CONSTRAINT fk_assign_by FOREIGN KEY (assigned_by) REFERENCES users(user_pk) ON DELETE SET NULL
+);
+
 -- Rooms offered in the ticket form.
 INSERT INTO locations (campus_zone, building_name, room_name, room_type) VALUES
   ('Main Campus', 'Administration Building', 'Registrar''s Office', 'Office'),
@@ -189,7 +208,7 @@ CREATE TABLE ticket_messages (
   ticket_pk    INT NOT NULL,
   sender_pk    INT NOT NULL,
   message_text VARCHAR(1000) NOT NULL,
-  kind         VARCHAR(24)   NOT NULL DEFAULT 'chat',  -- chat | cancellation_request | cancellation_decision | reopen | bot | bot_choice | bot_note
+  kind         VARCHAR(24)   NOT NULL DEFAULT 'chat',  -- chat | cancellation_request | cancellation_decision | reopen | assignment | bot | bot_choice | bot_note
   meta         TEXT NULL,                              -- JSON quick-reply options on assistant messages
   created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   KEY idx_ticket_msg (ticket_pk, message_pk),

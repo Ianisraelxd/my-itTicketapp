@@ -325,7 +325,6 @@ function mainMenu(ctx) {
   ];
 }
 
-const backToMenu = (ctx) => [opt("menu", "🏠 Back to the menu"), ...(ctx.ticket.status === "Resolved" || ctx.ticket.status === "Cancelled" ? [] : [])];
 
 // --- The conversation: one choice in, replies (and an optional staff note) out -----------
 async function handle(choice, ctx, deps) {
@@ -1077,7 +1076,12 @@ ${ctx.availability.anyOnline ? availabilityLine(ctx.availability) : "The team is
     }));
   }
 
-  return { registerBotRoutes, postGreeting, postResolvedPrompt, autoReply };
+  // A short system line in the ticket conversation (used for automatic assignment notices).
+  async function postNotice(ticketPk, text) {
+    await insertMessage(ticketPk, await getBotId(), text, "assignment");
+  }
+
+  return { registerBotRoutes, postGreeting, postResolvedPrompt, autoReply, postNotice };
 }
 
 export { MESSAGE_SELECT };

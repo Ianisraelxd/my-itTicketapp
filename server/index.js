@@ -1,6 +1,7 @@
 import "dotenv/config";
 import express from "express";
 import { authenticate, verifyReportViewer } from "./auth.js";
+import { AUTO_ASSIGN_MINUTES, startAutoAssign } from "./autoassign.js";
 import { createBot, shapeMessage } from "./bot.js";
 import { pool, query } from "./db.js";
 import { calculatePriority } from "./priority.js";
@@ -288,14 +289,14 @@ app.get("/api/tickets", wrap(async (req, res) => {
 
   if (mine === "1" && userId) {
     const rows = await query(
-      "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.location_id AS locationId, t.impact_level AS impactLevel, t.urgency_level AS urgencyLevel, t.priority_tier AS priorityTier, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to WHERE t.created_by = ? ORDER BY t.ticket_pk DESC",
+      `SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.location_id AS locationId, t.impact_level AS impactLevel, t.urgency_level AS urgencyLevel, t.priority_tier AS priorityTier, t.assigned_manually AS assignedManually, t.auto_assign_count AS autoAssignCount, CASE WHEN t.assigned_manually = 0 AND t.status IN ('Open', 'In Progress') THEN DATE_ADD(COALESCE(t.assignment_started_at, t.created_at), INTERVAL ${AUTO_ASSIGN_MINUTES} MINUTE) END AS autoAssignAt, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to WHERE t.created_by = ? ORDER BY t.ticket_pk DESC`,
       [userId],
     );
     return res.json(rows);
   }
 
   const rows = await query(
-    "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.location_id AS locationId, t.impact_level AS impactLevel, t.urgency_level AS urgencyLevel, t.priority_tier AS priorityTier, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to ORDER BY t.ticket_pk DESC",
+    `SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.location_id AS locationId, t.impact_level AS impactLevel, t.urgency_level AS urgencyLevel, t.priority_tier AS priorityTier, t.assigned_manually AS assignedManually, t.auto_assign_count AS autoAssignCount, CASE WHEN t.assigned_manually = 0 AND t.status IN ('Open', 'In Progress') THEN DATE_ADD(COALESCE(t.assignment_started_at, t.created_at), INTERVAL ${AUTO_ASSIGN_MINUTES} MINUTE) END AS autoAssignAt, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to ORDER BY t.ticket_pk DESC`,
   );
   res.json(rows);
 }));
@@ -553,12 +554,17 @@ app.patch("/api/tickets/:id/assign", wrap(async (req, res) => {
 
   const placeholders = CLOSED_STATUSES.map(() => "?").join(", ");
   const [result] = await pool.execute(
-    `UPDATE tickets SET assigned_to = ?, status = 'In Progress', assigned_at = COALESCE(assigned_at, NOW()), first_response_at = COALESCE(first_response_at, NOW()) WHERE ticket_pk = ? AND status NOT IN (${placeholders})`,
+    `UPDATE tickets SET assigned_to = ?, status = 'In Progress', assigned_at = COALESCE(assigned_at, NOW()), first_response_at = COALESCE(first_response_at, NOW()), assignment_started_at = NOW(), assigned_manually = 1 WHERE ticket_pk = ? AND status NOT IN (${placeholders})`,
     [agent.user_pk, ticket.ticket_pk, ...CLOSED_STATUSES],
   );
   if (result.affectedRows === 0) {
     return res.status(409).json({ error: "This ticket is already finished and cannot be assigned." });
   }
+  await query("INSERT INTO ticket_assignments (ticket_pk, agent_pk, assigned_by, method) VALUES (?, ?, ?, 'manual')", [
+    ticket.ticket_pk,
+    agent.user_pk,
+    admin.user_pk,
+  ]);
   await notify([agent.user_pk], {
     type: "assigned",
     title: "New ticket assigned to you",
@@ -746,7 +752,7 @@ async function reopenTicketFor({ ticket, user, reason }) {
 
   const nextStatus = ticket.assigned_to ? "In Progress" : "Open";
   const [result] = await pool.execute(
-    "UPDATE tickets SET status = ?, reopen_count = reopen_count + 1, resolved_at = NULL WHERE ticket_pk = ? AND status = 'Resolved' AND reopen_count < ?",
+    "UPDATE tickets SET status = ?, reopen_count = reopen_count + 1, resolved_at = NULL, assignment_started_at = NOW() WHERE ticket_pk = ? AND status = 'Resolved' AND reopen_count < ?",
     [nextStatus, ticket.ticket_pk, MAX_REOPENS],
   );
   if (result.affectedRows === 0) {
@@ -1372,6 +1378,10 @@ app.use((err, _req, res, _next) => {
   console.error(err);
   res.status(500).json({ error: "Internal server error." });
 });
+
+// Expires unresolved assignments after AUTO_ASSIGN_MINUTES (30) and passes the ticket to another
+// agent with the same specialty; tickets an admin assigned by hand are left alone.
+startAutoAssign({ query, pool, notify, adminIds, postNotice: (ticketPk, text) => bot.postNotice(ticketPk, text) });
 
 app.listen(PORT, () => {
   console.log(`HelpDesk API listening on http://localhost:${PORT}`);
