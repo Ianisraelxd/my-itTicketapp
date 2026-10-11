@@ -23,7 +23,7 @@ function unitHint(unit) {
   if (unit === "minutes") return "minutes";
   if (unit === "percent") return "%";
   if (unit === "days") return "days";
-  if (unit === "ratio") return "per technician";
+  if (unit === "ratio") return "per agent";
   return "tickets";
 }
 

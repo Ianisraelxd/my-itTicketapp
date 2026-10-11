@@ -269,23 +269,23 @@ const seedUsers = [{
 }, {
   id: "2404154",
   password: "123456employee",
-  name: "Employee User",
-  role: "employee",
-  roleName: "Employee",
+  name: "Staff User",
+  role: "staff",
+  roleName: "Staff",
   email: "employee@campus.edu"
 }, {
   id: "2404154",
   password: "123456technician",
-  name: "Technician User",
-  role: "technician",
-  roleName: "Technician",
+  name: "Agent User",
+  role: "agent",
+  roleName: "Agent",
   email: "technician@campus.edu"
 }, {
   id: "2404154",
   password: "123456admin",
   name: "Users Admin",
   role: "admin",
-  roleName: "Student / Employee Admin",
+  roleName: "Student / Staff Admin",
   email: "admin@campus.edu"
 }, {
   id: "2404154",
@@ -314,7 +314,7 @@ const seedTickets = [{
   priority: "Low",
   status: "Resolved"
 }];
-const seedActivities = [["Aug. 30, 2026 - 10:30 AM", "Super Admin", "Super Admin", "Logged into the system"], ["Aug. 30, 2026 - 10:45 AM", "Maria Santos", "Student", "Submitted ticket #HD015"], ["Aug. 30, 2026 - 11:00 AM", "Mark Cruz", "Technician", "Updated ticket #HD015"]];
+const seedActivities = [["Aug. 30, 2026 - 10:30 AM", "Super Admin", "Super Admin", "Logged into the system"], ["Aug. 30, 2026 - 10:45 AM", "Maria Santos", "Student", "Submitted ticket #HD015"], ["Aug. 30, 2026 - 11:00 AM", "Mark Cruz", "Agent", "Updated ticket #HD015"]];
 const read = (key, fallback) => {
   try {
     const raw = localStorage.getItem(key);
@@ -400,7 +400,7 @@ const store = {
 };
 const navFor = {
   user: [["userDashboard", "\u25C8", "Dashboard"], ["requestPage", "+", "Submit Request"], ["myRequestsPage", "\u25A4", "My Requests"]],
-  technician: [["technicianDashboard", "\u25C8", "Dashboard"], ["technicianRequestsPage", "\u25A4", "Assigned Requests"]],
+  agent: [["agentDashboard", "\u25C8", "Dashboard"], ["agentRequestsPage", "\u25A4", "Assigned Requests"]],
   admin: [["adminDashboard", "\u25C8", "Dashboard"], ["manageRequestsPage", "\u25A4", "Manage Requests"], ["usersPage", "\u2659", "Users"]],
   superadmin: [["superAdminDashboard", "\u25C8", "Dashboard"], ["usersPage", "\u2659", "Manage Users"], ["manageRequestsPage", "\u25A4", "Manage Requests"], ["activityLogPage", "\u25F7", "Activity Logs"]]
 };
@@ -423,7 +423,7 @@ function App() {
     location: "",
     description: ""
   });
-  const roleType = user?.role === "superadmin" ? "superadmin" : user?.role === "admin" ? "admin" : user?.role === "technician" ? "technician" : "user";
+  const roleType = user?.role === "superadmin" ? "superadmin" : user?.role === "admin" ? "admin" : user?.role === "agent" ? "agent" : "user";
   const addActivity = activity => {
     setActivities(items => [[new Date().toLocaleString(), user.name, user.roleName, activity], ...items]);
     store.addActivity({
@@ -453,7 +453,7 @@ function App() {
       return;
     }
     setUser(account);
-    const landing = account.role === "superadmin" ? "superAdminDashboard" : account.role === "admin" ? "adminDashboard" : account.role === "technician" ? "technicianDashboard" : "userDashboard";
+    const landing = account.role === "superadmin" ? "superAdminDashboard" : account.role === "admin" ? "adminDashboard" : account.role === "agent" ? "agentDashboard" : "userDashboard";
     setPage(landing);
     setCredentials(current => ({
       ...current,
@@ -542,9 +542,9 @@ function App() {
   }), page === "myRequestsPage" && /*#__PURE__*/React.createElement(MyRequests, {
     tickets: tickets,
     setPage: setPage
-  }), page === "technicianDashboard" && /*#__PURE__*/React.createElement(TechnicianDashboard, {
+  }), page === "agentDashboard" && /*#__PURE__*/React.createElement(AgentDashboard, {
     setPage: setPage
-  }), page === "technicianRequestsPage" && /*#__PURE__*/React.createElement(TechnicianRequests, {
+  }), page === "agentRequestsPage" && /*#__PURE__*/React.createElement(AgentRequests, {
     addActivity: addActivity,
     showMessage: showMessage
   }), (page === "adminDashboard" || page === "superAdminDashboard") && /*#__PURE__*/React.createElement(AdminDashboard, {
@@ -642,12 +642,12 @@ function AuthScreen({
   }, /*#__PURE__*/React.createElement("option", {
     value: "student"
   }, "Student"), /*#__PURE__*/React.createElement("option", {
-    value: "employee"
-  }, "Employee"), /*#__PURE__*/React.createElement("option", {
-    value: "technician"
-  }, "Technician"), /*#__PURE__*/React.createElement("option", {
+    value: "staff"
+  }, "Staff"), /*#__PURE__*/React.createElement("option", {
+    value: "agent"
+  }, "Agent"), /*#__PURE__*/React.createElement("option", {
     value: "admin"
-  }, "Student / Employee Admin"), /*#__PURE__*/React.createElement("option", {
+  }, "Student / Staff Admin"), /*#__PURE__*/React.createElement("option", {
     value: "superadmin"
   }, "Super Admin"))), /*#__PURE__*/React.createElement("button", {
     className: "button button-primary full-width",
@@ -657,7 +657,7 @@ function AuthScreen({
     onSignup: () => setPage("signup")
   })), isSignup && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(AuthHeading, {
     title: "Create account",
-    detail: "Register as a student or employee."
+    detail: "Register as a student or staff."
   }), /*#__PURE__*/React.createElement("form", {
     onSubmit: event => {
       event.preventDefault();
@@ -669,14 +669,14 @@ function AuthScreen({
     placeholder: "Enter your full name"
   }), /*#__PURE__*/React.createElement(Field, {
     label: "ID number",
-    placeholder: "Student / Employee ID"
+    placeholder: "Student / Staff ID"
   }), /*#__PURE__*/React.createElement(Field, {
     label: "Email",
     type: "email",
     placeholder: "Enter email"
   }), /*#__PURE__*/React.createElement("label", {
     className: "field-label"
-  }, "User type", /*#__PURE__*/React.createElement("select", null, /*#__PURE__*/React.createElement("option", null, "Student"), /*#__PURE__*/React.createElement("option", null, "Employee"))), /*#__PURE__*/React.createElement(Field, {
+  }, "User type", /*#__PURE__*/React.createElement("select", null, /*#__PURE__*/React.createElement("option", null, "Student"), /*#__PURE__*/React.createElement("option", null, "Staff"))), /*#__PURE__*/React.createElement(Field, {
     label: "Password",
     type: "password",
     placeholder: "Create password"
@@ -959,11 +959,11 @@ function AdminDashboard({
   type,
   setPage
 }) {
-  const stats = type === "super" ? [["Total users", "420"], ["Total tickets", "54"], ["Technicians", "8"], ["Resolved tickets", "39"]] : [["Students", "245"], ["Employees", "91"], ["Pending requests", "14"], ["Resolved requests", "31"]];
+  const stats = type === "super" ? [["Total users", "420"], ["Total tickets", "54"], ["Agents", "8"], ["Resolved tickets", "39"]] : [["Students", "245"], ["Staff", "91"], ["Pending requests", "14"], ["Resolved requests", "31"]];
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(PageHeader, {
     eyebrow: type === "super" ? "SYSTEM / 01" : "ADMIN / 01",
     title: type === "super" ? "System overview." : "Users administration.",
-    description: type === "super" ? "A pulse check across the entire HelpDesk system." : "Manage student and employee requests from one place."
+    description: type === "super" ? "A pulse check across the entire HelpDesk system." : "Manage student and staff requests from one place."
   }), /*#__PURE__*/React.createElement("div", {
     className: "stats-grid"
   }, stats.map(([label, value]) => /*#__PURE__*/React.createElement(StatCard, {
@@ -984,11 +984,11 @@ function AdminDashboard({
     onClick: () => setPage("activityLogPage")
   }, /*#__PURE__*/React.createElement("span", null, "\u25F7"), /*#__PURE__*/React.createElement("strong", null, "Activity logs"), /*#__PURE__*/React.createElement("small", null, "See recent system actions")))));
 }
-function TechnicianDashboard({
+function AgentDashboard({
   setPage
 }) {
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(PageHeader, {
-    eyebrow: "TECHNICIAN / 01",
+    eyebrow: "AGENT / 01",
     title: "Your work queue.",
     description: "View and manage the support requests assigned to you."
   }), /*#__PURE__*/React.createElement("div", {
@@ -1014,16 +1014,16 @@ function TechnicianDashboard({
     className: "empty-icon"
   }, "\u2713"), /*#__PURE__*/React.createElement("h2", null, "Ready when you are."), /*#__PURE__*/React.createElement("p", null, "There are 9 requests waiting for your attention."), /*#__PURE__*/React.createElement("button", {
     className: "button button-primary",
-    onClick: () => setPage("technicianRequestsPage")
+    onClick: () => setPage("agentRequestsPage")
   }, "View assigned requests ", /*#__PURE__*/React.createElement("span", null, "\u2192"))));
 }
-function TechnicianRequests({
+function AgentRequests({
   addActivity,
   showMessage
 }) {
   const [resolved, setResolved] = useState(false);
   return /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(PageHeader, {
-    eyebrow: "TECHNICIAN / 02",
+    eyebrow: "AGENT / 02",
     title: "Assigned requests",
     description: "Technical issues currently assigned to you."
   }), /*#__PURE__*/React.createElement("section", {
@@ -1063,12 +1063,12 @@ function ManageRequests({
     value: "Open"
   })), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("button", {
     className: "table-button",
-    onClick: () => showMessage("Technician assigned", "The ticket was assigned successfully.")
-  }, "Assign"))), /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("strong", null, "#HD016")), /*#__PURE__*/React.createElement("td", null, "Jose Reyes"), /*#__PURE__*/React.createElement("td", null, "Employee"), /*#__PURE__*/React.createElement("td", null, "Printer error"), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement(Status, {
+    onClick: () => showMessage("Agent assigned", "The ticket was assigned successfully.")
+  }, "Assign"))), /*#__PURE__*/React.createElement("tr", null, /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("strong", null, "#HD016")), /*#__PURE__*/React.createElement("td", null, "Jose Reyes"), /*#__PURE__*/React.createElement("td", null, "Staff"), /*#__PURE__*/React.createElement("td", null, "Printer error"), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement(Status, {
     value: "In Progress"
   })), /*#__PURE__*/React.createElement("td", null, /*#__PURE__*/React.createElement("button", {
     className: "table-button light",
-    onClick: () => showMessage("Ticket details", "This ticket is currently being handled by a technician.")
+    onClick: () => showMessage("Ticket details", "This ticket is currently being handled by an agent.")
   }, "View"))))))));
 }
 function UsersPage() {

@@ -151,7 +151,7 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
-  setTechnicianSkills: (userId, payload) =>
+  setAgentSkills: (userId, payload) =>
     request(`/users/${encodeURIComponent(userId)}/skills`, {
       method: "PATCH",
       body: JSON.stringify(payload),

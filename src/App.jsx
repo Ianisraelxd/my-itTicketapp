@@ -30,9 +30,9 @@ const navFor = {
     ["myRequestsPage", "▤", "My Requests"],
     ["notificationsPage", "🔔", "Notifications"],
   ],
-  technician: [
-    ["technicianDashboard", "◈", "Dashboard"],
-    ["technicianRequestsPage", "▤", "Assigned Requests"],
+  agent: [
+    ["agentDashboard", "◈", "Dashboard"],
+    ["agentRequestsPage", "▤", "Assigned Requests"],
     ["notificationsPage", "🔔", "Notifications"],
   ],
   admin: [
@@ -56,36 +56,36 @@ const navFor = {
   ],
 };
 
-const MFA_ROLES = ["technician", "admin", "superadmin", "report_viewer"];
+const MFA_ROLES = ["agent", "admin", "superadmin", "report_viewer"];
 
 function landingFor(role) {
   if (role === "superadmin" || role === "report_viewer") return "superAdminDashboard";
   if (role === "admin") return "adminDashboard";
-  if (role === "technician") return "technicianDashboard";
+  if (role === "agent") return "agentDashboard";
   return "userDashboard";
 }
 
 const PAGE_KEY = "helpdesk-page";
 
-// Technician + progress shown in the ticket tables. Derived from the ticket
-// itself (status, assigned technician, pending cancellation) so every role sees
+// Agent + progress shown in the ticket tables. Derived from the ticket
+// itself (status, assigned agent, pending cancellation) so every role sees
 // the same thing; the browser-only assignment record is just a fallback name.
 function ticketTracking(ticket, assignment = {}) {
-  const assignedTechnician = ticket.assignedName || assignment.assignedTechnician || "";
+  const assignedAgent = ticket.assignedName || assignment.assignedAgent || "";
   let progress;
   if (ticket.status === "Cancelled") progress = "Cancelled";
   else if (ticket.status === "Resolved") progress = "Resolved";
   else if (Number(ticket.cancelPending) > 0) progress = "Cancellation requested";
-  else if (ticket.status === "In Progress") progress = assignedTechnician ? "Technician working on it" : "In progress";
-  else progress = "Waiting for a technician";
+  else if (ticket.status === "In Progress") progress = assignedAgent ? "Agent working on it" : "In progress";
+  else progress = "Waiting for an agent";
   if (Number(ticket.reopenCount) > 0 && !["Resolved", "Cancelled"].includes(ticket.status)) {
     progress = `Reopened: ${progress.charAt(0).toLowerCase()}${progress.slice(1)}`;
   }
-  return { assignedTechnician, progress };
+  return { assignedAgent, progress };
 }
 
-// Ticket categories. Technician skills are drawn from the same list (minus
-// "Others"), which is how requests get matched to the right technician.
+// Ticket categories. Agent skills are drawn from the same list (minus
+// "Others"), which is how requests get matched to the right agent.
 const SKILL_OPTIONS = [
   "Hardware",
   "Software",
@@ -95,7 +95,7 @@ const SKILL_OPTIONS = [
 ];
 const CATEGORY_OPTIONS = [...SKILL_OPTIONS, "Others"];
 
-// How well a ticket fits a technician's skills:
+// How well a ticket fits an agent's skills:
 // "match" = recommended, "mismatch" = outside their skills, "neutral" = no skills
 // assigned yet or a general ("Others") request.
 function skillFit(skills = [], category) {
@@ -161,7 +161,7 @@ function App() {
     resetKey: 0,
   });
 
-  const roleType = ["superadmin", "admin", "technician", "report_viewer"].includes(user?.role)
+  const roleType = ["superadmin", "admin", "agent", "report_viewer"].includes(user?.role)
     ? user.role
     : "user";
   const canEdit = user?.role === "superadmin";
@@ -262,8 +262,8 @@ function App() {
     if (!user) return;
     let active = true;
     const isPrivateUser =
-      user.role === "student" || user.role === "employee";
-    const needsAdminData = ["technician", "admin", "superadmin", "report_viewer"].includes(user.role);
+      user.role === "student" || user.role === "staff";
+    const needsAdminData = ["agent", "admin", "superadmin", "report_viewer"].includes(user.role);
     const seesActivityLog = ["superadmin", "report_viewer"].includes(user.role);
 
     Promise.all([
@@ -381,7 +381,7 @@ function App() {
     if (!request.category) {
       showMessage(
         "Choose a category",
-        "Please pick the type of problem (for example Hardware or Software) so the right technician can help.",
+        "Please pick the type of problem (for example Hardware or Software) so the right agent can help.",
       );
       return;
     }
@@ -518,7 +518,7 @@ function App() {
       return;
     }
     if (user.role === "admin") setPage("manageRequestsPage");
-    else if (user.role === "technician") setPage("technicianRequestsPage");
+    else if (user.role === "agent") setPage("agentRequestsPage");
     else setPage("myRequestsPage");
   }
 
@@ -650,15 +650,15 @@ function App() {
             showMessage={showMessage}
           />
         )}
-        {page === "technicianDashboard" && (
-          <TechnicianDashboard
+        {page === "agentDashboard" && (
+          <AgentDashboard
             me={user}
             setPage={setPage}
             tickets={allTickets.length ? allTickets : tickets}
           />
         )}
-        {page === "technicianRequestsPage" && (
-          <TechnicianRequests
+        {page === "agentRequestsPage" && (
+          <AgentRequests
             me={user}
             mySkills={allUsers.find((item) => item.userId === user.userId)?.skills || []}
             tickets={allTickets.length ? allTickets : tickets}
@@ -732,7 +732,7 @@ function App() {
         )}
         </div>
       </main>
-      {(user.role === "admin" || user.role === "technician") && (
+      {(user.role === "admin" || user.role === "agent") && (
         <ChatDock me={user} />
       )}
       <nav className="bottom-nav" aria-label="Main navigation">
@@ -922,9 +922,9 @@ function AuthScreen({
                     }
                   >
                     <option value="student">Student</option>
-                    <option value="employee">Employee</option>
-                    <option value="technician">Technician</option>
-                    <option value="admin">Student / Employee Admin</option>
+                    <option value="staff">University Staff</option>
+                    <option value="agent">Agent</option>
+                    <option value="admin">Student / Staff Admin</option>
                     <option value="superadmin">Super Admin</option>
                     <option value="report_viewer">Report Viewer (read-only)</option>
                   </select>
@@ -946,7 +946,7 @@ function AuthScreen({
             <>
               <AuthHeading
                 title="Create account"
-                detail="Register as a student or employee."
+                detail="Register as a student or staff."
               />
               <form
                 onSubmit={async (event) => {
@@ -994,7 +994,7 @@ function AuthScreen({
                 />
                 <Field
                   label="ID number"
-                  placeholder="Student / Employee ID"
+                  placeholder="Student / Staff ID"
                   value={signupForm.id}
                   onChange={(value) =>
                     setSignupForm((current) => ({ ...current, id: value }))
@@ -1021,7 +1021,7 @@ function AuthScreen({
                     }
                   >
                     <option>Student</option>
-                    <option>Employee</option>
+                    <option>University Staff</option>
                   </select>
                 </label>
                 <Field
@@ -1501,7 +1501,7 @@ function UserDashboard({ setPage, tickets, ticketAssignments = {}, userName }) {
   );
 }
 function TicketTable({ tickets, showAssignmentMeta = false, onOpen }) {
-  const hasMeta = showAssignmentMeta || tickets.some((ticket) => ticket.assignedTechnician || ticket.progress);
+  const hasMeta = showAssignmentMeta || tickets.some((ticket) => ticket.assignedAgent || ticket.progress);
 
   if (!tickets || tickets.length === 0) {
     return (
@@ -1521,7 +1521,7 @@ function TicketTable({ tickets, showAssignmentMeta = false, onOpen }) {
             <th>Category</th>
             <th>Priority</th>
             <th>Status</th>
-            {hasMeta && <th>Technician</th>}
+            {hasMeta && <th>Agent</th>}
             {hasMeta && <th>Progress</th>}
             {onOpen && <th>Details</th>}
           </tr>
@@ -1540,7 +1540,7 @@ function TicketTable({ tickets, showAssignmentMeta = false, onOpen }) {
               <td>
                 <Status value={ticket.status} />
               </td>
-              {hasMeta && <td>{ticket.assignedTechnician || "Unassigned"}</td>}
+              {hasMeta && <td>{ticket.assignedAgent || "Unassigned"}</td>}
               {hasMeta && <td>{ticket.progress || "Queued"}</td>}
               {onOpen && (
                 <td>
@@ -1707,11 +1707,11 @@ function AdminDashboard({ setPage, tickets = [], users = [] }) {
   const openTickets = tickets.filter((ticket) => ticket.status === "Open").length;
   const inProgressTickets = tickets.filter((ticket) => ticket.status === "In Progress").length;
   const studentCount = users.filter((user) => /student/i.test(user.role || "")).length;
-  const employeeCount = users.filter((user) => /employee/i.test(user.role || "")).length;
+  const staffCount = users.filter((user) => /staff/i.test(user.role || "")).length;
 
   const stats = [
     ["Students", String(studentCount)],
-    ["Employees", String(employeeCount)],
+    ["Staff", String(staffCount)],
     ["Pending requests", String(openTickets + inProgressTickets)],
     ["Resolved requests", String(resolvedTickets)],
   ];
@@ -1720,7 +1720,7 @@ function AdminDashboard({ setPage, tickets = [], users = [] }) {
       <PageHeader
         eyebrow="ADMIN / 01"
         title="Users administration."
-        description="Manage student and employee requests from one place."
+        description="Manage student and staff requests from one place."
       />
       <div className="stats-grid">
         {stats.map(([label, value]) => (
@@ -1756,7 +1756,7 @@ function AdminDashboard({ setPage, tickets = [], users = [] }) {
     </>
   );
 }
-function TechnicianDashboard({ setPage, tickets = [], me }) {
+function AgentDashboard({ setPage, tickets = [], me }) {
   const mine = tickets.filter(
     (ticket) => ticket.assignedTo === me.userId && ticket.status !== "Cancelled",
   );
@@ -1767,13 +1767,13 @@ function TechnicianDashboard({ setPage, tickets = [], me }) {
   return (
     <>
       <PageHeader
-        eyebrow="TECHNICIAN / 01"
+        eyebrow="AGENT / 01"
         title="Your work queue."
         description="View and manage the support requests currently in the system."
       />
       <div className="stats-grid">
         <StatCard label="Assigned to you" value={mine.length} hint="Tickets an admin gave you" />
-        <StatCard label="Waiting for a technician" value={waiting} tone="gold" hint="Not assigned yet" />
+        <StatCard label="Waiting for an agent" value={waiting} tone="gold" hint="Not assigned yet" />
         <StatCard label="Your tickets in progress" value={inProgress} tone="blue" />
         <StatCard label="Completed by you" value={resolved} tone="green" />
       </div>
@@ -1783,11 +1783,11 @@ function TechnicianDashboard({ setPage, tickets = [], me }) {
         <p>
           {waiting === 0
             ? "No requests are waiting right now."
-            : `${waiting} request${waiting === 1 ? " is" : "s are"} waiting for a technician.`}
+            : `${waiting} request${waiting === 1 ? " is" : "s are"} waiting for an agent.`}
         </p>
         <button
           className="button button-primary"
-          onClick={() => setPage("technicianRequestsPage")}
+          onClick={() => setPage("agentRequestsPage")}
         >
           View assigned requests <span>→</span>
         </button>
@@ -1805,7 +1805,7 @@ function SkillChips({ skills = [], empty = "No skills assigned" }) {
     </span>
   );
 }
-function TechnicianRequests({
+function AgentRequests({
   me,
   mySkills = [],
   tickets = [],
@@ -1868,7 +1868,7 @@ function TechnicianRequests({
   return (
     <>
       <PageHeader
-        eyebrow="TECHNICIAN / 02"
+        eyebrow="AGENT / 02"
         title="Assigned requests"
         description="Technical issues currently waiting for action."
       />
@@ -1917,7 +1917,7 @@ function TechnicianRequests({
                 <th>Fit</th>
                 <th>Priority</th>
                 <th>Status</th>
-                <th>Technician</th>
+                <th>Agent</th>
                 <th>Progress</th>
                 <th>Action</th>
               </tr>
@@ -1955,7 +1955,7 @@ function TechnicianRequests({
                     <td>
                       <Status value={ticket.status} />
                     </td>
-                    <td>{tracking.assignedTechnician || "Pending assignment"}</td>
+                    <td>{tracking.assignedAgent || "Pending assignment"}</td>
                     <td>{tracking.progress}</td>
                     <td>
                       <div className="inline-actions">
@@ -2035,8 +2035,8 @@ function ManageRequests({
   const [viewDialog, setViewDialog] = useState(null);
   const [chatId, setChatId] = useState(null);
   const chatTicket = tickets.find((ticket) => ticket.id === chatId);
-  const technicians = users.filter((user) =>
-    /technician/i.test(user.role || ""),
+  const agents = users.filter((user) =>
+    /agent/i.test(user.role || ""),
   );
 
   const handleAssign = async (ticketId) => {
@@ -2055,22 +2055,22 @@ function ManageRequests({
     });
   };
 
-  const confirmAssign = async (ticketId, technician, slot) => {
+  const confirmAssign = async (ticketId, agent, slot) => {
     try {
-      await api.assignTicket(ticketId, { actorId: me.userId, technicianId: technician.userId });
+      await api.assignTicket(ticketId, { actorId: me.userId, agentId: agent.userId });
       setTicketAssignments((current) => ({
         ...current,
         [ticketId]: {
           ...(current[ticketId] || {}),
-          assignedTechnician: technician.name,
-          technicianId: technician.id,
+          assignedAgent: agent.name,
+          agentId: agent.id,
           assignedTime: slot,
-          progress: "Technician assigned",
+          progress: "Agent assigned",
         },
       }));
       showMessage(
-        "Technician assigned",
-        `${technician.name} is available at ${slot} for ticket ${ticketId}.`,
+        "Agent assigned",
+        `${agent.name} is available at ${slot} for ticket ${ticketId}.`,
       );
       refreshData();
       setAssignDialog(null);
@@ -2097,7 +2097,7 @@ function ManageRequests({
                 <th>Role</th>
                 <th>Issue</th>
                 <th>Status</th>
-                <th>Technician</th>
+                <th>Agent</th>
                 <th>Progress</th>
                 <th>Action</th>
               </tr>
@@ -2122,7 +2122,7 @@ function ManageRequests({
                     <td>
                       <Status value={ticket.status} />
                     </td>
-                    <td>{tracking.assignedTechnician || "Unassigned"}</td>
+                    <td>{tracking.assignedAgent || "Unassigned"}</td>
                     <td>{tracking.progress}</td>
                     <td>
                       <div className="inline-actions">
@@ -2168,34 +2168,34 @@ function ManageRequests({
         <div className="modal-backdrop" onClick={() => setAssignDialog(null)}>
           <div className="modal-box assignment-modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-icon">✓</div>
-            <h3>Available technicians</h3>
+            <h3>Available agents</h3>
             <p>
               Assign support for <strong>{assignDialog.subject}</strong>.
             </p>
             <div className="assignment-list">
-              {technicians.length === 0 ? (
-                <div className="empty-assignment">No technicians are currently available.</div>
+              {agents.length === 0 ? (
+                <div className="empty-assignment">No agents are currently available.</div>
               ) : (
-                [...technicians]
+                [...agents]
                   .sort(
                     (a, b) =>
                       Number(skillFit(b.skills, assignDialog.category) === "match") -
                       Number(skillFit(a.skills, assignDialog.category) === "match"),
                   )
-                  .map((technician, index) => {
-                  const fit = skillFit(technician.skills, assignDialog.category);
+                  .map((agent, index) => {
+                  const fit = skillFit(agent.skills, assignDialog.category);
                   const slot = ["9:00 AM - 11:00 AM", "1:00 PM - 3:00 PM", "4:00 PM - 6:00 PM"][index % 3];
                   return (
                     <button
-                      key={technician.userId}
+                      key={agent.userId}
                       className="assignment-card"
-                      onClick={() => confirmAssign(assignDialog.ticketId, technician, slot)}
+                      onClick={() => confirmAssign(assignDialog.ticketId, agent, slot)}
                     >
                       <span className="assignment-name">
-                        {technician.name}
+                        {agent.name}
                         {fit === "match" && <span className="fit-badge fit-badge-match">★ Skill match</span>}
                       </span>
-                      <SkillChips skills={technician.skills} />
+                      <SkillChips skills={agent.skills} />
                       <span className="assignment-slot">Available: {slot}</span>
                     </button>
                   );
@@ -2215,7 +2215,7 @@ function ManageRequests({
             <h3>{viewDialog.id}</h3>
             <p>{viewDialog.subject}</p>
             <div className="detail-stack">
-              <div><strong>Technician:</strong> {viewDialog.tracking.assignedTechnician || "Not assigned"}</div>
+              <div><strong>Agent:</strong> {viewDialog.tracking.assignedAgent || "Not assigned"}</div>
               <div><strong>Availability:</strong> {viewDialog.assignment.assignedTime || "Awaiting schedule"}</div>
               <div><strong>Progress:</strong> {viewDialog.tracking.progress}</div>
               <div><strong>Status:</strong> {viewDialog.status}</div>
@@ -2271,7 +2271,7 @@ function PasswordRequestsPage({ requests = [], currentUser, showMessage, refresh
       <PageHeader
         eyebrow="SECURITY / 04"
         title="Password requests"
-        description="Accept or decline password change requests filed by students and employees."
+        description="Accept or decline password change requests filed by students and staff."
         action={<span className="table-count">{pendingCount} pending</span>}
       />
       <section className="panel">
@@ -2406,11 +2406,11 @@ function PasswordRequestsPage({ requests = [], currentUser, showMessage, refresh
     </>
   );
 }
-function SkillEditor({ technician, onToggle, busy }) {
+function SkillEditor({ agent, onToggle, busy }) {
   return (
     <div className="skill-editor">
       {SKILL_OPTIONS.map((skill) => {
-        const on = technician.skills.includes(skill);
+        const on = agent.skills.includes(skill);
         return (
           <button
             type="button"
@@ -2418,7 +2418,7 @@ function SkillEditor({ technician, onToggle, busy }) {
             className={`skill-toggle ${on ? "on" : ""}`}
             aria-pressed={on}
             disabled={busy}
-            onClick={() => onToggle(technician, skill)}
+            onClick={() => onToggle(agent, skill)}
           >
             {on ? "✓ " : "+ "}
             {skill}
@@ -2430,7 +2430,7 @@ function SkillEditor({ technician, onToggle, busy }) {
 }
 function UsersPage({ currentUser, showMessage, refreshData }) {
   const [users, setUsers] = useState([]);
-  const [selectedType, setSelectedType] = useState("technician");
+  const [selectedType, setSelectedType] = useState("agent");
   const [savingId, setSavingId] = useState(null);
   const [typeDialog, setTypeDialog] = useState(null);
 
@@ -2450,7 +2450,7 @@ function UsersPage({ currentUser, showMessage, refreshData }) {
                 ...row,
                 roleKey: result.role,
                 role: result.roleName,
-                skills: result.role === "technician" ? row.skills : [],
+                skills: result.role === "agent" ? row.skills : [],
               }
             : row,
         ),
@@ -2467,19 +2467,19 @@ function UsersPage({ currentUser, showMessage, refreshData }) {
     }
   }
 
-  async function toggleSkill(technician, skill) {
-    const next = technician.skills.includes(skill)
-      ? technician.skills.filter((item) => item !== skill)
-      : [...technician.skills, skill];
-    setSavingId(technician.userId);
+  async function toggleSkill(agent, skill) {
+    const next = agent.skills.includes(skill)
+      ? agent.skills.filter((item) => item !== skill)
+      : [...agent.skills, skill];
+    setSavingId(agent.userId);
     try {
-      const result = await api.setTechnicianSkills(technician.userId, {
+      const result = await api.setAgentSkills(agent.userId, {
         actorId: currentUser.userId,
         skills: next,
       });
       setUsers((rows) =>
         rows.map((row) =>
-          row.userId === technician.userId ? { ...row, skills: result.skills } : row,
+          row.userId === agent.userId ? { ...row, skills: result.skills } : row,
         ),
       );
       refreshData();
@@ -2526,8 +2526,8 @@ function UsersPage({ currentUser, showMessage, refreshData }) {
               onChange={(event) => setSelectedType(event.target.value)}
             >
               <option value="student">Student</option>
-              <option value="employee">Employee</option>
-              <option value="technician">Technician</option>
+              <option value="staff">University Staff</option>
+              <option value="agent">Agent</option>
               <option value="admin">Admin</option>
               <option value="superadmin">Super Admin</option>
             </select>
@@ -2541,8 +2541,8 @@ function UsersPage({ currentUser, showMessage, refreshData }) {
                 <th>Name</th>
                 <th>Role</th>
                 <th>Email</th>
-                {selectedType === "technician" && <th>Skills (tap to assign)</th>}
-                {(selectedType === "employee" || selectedType === "technician") && <th>Type</th>}
+                {selectedType === "agent" && <th>Skills (tap to assign)</th>}
+                {(selectedType === "staff" || selectedType === "agent") && <th>Type</th>}
                 <th>Status</th>
               </tr>
             </thead>
@@ -2560,16 +2560,16 @@ function UsersPage({ currentUser, showMessage, refreshData }) {
                     <td>{user.name}</td>
                     <td>{user.role}</td>
                     <td>{user.email}</td>
-                    {selectedType === "technician" && (
+                    {selectedType === "agent" && (
                       <td>
                         <SkillEditor
-                          technician={user}
+                          agent={user}
                           onToggle={toggleSkill}
                           busy={savingId === user.userId}
                         />
                       </td>
                     )}
-                    {(selectedType === "employee" || selectedType === "technician") && (
+                    {(selectedType === "staff" || selectedType === "agent") && (
                       <td>
                         <button
                           className="table-button light"
@@ -2577,11 +2577,11 @@ function UsersPage({ currentUser, showMessage, refreshData }) {
                           onClick={() =>
                             setTypeDialog({
                               user,
-                              role: selectedType === "employee" ? "technician" : "employee",
+                              role: selectedType === "staff" ? "agent" : "staff",
                             })
                           }
                         >
-                          {selectedType === "employee" ? "Make technician" : "Make employee"}
+                          {selectedType === "staff" ? "Make agent" : "Make staff"}
                         </button>
                       </td>
                     )}
@@ -2602,8 +2602,8 @@ function UsersPage({ currentUser, showMessage, refreshData }) {
             <h3>Change user type?</h3>
             <p>
               <strong>{typeDialog.user.name}</strong> will become a{" "}
-              <strong>{typeDialog.role === "technician" ? "Technician" : "Employee"}</strong>.
-              {typeDialog.role === "employee"
+              <strong>{typeDialog.role === "agent" ? "Agent" : "Staff"}</strong>.
+              {typeDialog.role === "staff"
                 ? " Their assigned skills will be cleared."
                 : " You can assign their skills afterwards."}
             </p>
@@ -2711,7 +2711,7 @@ function ChatWindow({ me, contact, onClose }) {
           <div className="chat-messages" ref={scroller}>
             {messages.length === 0 && (
               <p className="chat-empty">
-                Say hi to {contact.name}. Only admins and technicians can message each other.
+                Say hi to {contact.name}. Only admins and agents can message each other.
               </p>
             )}
             {messages.map((message, index) => {
@@ -2819,11 +2819,11 @@ function ChatDock({ me }) {
           <div className="chat-list" role="dialog" aria-label="Messages">
             <header>
               <strong>Messages</strong>
-              <small>Admins and technicians</small>
+              <small>Admins and agents</small>
             </header>
             <div className="chat-list-body">
               {contacts.length === 0 && (
-                <p className="chat-empty">No other admins or technicians yet.</p>
+                <p className="chat-empty">No other admins or agents yet.</p>
               )}
               {contacts.map((contact) => (
                 <button
@@ -3040,7 +3040,7 @@ function CancellationQueue({ me, showMessage, refreshData }) {
       showMessage(
         review.status === "Approved" ? "Cancellation approved" : "Cancellation declined",
         review.status === "Approved"
-          ? `${review.request.ticketId} was cancelled. The requester and technician were notified.`
+          ? `${review.request.ticketId} was cancelled. The requester and agent were notified.`
           : `${review.request.requesterName} was told the request stays open.`,
       );
     } catch (error) {
@@ -3123,7 +3123,7 @@ function CancellationQueue({ me, showMessage, refreshData }) {
             <h3>{review.status === "Approved" ? "Accept cancellation?" : "Reject cancellation?"}</h3>
             <p>
               {review.status === "Approved"
-                ? `${review.request.ticketId} will be cancelled and the requester and technician will be notified.`
+                ? `${review.request.ticketId} will be cancelled and the requester and agent will be notified.`
                 : `${review.request.ticketId} stays open and the requester will be told why.`}
             </p>
             <label className="field-label dialog-note">
@@ -3174,12 +3174,12 @@ function SuperAdminDashboard({ me, canEdit, showMessage, setPage, tickets = [], 
   const resolved = tickets.filter((t) => t.status === "Resolved").length;
   const open = tickets.filter((t) => t.status === "Open").length;
   const inProgress = tickets.filter((t) => t.status === "In Progress").length;
-  const technicians = users.filter((u) => /technician/i.test(u.role || "")).length;
+  const agents = users.filter((u) => /agent/i.test(u.role || "")).length;
   const resolutionRate = pct(resolved, total);
   const recent = activities.slice(0, 5);
 
   const summaries = [
-    ["Total users", String(users.length), `${technicians} technicians`],
+    ["Total users", String(users.length), `${agents} agents`],
     ["Total tickets", String(total), `${open} open · ${inProgress} in progress`],
     ["Resolved tickets", String(resolved), `${open + inProgress} still active`],
     ["System activity", String(activities.length), "logged actions"],
@@ -3246,8 +3246,8 @@ const STATUS_COLORS = {
 const PRIORITY_COLORS = { High: "#a44b45", Medium: "#bd8128", Low: "#1c6b56" };
 const REQUESTER_ROLES = [
   ["student", "Student"],
-  ["employee", "Employee"],
-  ["technician", "Technician"],
+  ["staff", "University Staff"],
+  ["agent", "Agent"],
   ["admin", "Admin"],
 ];
 

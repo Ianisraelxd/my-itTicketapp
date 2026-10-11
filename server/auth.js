@@ -15,7 +15,7 @@ import { verifyToken } from "./security.js";
 const PUBLIC_ROUTES = new Set(["GET /health", "POST /login", "POST /login/mfa", "POST /signup"]);
 const IDENTITY_FIELDS = ["userId", "actorId", "senderId", "createdBy", "reviewedBy"];
 const REVIEWERS = ["admin", "superadmin"];
-const STAFF = ["technician", "admin", "superadmin", "report_viewer"];
+const STAFF = ["agent", "admin", "superadmin", "report_viewer"];
 
 export const READ_ONLY_ROLES = ["report_viewer"];
 
@@ -55,7 +55,7 @@ function stampIdentity(req, user) {
   if (req.path !== "/password-requests") query.userId = String(self);
 
   // Requesters only ever see their own tickets and password requests.
-  if (req.method === "GET" && req.path === "/tickets" && ["student", "employee"].includes(user.role)) {
+  if (req.method === "GET" && req.path === "/tickets" && ["student", "staff"].includes(user.role)) {
     query.mine = "1";
     query.userId = String(self);
   }
@@ -106,7 +106,7 @@ export async function authenticate(req, res, next) {
     req.user = user;
 
     // Presence: staff who are using the app count as available (see staffAvailability in bot.js).
-    if (["technician", "admin"].includes(user.role)) {
+    if (["agent", "admin"].includes(user.role)) {
       query(
         "UPDATE users SET last_seen_at = NOW() WHERE user_pk = ? AND (last_seen_at IS NULL OR last_seen_at < NOW() - INTERVAL 20 SECOND)",
         [user.userId],

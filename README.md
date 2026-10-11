@@ -1,6 +1,6 @@
 # Campus HelpDesk
 
-A role-based IT support desk for a campus, built with **React + Vite**, backed by a small **Express + MySQL** API. Students and employees can submit and track support requests, technicians work their assigned queue, and admins manage users, tickets, and activity logs.
+A role-based IT support desk for a campus, built with **React + Vite**, backed by a small **Express + MySQL** API. Students and staff can submit and track support requests, agents work their assigned queue, and admins manage users, tickets, and activity logs.
 
 The project ships in two forms:
 
@@ -36,7 +36,7 @@ The project ships in two forms:
 ## Features
 
 **Everyone**
-- **Role-based access** — Student, Employee, Technician, Admin, Super Admin and a read-only Report Viewer, each with its own navigation and dashboard.
+- **Role-based access** — Student, University Staff, Agent, Admin, Super Admin and a read-only Report Viewer, each with its own navigation and dashboard.
 - **Secure sign-in** — hashed passwords, session tokens, account lockout after repeated failures and optional two-step verification (authenticator app).
 - **Sign in / sign up** — login checked against the database, plus a signup and password-reset-request flow (prototype).
 - **Notifications** — an in-app Notifications page with an unread badge and pop-up banners for everything that changes on your tickets and account.
@@ -44,23 +44,23 @@ The project ships in two forms:
 - **Sound effects** — login, signup, message sent, message received and notification sounds.
 - **Works on every screen** — sidebar on desktop, icon rail on tablets, bottom tab bar on phones.
 
-**Students and employees**
+**Students and staff**
 - Submit a request with a required category (Hardware, Software, Network / Internet, Account / Login, Printer, Others), priority, location and description.
-- Track every request with a live progress tracker (Submitted → In progress → Resolved) and the assigned technician's name.
+- Track every request with a live progress tracker (Submitted → In progress → Resolved) and the assigned agent's name.
 - Talk to the support team inside each ticket.
 - Can't cancel directly: they send a **cancellation request** with a reason, which an admin accepts or rejects.
 - If a resolved problem comes back, they can **reopen** the ticket (after a warning, with a reason, up to 3 times).
 
-**Technicians**
-- A queue of tickets with **recommendations**: tickets matching the technician's skills come first with a "Recommended" badge.
+**Agents**
+- A queue of tickets with **recommendations**: tickets matching the agent's skills come first with a "Recommended" badge.
 - Tickets outside their skills still appear, but resolving one asks for confirmation with an "at your own risk" warning.
-- Ticket conversations and a Facebook-style **chat dock** to message admins and other technicians.
+- Ticket conversations and a Facebook-style **chat dock** to message admins and other agents.
 
 **Admins**
-- **Manage requests**: review all tickets, assign a technician (skill matches are suggested first) and answer **cancellation requests**.
-- **Users**: browse accounts, assign **technician skills**, and switch someone between Employee and Technician.
+- **Manage requests**: review all tickets, assign an agent (skill matches are suggested first) and answer **cancellation requests**.
+- **Users**: browse accounts, assign **agent skills**, and switch someone between University Staff and Agent.
 - **Password requests**: approve or decline password-change requests.
-- Ticket conversations and the admin/technician chat dock.
+- Ticket conversations and the admin/agent chat dock.
 
 **Super admin**
 - A **Super Admin Panel** for governance: archive old tickets (with a downloadable JSON/CSV backup, never a hard delete) and manage who is an admin or read-only Report Viewer, including lockout and two-step-verification overrides. See [Security and governance](#security-and-governance).
@@ -82,7 +82,7 @@ All screenshots are generated from a demo database by [`scripts/capture-screensh
   </tr>
 </table>
 
-### Students and employees
+### Students and staff
 
 <table>
   <tr>
@@ -90,7 +90,7 @@ All screenshots are generated from a demo database by [`scripts/capture-screensh
     <td><img src="docs/screenshots/04-submit-request.png" alt="Submit a request form"><br><sub>Submit a request (the category is required)</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/05-my-requests.png" alt="My requests list"><br><sub>My requests with technician and progress</sub></td>
+    <td><img src="docs/screenshots/05-my-requests.png" alt="My requests list"><br><sub>My requests with agent and progress</sub></td>
     <td><img src="docs/screenshots/09-notifications.png" alt="Notifications page"><br><sub>Notifications</sub></td>
   </tr>
 </table>
@@ -106,12 +106,12 @@ All screenshots are generated from a demo database by [`scripts/capture-screensh
   </tr>
 </table>
 
-### Technicians
+### Agents
 
 <table>
   <tr>
-    <td><img src="docs/screenshots/18-technician-dashboard.png" alt="Technician dashboard"><br><sub>Dashboard</sub></td>
-    <td><img src="docs/screenshots/19-technician-queue.png" alt="Technician queue with recommendations"><br><sub>Queue with skill-based recommendations</sub></td>
+    <td><img src="docs/screenshots/18-agent-dashboard.png" alt="Agent dashboard"><br><sub>Dashboard</sub></td>
+    <td><img src="docs/screenshots/19-agent-queue.png" alt="Agent queue with recommendations"><br><sub>Queue with skill-based recommendations</sub></td>
   </tr>
 </table>
 
@@ -122,15 +122,15 @@ All screenshots are generated from a demo database by [`scripts/capture-screensh
 <table>
   <tr>
     <td><img src="docs/screenshots/21-admin-manage-requests.png" alt="Admin request management"><br><sub>Request management with the cancellation queue</sub></td>
-    <td><img src="docs/screenshots/22-assign-technician.png" alt="Assign a technician"><br><sub>Assigning a technician (skill matches first)</sub></td>
+    <td><img src="docs/screenshots/22-assign-agent.png" alt="Assign an agent"><br><sub>Assigning an agent (skill matches first)</sub></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/23-users-and-skills.png" alt="Users and technician skills"><br><sub>Users and technician skills</sub></td>
+    <td><img src="docs/screenshots/23-users-and-skills.png" alt="Users and agent skills"><br><sub>Users and agent skills</sub></td>
     <td><img src="docs/screenshots/24-password-requests.png" alt="Password requests"><br><sub>Password-change requests</sub></td>
   </tr>
 </table>
 
-**Admin / technician chat dock** — a Facebook-style chat in the bottom-right corner; every message shows the sender's name and role.
+**Admin / agent chat dock** — a Facebook-style chat in the bottom-right corner; every message shows the sender's name and role.
 
 ![Chat dock](docs/screenshots/25-chat-dock.png)
 
@@ -206,15 +206,15 @@ The screenshots come from a throwaway demo database, never your real one:
 
 Every ticket conversation starts with the **HelpDesk Assistant**, a guided chatbot that talks to the person who submitted the ticket. Instead of typing, the requester taps **multiple-choice buttons** and the assistant answers. It is rule-based (no external AI service, no cost) and everything it says is saved in the conversation, so staff can see what was already covered.
 
-- **Greeting on submit** with quick-reply buttons, and a note on **who is available**: if a technician or admin is online it says they can chat now; if the whole team is offline it says so and keeps helping. A green/grey banner above the chat shows the same thing live.
-- **Where is my ticket?** status, assigned technician, queue position and how long it has waited.
-- **Quick fixes** for the ticket's category (Hardware, Software, Network, Account, Printer) with numbered steps and a "Did that fix it?" loop. If it worked, the assistant offers to send a cancellation request (an admin still approves it); if not, it passes **what was tried** to the technician so nobody repeats themselves.
+- **Greeting on submit** with quick-reply buttons, and a note on **who is available**: if an agent or admin is online it says they can chat now; if the whole team is offline it says so and keeps helping. A green/grey banner above the chat shows the same thing live.
+- **Where is my ticket?** status, assigned agent, queue position and how long it has waited.
+- **Quick fixes** for the ticket's category (Hardware, Software, Network, Account, Printer) with numbered steps and a "Did that fix it?" loop. If it worked, the assistant offers to send a cancellation request (an admin still approves it); if not, it passes **what was tried** to the agent so nobody repeats themselves.
 - **How long will it take?** the target time for the ticket's priority.
-- **It's urgent**: pick a reason and the admins/technician are notified (rate-limited, the priority is not changed automatically).
-- **Talk to a technician**: when staff are online they are told and can chat in the same thread; when everyone is offline the requester is told, can leave a message, and staff are notified for when they return.
+- **It's urgent**: pick a reason and the admins/agent are notified (rate-limited, the priority is not changed automatically).
+- **Talk to an agent**: when an agent or admin is online they are told and can chat in the same thread; when everyone is offline the requester is told, can leave a message, and the agents and admins are notified for when they return.
 - **After resolution** the assistant asks for a 1-5 star rating (stored in `tickets.csat_rating`); a low rating alerts the admins and offers to reopen. It can also reopen the ticket with a reason.
-- **Understands typed messages too**: if the requester types instead of tapping, the assistant matches keywords (urgent, how long, status, cancel, talk to a technician, thanks, or a problem such as printer, Wi-Fi, password) and answers automatically. It stays quiet while a technician or admin has replied in the last 10 minutes, so people never get talked over, and it only repeats its "I didn't understand" message once. It is keyword-based (no external AI service). It understands **Tagalog** as well: typed Tagalog (for example "ayaw mag-print", "gaano katagal po?", "nasaan na ang ticket ko") gets a Tagalog reply and Tagalog buttons; the step-by-step fix instructions stay in English.
-- Staff-only **assistant notes** (what the requester tried, urgency, low rating) appear to technicians and admins but are hidden from the requester.
+- **Understands typed messages too**: if the requester types instead of tapping, the assistant matches keywords (urgent, how long, status, cancel, talk to an agent, thanks, or a problem such as printer, Wi-Fi, password) and answers automatically. It stays quiet while an agent or admin has replied in the last 10 minutes, so people never get talked over, and it only repeats its "I didn't understand" message once. It is keyword-based (no external AI service). It understands **Tagalog** as well: typed Tagalog (for example "ayaw mag-print", "gaano katagal po?", "nasaan na ang ticket ko") gets a Tagalog reply and Tagalog buttons; the step-by-step fix instructions stay in English.
+- **Assistant notes** for agents and admins only (what the requester tried, urgency, low rating) appear to agents and admins but are hidden from the requester.
 
 Design ideas taken from Intercom, Zendesk, ServiceNow and Freshdesk: guided buttons over free text, self-service before escalation, a clear human hand-off with context, actions as well as answers, and a satisfaction survey after resolution. The code is in `server/bot.js` (conversation tree and knowledge base: add new fixes to the `KNOWLEDGE` object) and the UI is in `src/TicketChat.jsx`. SQL for an existing database: `server/migrations/2026-10-chatbot.sql`.
 
@@ -227,7 +227,7 @@ The ticket form no longer asks the requester to pick a priority or type a locati
 - **Priority matrix** (`server/priority.js`, a pure function with unit tests): impact x urgency gives P1 to P4. Organization: High P1, Medium P1, Low P2. Department: High P1, Medium P2, Low P3. Individual: High P2, Medium P3, Low P4.
 - **Escalation**: if the description contains *Exam*, *Graduation*, *Lecture* or *Dean*, or `IS_FINALS_WEEK` is on (start the API with `FINALS_WEEK=true`), the tier goes up by one (P1 stays P1, and it only ever goes up one step).
 - The tier is stored in `tickets.priority_tier` with `impact_level`, `urgency_level` and `location_id`. The older High / Medium / Low label (P1 and P2 = High, P3 = Medium, P4 = Low) is still stored so reports, KPIs and SLA targets keep working.
-- **Queue-safe cancellation**: `PUT /api/tickets/:id/cancel` (admin) sets the status to Cancelled only while the ticket is Open or In Progress, never deletes the row, and the technician's active load drops immediately. Requesters still use the approval-based cancellation request.
+- **Queue-safe cancellation**: `PUT /api/tickets/:id/cancel` (admin) sets the status to Cancelled only while the ticket is Open or In Progress, never deletes the row, and the agent's active load drops immediately. Requesters still use the approval-based cancellation request.
 
 SQL for an existing database: `server/migrations/2026-10-priority-locations.sql`.
 
@@ -239,7 +239,7 @@ SQL for an existing database: `server/migrations/2026-10-priority-locations.sql`
 - The server stamps the caller's id on every "acting user" field (`userId`, `actorId`, `senderId`, `createdBy`, `reviewedBy`), so one user can't act as another by editing a request. Requesters only ever receive their own tickets and password requests.
 - The session survives a page refresh (it lives in `sessionStorage`) and ends when the tab closes or you log out.
 - **Account lockout**: 5 wrong passwords or codes in a row lock the account for 15 minutes. A super admin can clear it.
-- **Two-step verification** (authenticator app, TOTP) for technicians, admins, report viewers and the super admin: set it up from the profile. Lost phone? A super admin resets it.
+- **Two-step verification** (authenticator app, TOTP) for agents, admins, report viewers and the super admin: set it up from the profile. Lost phone? A super admin resets it.
 - Sessions are signed with `JWT_SECRET` if you set it in the environment; otherwise a random secret is created on first start and kept in `server/.jwt-secret` (gitignored), so sessions survive restarts.
 
 **Roles**
@@ -254,7 +254,7 @@ SQL for an existing database: `server/migrations/2026-10-priority-locations.sql`
 </table>
 
 - **Archiving**: pick a retention date (finished tickets last active before it; at least the last 30 days always stay), check how many tickets would move, then **Mass Export & Archive** (you type `ARCHIVE` to confirm). In one SQL transaction the tickets, their conversations and cancellation requests are copied into `tickets_archive`, `ticket_messages_archive` and `cancellation_requests_archive`, a **JSON and CSV backup** is written to `backups/archives/`, and only then are they removed from the live tables. Each run is recorded in `archive_runs` with download buttons. Nothing is permanently deleted, and new ticket numbers never reuse archived ones.
-- **IT Ops Admins & Report Viewers**: a table of privileged accounts with **Revoke access**, **Override lockout** and **Reset MFA**, plus a form to grant Admin or Report Viewer access to an employee or technician.
+- **IT Ops Admins & Report Viewers**: a table of privileged accounts with **Revoke access**, **Override lockout** and **Reset MFA**, plus a form to grant Admin or Report Viewer access to a staff member or agent.
 
 The SQL for all of this (only the new tables and columns) is in [`server/migrations/2026-10-enterprise.sql`](server/migrations/2026-10-enterprise.sql).
 
@@ -361,16 +361,16 @@ Open the Vite URL shown in the terminal (default `http://localhost:5173`). API r
 
 ## Demo accounts
 
-Most seed accounts share the ID `2404154`; select the matching role on the login screen. The two extra technicians exist so skill recommendations can be tried out.
+Most seed accounts share the ID `2404154`; select the matching role on the login screen. The two extran agents exist so skill recommendations can be tried out.
 
 | Role                       | ID        | Password            |
 | -------------------------- | --------- | ------------------- |
 | Student                    | `2404154` | `123456student`     |
-| Employee                   | `2404154` | `123456employee`    |
-| Technician (Hardware, Printer) | `2404154` | `123456technician` |
-| Software Technician (Software, Account / Login) | `2404155` | `123456technician` |
-| Network Technician (Network / Internet) | `2404156` | `123456technician` |
-| Student / Employee Admin   | `2404154` | `123456admin`       |
+| University Staff        | `2404154` | `123456employee`    |
+| Agent (Hardware, Printer) | `2404154` | `123456technician` |
+| Software Agent (Software, Account / Login) | `2404155` | `123456technician` |
+| Network Agent (Network / Internet) | `2404156` | `123456technician` |
+| Student / Staff Admin   | `2404154` | `123456admin`       |
 | Super Admin                | `2404154` | `123456superadmin`  |
 | Report Viewer (read-only)  | `2404154` | `123456viewer`      |
 
@@ -386,24 +386,24 @@ Base path: `/api` (proxied to `http://localhost:3001` in development).
 | POST | `/api/login` | Authenticate. Body: `{ id, password, role }`. Returns a session `token`, or `{ mfaRequired, mfaToken }` when two-step verification is on. All other routes (except signup and health) need `Authorization: Bearer <token>`. |
 | POST | `/api/login/mfa` | Second step. Body: `{ mfaToken, code }`. |
 | GET | `/api/me` | The signed-in user (used to restore a session after a refresh). |
-| POST | `/api/mfa/setup`, `/api/mfa/enable`, `/api/mfa/disable` | Two-step verification for staff accounts. |
+| POST | `/api/mfa/setup`, `/api/mfa/enable`, `/api/mfa/disable` | Two-step verification for agent, admin and report viewer accounts. |
 | GET | `/api/superadmin/overview` | Super admin only. Active / archived ticket counts. |
 | POST | `/api/superadmin/archive` | Super admin only. Body: `{ before: "2023-10-08", dryRun?, confirm? }`. Exports then archives finished tickets older than the date, in one transaction. |
 | GET | `/api/superadmin/archive/runs` | Super admin only. Archive history. |
 | GET | `/api/superadmin/archive/runs/:id/download?format=json\|csv` | Super admin only. Download a backup file. |
 | GET | `/api/superadmin/admins` | Super admin only. Admins, report viewers and people who could be given access. |
 | PUT | `/api/superadmin/manage-admins/:id` | Super admin only. Body: `{ action: "revoke" \| "grant" \| "grant_viewer" \| "unlock" \| "reset_mfa" }`. |
-| POST | `/api/signup` | Create a student or employee account. |
+| POST | `/api/signup` | Create a student or staff account. |
 | GET | `/api/tickets` | List tickets (newest first); `?mine=1&userId=` limits to one requester. Includes `location` and `createdAt`. |
 | POST | `/api/tickets` | Create a ticket. Body: `{ subject, category, locationId, impactLevel, urgencyLevel, description }`. The server calculates the P1-P4 tier (any `priority` sent is ignored) and returns `priorityTier`. |
 | GET | `/api/locations` | Rooms for the cascading Campus zone > Building > Room dropdown. |
 | PUT | `/api/tickets/:id/cancel` | Admin only. Queue-safe cancel: `UPDATE ... WHERE status IN ('Open','In Progress')`; the row is kept, a second call gets 409. |
-| GET | `/api/technicians/workload` | Admin only. Active (Open / In Progress) tickets per technician. |
+| GET | `/api/agents/workload` | Admin only. Active (Open / In Progress) tickets per agent. |
 | PATCH | `/api/tickets/:id/status` | Set status to Open, In Progress or Resolved. |
-| PATCH | `/api/tickets/:id/assign` | Admin only. Body: `{ actorId, technicianId }`; sets the technician and moves the ticket to In Progress. |
-| GET | `/api/tickets/:id/participants` | Who is in the ticket conversation: requester, assigned technician, admins. |
+| PATCH | `/api/tickets/:id/assign` | Admin only. Body: `{ actorId, agentId }`; sets the agent and moves the ticket to In Progress. |
+| GET | `/api/tickets/:id/participants` | Who is in the ticket conversation: requester, assigned agent, admins. |
 | POST | `/api/tickets/:id/bot` | Requester picks one of the assistant's options. Body: `{ choice }`. Returns the new messages. |
-| GET | `/api/tickets/:id/availability` | Which technicians/admins are online (used for the chat banner). |
+| GET | `/api/tickets/:id/availability` | Which agents/admins are online (used for the chat banner). |
 | GET / POST | `/api/tickets/:id/messages` | Ticket conversation. POST body: `{ userId, text }`. |
 | POST | `/api/tickets/:id/reopen` | Owner reopens a Resolved ticket. Body: `{ userId, reason }`; max 3 reopens. |
 | POST / GET | `/api/tickets/:id/cancellation-requests` | Owner files a cancellation request (`{ userId, reason }`) / lists the ticket's requests. |
@@ -416,13 +416,13 @@ Base path: `/api` (proxied to `http://localhost:3001` in development).
 | GET | `/api/notifications?userId=` | Latest notifications and unread count. |
 | POST | `/api/notifications/read` | Mark notifications read. Body: `{ userId, ids? }` (all when `ids` is omitted). |
 | GET / POST | `/api/activities` | List or add activity log entries. |
-| GET | `/api/users` | List users, including each technician's `skills`. |
+| GET | `/api/users` | List users, including each agent's `skills`. |
 | PATCH | `/api/users/:userId/skills` | Admin only. Body: `{ actorId, skills: [...] }`. |
-| PATCH | `/api/users/:userId/role` | Admin only. Body: `{ actorId, role }` where role is `employee` or `technician`; clears skills when leaving technician. |
+| PATCH | `/api/users/:userId/role` | Admin only. Body: `{ actorId, role }` where role is `staff` or `agent`; clears skills when leaving agent. |
 | GET | `/api/profile/:userId` | Account details for the profile panel. |
 | GET / POST | `/api/password-requests` | List or file password-change requests. |
 | PATCH | `/api/password-requests/:code/status` | Approve or reject a password-change request. |
-| GET | `/api/messages/contacts?userId=` | Chat contacts with last message and unread count (admins and technicians only). |
+| GET | `/api/messages/contacts?userId=` | Chat contacts with last message and unread count (admins and agents only). |
 | GET | `/api/messages?userId=&withId=` | Conversation with one contact; marks their messages read. |
 | POST | `/api/messages` | Send a message. Body: `{ senderId, recipientId, body }`. |
 
@@ -434,7 +434,7 @@ All queries use parameterized statements to guard against SQL injection.
 
 The `helpdesk` database contains these tables (see `server/schema.sql` for full definitions):
 
-- **`users`** — accounts with `id_number`, `password`, `name`, `role`, `role_name`, `email`, and `skills` (comma-separated ticket categories, used for technicians).
+- **`users`** — accounts with `id_number`, `password`, `name`, `role`, `role_name`, `email`, and `skills` (comma-separated ticket categories, used for agents).
 - **`tickets`** — support requests with a unique `code` (e.g. `#HD001`), `subject`, `category`, `priority`, `status`, and optional `location`/`description`. Links back to `users` via `created_by`.
 - **`activities`** — audit log of actor name, role, action, and timestamp.
 - **`password_requests`** — password-change requests awaiting admin approval.
@@ -443,7 +443,7 @@ The `helpdesk` database contains these tables (see `server/schema.sql` for full 
 - **`notifications`** — per-user in-app notifications with a read timestamp.
 - **`tickets_archive`, `ticket_messages_archive`, `cancellation_requests_archive`** — same structure as the live tables; finished tickets (with their conversations) older than the retention date are moved here. **`archive_runs`** records each archive run. The **`tickets_all`** view (live + archived) feeds reports and KPIs so archiving never changes history.
 - **`kpi_selections`** — which KPI metrics (and targets) the super admin chose for each month.
-- **`messages`** — chat messages between admins and technicians, with a read timestamp.
+- **`messages`** — chat messages between admins and agents, with a read timestamp.
 
 Re-running `schema.sql` drops and recreates the tables, restoring the seed data. If you already have a database from an earlier version, add the new pieces by hand instead (`ALTER TABLE users ADD COLUMN skills ...`, `ALTER TABLE tickets ADD COLUMN assigned_to ...` and `reopen_count INT NOT NULL DEFAULT 0`, the security columns on `users` (`failed_logins`, `locked_until`, `mfa_enabled`, `mfa_secret`, `last_login_at`), the archive tables and the `tickets_all` view (all in `server/migrations/2026-10-enterprise.sql`), the three KPI timestamps (`assigned_at`, `first_response_at`, `resolved_at`, all `TIMESTAMP NULL`) and the `kpi_selections` table, and the `messages`, `ticket_messages`, `cancellation_requests` and `notifications` tables from `schema.sql`) to avoid losing data.
 
@@ -514,7 +514,7 @@ This is a prototype. Before any real deployment:
 - **Passwords are stored in plaintext** to keep the demo simple. Hash them with bcrypt and compare hashes in the `/api/login` route.
 - Add session/token-based authentication and authorization checks on protected endpoints.
 - Never commit `server/.env` — it is gitignored by default.
-- Technician assignments are stored in the browser (`localStorage`), not the database.
+- Agent assignments are stored in the browser (`localStorage`), not the database.
 - The messaging and skills endpoints trust the user IDs sent by the client; they need real session checks before production.
 - The presentation build does not include the skills or chat features.
 

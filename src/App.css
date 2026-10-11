@@ -83,7 +83,7 @@ html[data-theme="dark"] {
 html[data-theme="dark"] .auth-brand,
 html[data-theme="dark"] .mobile-header,
 html[data-theme="dark"] .person { color: var(--ink) }
-html[data-theme="dark"] .person-technician { color: var(--blue) }
+html[data-theme="dark"] .person-agent { color: var(--blue) }
 html[data-theme="dark"] .person-admin { color: var(--warn-ink) }
 html[data-theme="dark"] .auth-brand .brand-mark { color: #fff }
 html[data-theme="dark"] .mobile-header .mobile-profile,
@@ -2157,7 +2157,7 @@ html[data-motion="off"] *::after {
 }
 
 /* ==========================================================================
-   Technician skills + recommendations
+   Agent skills + recommendations
    ========================================================================== */
 .skill-chips,
 .skill-editor {
@@ -2277,7 +2277,7 @@ td .fit-badge-match { margin-left: 0 }
 .assignment-name .fit-badge-match { vertical-align: middle }
 
 /* ==========================================================================
-   Chat dock (admins <-> technicians)
+   Chat dock (admins <-> agents)
    ========================================================================== */
 .chat-dock {
     position: fixed;
@@ -3194,7 +3194,7 @@ td .fit-badge-match { margin-left: 0 }
 
 .person b { font-weight: 700 }
 .person small { font-size: 9.5px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; opacity: .7 }
-.person-technician { background: var(--info-bg); color: var(--blue) }
+.person-agent { background: var(--info-bg); color: var(--blue) }
 .person-admin { background: var(--warn-bg); color: var(--warn-ink) }
 
 /* ==========================================================================

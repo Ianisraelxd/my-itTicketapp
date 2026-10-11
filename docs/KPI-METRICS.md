@@ -30,10 +30,10 @@ All time values are shown as minutes, hours or days. "Tickets created this month
 
 | Key | Metric | What it tells you | Formula | Better | Default target |
 | --- | --- | --- | --- | --- | --- |
-| AHT | **Average Handling Time** | How long a technician needs to fix a ticket once it is theirs | average of (resolved time - assigned time) for resolved tickets | lower | 8 h |
+| AHT | **Average Handling Time** | How long an agent needs to fix a ticket once it is theirs | average of (resolved time - assigned time) for resolved tickets | lower | 8 h |
 | ART | **Average Resolution Time** | The user's full wait from submitting to fixed | average of (resolved time - submitted time) for resolved tickets | lower | 1 day |
 | FRT | **First Response Time** | How quickly IT first reacts to a new ticket | average of (first IT reply or assignment, whichever is first - submitted time) | lower | 30 min |
-| TTA | **Time to Assign** | How long a ticket waits before an admin gives it to a technician | average of (assigned time - submitted time) | lower | 60 min |
+| TTA | **Time to Assign** | How long a ticket waits before an admin gives it to an agent | average of (assigned time - submitted time) | lower | 60 min |
 | SLA | **SLA Compliance** | Share of tickets fixed within the target for their priority | tickets resolved within target / tickets resolved. Targets: High 4 h, Medium 8 h, Low 24 h | higher | 90% |
 
 ### Quality
@@ -44,7 +44,7 @@ All time values are shown as minutes, hours or days. "Tickets created this month
 | FCR | **First-Time Fix Rate** | How often a fix stays fixed | resolved tickets never reopened / tickets ever resolved | higher | 90% |
 | REO | **Reopen Rate** | How often users say the problem is still there | tickets reopened at least once / tickets ever resolved | lower | 10% |
 | HPR | **High-Priority Resolution Rate** | How well urgent tickets are handled | high-priority resolved / high-priority created (cancelled excluded) | higher | 95% |
-| SKM | **Skill Match Rate** | Whether tickets go to technicians with the right skills | assigned tickets whose category is in the technician's skills / assigned tickets ("Others" and technicians without skills excluded) | higher | 80% |
+| SKM | **Skill Match Rate** | Whether tickets go to agents with the right skills | assigned tickets whose category is in the agent's skills / assigned tickets ("Others" and agents without skills excluded) | higher | 80% |
 
 ### Volume and backlog
 
@@ -59,7 +59,7 @@ All time values are shown as minutes, hours or days. "Tickets created this month
 
 | Key | Metric | What it tells you | Formula | Better | Default target |
 | --- | --- | --- | --- | --- | --- |
-| TPT | **Tickets Resolved per Technician** | Average output per technician | tickets resolved during the month / number of technicians | higher | 15 |
+| TPT | **Tickets Resolved per Agent** | Average output per agent | tickets resolved during the month / number of agents | higher | 15 |
 
 ## Suggested sets
 
@@ -76,9 +76,9 @@ All time values are shown as minutes, hours or days. "Tickets created this month
 | Ticket field | Set when | Used by |
 | --- | --- | --- |
 | `created_at` | the ticket is submitted | every metric (month grouping), ART, FRT, TTA, SLA |
-| `assigned_at` | an admin first assigns a technician | AHT, TTA |
-| `first_response_at` | the first assignment or the first reply from a technician or admin | FRT |
-| `resolved_at` | a technician marks it Resolved (cleared again if it is reopened) | AHT, ART, SLA, TPT, BKL |
+| `assigned_at` | an admin first assigns an agent | AHT, TTA |
+| `first_response_at` | the first assignment or the first reply from an agent or admin | FRT |
+| `resolved_at` | an agent marks it Resolved (cleared again if it is reopened) | AHT, ART, SLA, TPT, BKL |
 | `reopen_count` | the requester reopens a resolved ticket | FCR, REO |
 | `status`, `priority`, `category`, `assigned_to` | during the ticket's life | RR, CAN, HPR, SKM, BKL |
 

@@ -153,7 +153,7 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
       await load();
       showMessage(
         "Ticket reopened",
-        "Your technician and the admins were notified that the problem is still happening.",
+        "Your agent and the admins were notified that the problem is still happening.",
       );
     } catch (error) {
       setReopenOpen(false);
@@ -260,7 +260,7 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
           if (message.kind === "bot_note") {
             return (
               <div className="chat-botnote" key={message.id}>
-                <b>🤖 Assistant note · staff only</b>
+                <b>🤖 Assistant note · agents and admins only</b>
                 {message.text.replace(/^Assistant note:\s*/, "")}
                 <time>{formatTime(message.createdAt)}</time>
               </div>
@@ -373,7 +373,7 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
                   If it is a <b>new or different</b> problem, submit a new request instead.
                 </li>
                 <li>
-                  The technician and the admins will be notified right away, and the ticket goes back
+                  The agent and the admins will be notified right away, and the ticket goes back
                   to work.
                 </li>
                 <li>
@@ -480,7 +480,7 @@ function ProgressTrack({ ticket }) {
   const stage = ticket.status === "Resolved" ? 2 : ticket.status === "In Progress" ? 1 : 0;
   const details = [
     "We received your request",
-    ticket.assignedName ? `${ticket.assignedName} is handling it` : "Waiting for a technician",
+    ticket.assignedName ? `${ticket.assignedName} is handling it` : "Waiting for an agent",
     "The problem is fixed",
   ];
   return (

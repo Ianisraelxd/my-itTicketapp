@@ -33,16 +33,16 @@ CREATE TABLE users (
   id_number  VARCHAR(32)  NOT NULL,
   password   VARCHAR(255) NOT NULL,
   name       VARCHAR(120) NOT NULL,
-  role       VARCHAR(32)  NOT NULL,          -- student | employee | technician | admin | superadmin | report_viewer (read-only)
+  role       VARCHAR(32)  NOT NULL,          -- student | staff | agent | admin | superadmin | report_viewer (read-only)
   role_name  VARCHAR(120) NOT NULL,
   email      VARCHAR(160) NULL,
-  skills     VARCHAR(255) NOT NULL DEFAULT '',  -- comma-separated ticket categories a technician is recommended for
+  skills     VARCHAR(255) NOT NULL DEFAULT '',  -- comma-separated ticket categories an agent is recommended for
   failed_logins  INT NOT NULL DEFAULT 0,        -- wrong passwords in a row (5 locks the account)
   locked_until   DATETIME NULL,                 -- set while the account is locked
   mfa_enabled    TINYINT(1) NOT NULL DEFAULT 0, -- two-step verification (authenticator app)
   mfa_secret     VARCHAR(64) NULL,
   last_login_at  TIMESTAMP NULL,
-  last_seen_at   TIMESTAMP NULL,                -- last API call by a technician/admin (presence for the assistant)
+  last_seen_at   TIMESTAMP NULL,                -- last API call by an agent/admin (presence for the assistant)
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_user_role (id_number, role)
 );
@@ -68,7 +68,7 @@ CREATE TABLE tickets (
   location    VARCHAR(160) NULL,
   description TEXT NULL,
   created_by  INT NULL,
-  assigned_to INT NULL,                      -- technician assigned by an admin
+  assigned_to INT NULL,                      -- agent assigned by an admin
   reopen_count INT NOT NULL DEFAULT 0,       -- times the requester reopened it after Resolved
   assigned_at TIMESTAMP NULL,                -- first time an admin assigned it (KPI: TTA, AHT)
   first_response_at TIMESTAMP NULL,          -- first IT reply or assignment (KPI: FRT)
@@ -122,21 +122,21 @@ CREATE TABLE password_requests (
 
 INSERT INTO users (id_number, password, name, role, role_name, email) VALUES
   ('2404154', '123456student',    'Student User', 'student',    'Student',                    'student@campus.edu'),
-  ('2404154', '123456employee',   'Employee User','employee',   'Employee',                   'employee@campus.edu'),
-  ('2404154', '123456technician', 'Technician User','technician','Technician',                'technician@campus.edu'),
-  ('2404154', '123456admin',      'Users Admin',  'admin',      'Student / Employee Admin',   'admin@campus.edu'),
+  ('2404154', '123456employee',   'Staff User','staff',   'University Staff',        'employee@campus.edu'),
+  ('2404154', '123456technician', 'Agent User','agent','Agent',                'technician@campus.edu'),
+  ('2404154', '123456admin',      'Users Admin',  'admin',      'Student / Staff Admin',   'admin@campus.edu'),
   ('2404154', '123456superadmin', 'Super Admin',  'superadmin', 'Super Admin',                'superadmin@campus.edu');
 
 INSERT INTO activities (actor_name, actor_role, action, created_at) VALUES
   ('System', 'System', 'Database initialized', '2026-08-30 10:30:00');
 
--- Extra technicians with different skills, so recommendations are visible.
+-- Extran agents with different skills, so recommendations are visible.
 INSERT INTO users (id_number, password, name, role, role_name, email, skills) VALUES
-  ('2404155', '123456technician', 'Software Technician', 'technician', 'Technician', 'software.tech@campus.edu', 'Software,Account / Login'),
-  ('2404156', '123456technician', 'Network Technician',  'technician', 'Technician', 'network.tech@campus.edu',  'Network / Internet');
-UPDATE users SET skills = 'Hardware,Printer' WHERE id_number = '2404154' AND role = 'technician';
+  ('2404155', '123456technician', 'Software Agent', 'agent', 'Agent', 'software.tech@campus.edu', 'Software,Account / Login'),
+  ('2404156', '123456technician', 'Network Agent',  'agent', 'Agent', 'network.tech@campus.edu',  'Network / Internet');
+UPDATE users SET skills = 'Hardware,Printer' WHERE id_number = '2404154' AND role = 'agent';
 
--- Read-only account for dashboards (kept after the technicians so existing user ids stay the same).
+-- Read-only account for dashboards (kept after the agents so existing user ids stay the same).
 INSERT INTO users (id_number, password, name, role, role_name, email) VALUES
   ('2404154', '123456viewer', 'Report Viewer', 'report_viewer', 'Report Viewer', 'viewer@campus.edu');
 
@@ -168,7 +168,7 @@ INSERT INTO locations (campus_zone, building_name, room_name, room_type) VALUES
   ('Student Services Zone', 'Gymnasium', 'Main Court', 'Common Area'),
   ('Student Services Zone', 'Gymnasium', 'Auditorium', 'Auditorium');
 
--- Instant messages between admins and technicians (chat dock).
+-- Instant messages between admins and agents (chat dock).
 CREATE TABLE messages (
   message_pk   INT AUTO_INCREMENT PRIMARY KEY,
   sender_pk    INT NOT NULL,

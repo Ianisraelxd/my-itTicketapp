@@ -243,7 +243,7 @@ export function registerSuperAdminRoutes(app, { wrap, notify }) {
        FROM users WHERE role IN ('admin', 'report_viewer') ORDER BY role, name`,
     );
     const candidates = await query(
-      "SELECT user_pk AS userId, id_number AS id, name, role_name AS roleName FROM users WHERE role IN ('employee', 'technician') ORDER BY name",
+      "SELECT user_pk AS userId, id_number AS id, name, role_name AS roleName FROM users WHERE role IN ('staff', 'agent') ORDER BY name",
     );
     res.json({
       admins: rows.map((row) => ({
@@ -305,17 +305,17 @@ export function registerSuperAdminRoutes(app, { wrap, notify }) {
     switch (action) {
       case "revoke":
         return changeRole(
-          "employee",
-          "Employee",
+          "staff",
+          "University Staff",
           ["admin", "report_viewer"],
           "Revoked admin access for",
-          "Your admin access was revoked. Log in again as an Employee.",
+          "Your admin access was revoked. Log in again as University Staff.",
         );
       case "grant":
         return changeRole(
           "admin",
-          "Student / Employee Admin",
-          ["employee", "technician"],
+          "Student / Staff Admin",
+          ["staff", "agent"],
           "Granted admin access to",
           "You were given admin access. Log in again as an Admin.",
         );
@@ -323,7 +323,7 @@ export function registerSuperAdminRoutes(app, { wrap, notify }) {
         return changeRole(
           "report_viewer",
           "Report Viewer",
-          ["employee", "technician"],
+          ["staff", "agent"],
           "Granted report viewer access to",
           "You were given read-only access to the dashboards. Log in again as a Report Viewer.",
         );

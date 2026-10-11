@@ -3,7 +3,7 @@
 //
 // Design (borrowed from Intercom, Zendesk Answer Bot, ServiceNow Virtual Agent, Freshdesk):
 //   - guided quick-reply buttons instead of open-ended typing, so people always know what to do next
-//   - it knows the ticket: status, technician, queue position and the priority's target time
+//   - it knows the ticket: status, agent, queue position and the priority's target time
 //   - self-service first: step-by-step fixes for the ticket's category, then "did that fix it?"
 //   - a clear human hand-off that passes along what was already tried, so nobody repeats themselves
 //   - actions, not just answers: it can send a cancellation request, reopen a ticket, flag urgency
@@ -184,7 +184,7 @@ const KNOWLEDGE = {
       steps: [
         "Check your ID or email is typed exactly right and Caps Lock is off.",
         "Try a private (incognito) window, or clear the browser cookies and try again.",
-        "If you see a specific error message, note it down for the technician.",
+        "If you see a specific error message, note it down for the agent.",
       ],
     },
     {
@@ -193,7 +193,7 @@ const KNOWLEDGE = {
       steps: [
         "Write down exactly what you need access to (system, folder, printer, course).",
         "Ask your supervisor or instructor to confirm that you should have it.",
-        "Tell the technician those details: they usually need that approval.",
+        "Tell the agent those details: they usually need that approval.",
       ],
     },
   ],
@@ -244,7 +244,7 @@ const FALLBACK_PROBLEMS = [
     steps: [
       "Restart the device or program and try again.",
       "Write down exactly what you see, including any error message.",
-      "Tell the technician what you were doing when it happened.",
+      "Tell the agent what you were doing when it happened.",
     ],
   },
 ];
@@ -256,12 +256,12 @@ const findProblem = (category, key) =>
 // --- Presence: staff count as available if they used the app in the last 90 seconds ------
 export async function staffAvailability(assignedTo = null) {
   const rows = await query(
-    "SELECT user_pk, name, role FROM users WHERE role IN ('technician', 'admin') AND last_seen_at > DATE_SUB(NOW(), INTERVAL 90 SECOND) ORDER BY name",
+    "SELECT user_pk, name, role FROM users WHERE role IN ('agent', 'admin') AND last_seen_at > DATE_SUB(NOW(), INTERVAL 90 SECOND) ORDER BY name",
   );
   const assigned = rows.find((row) => assignedTo && row.user_pk === assignedTo);
   return {
     assignedOnline: assigned?.name ?? null,
-    technicians: rows.filter((row) => row.role === "technician").map((row) => row.name),
+    agents: rows.filter((row) => row.role === "agent").map((row) => row.name),
     admins: rows.filter((row) => row.role === "admin").map((row) => row.name),
     anyOnline: rows.length > 0,
   };
@@ -272,10 +272,10 @@ const listNames = (names) =>
 
 // One friendly sentence about who can chat right now.
 function availabilityLine(a) {
-  if (a.assignedOnline) return `${a.assignedOnline}, your technician, is online and can chat with you now.`;
-  if (a.technicians.length) return `${listNames(a.technicians)} (technician) ${a.technicians.length === 1 ? "is" : "are"} online and can chat now.`;
+  if (a.assignedOnline) return `${a.assignedOnline}, your agent, is online and can chat with you now.`;
+  if (a.agents.length) return `${listNames(a.agents)} (agent) ${a.agents.length === 1 ? "is" : "are"} online and can chat now.`;
   if (a.admins.length) return `${listNames(a.admins)} (admin) ${a.admins.length === 1 ? "is" : "are"} online and can chat now.`;
-  return "Our technicians and admins are offline right now, so I'll help in the meantime. They'll see everything here when they're back.";
+  return "Our agents and admins are offline right now, so I'll help in the meantime. They'll see everything here when they're back.";
 }
 
 // --- Small helpers -----------------------------------------------------------------------
@@ -320,7 +320,7 @@ function mainMenu(ctx) {
     opt("fix", "🛠 Try a quick fix"),
     opt("time", "⏱ How long will it take?"),
     opt("urgent:ask", "🚨 It's urgent"),
-    opt("human", "👤 Talk to a technician"),
+    opt("human", "👤 Talk to an agent"),
     opt("more", "💡 More help"),
   ];
 }
@@ -342,7 +342,7 @@ async function handle(choice, ctx, deps) {
       const submittedMins = (Date.now() - new Date(ticket.created_at).getTime()) / 60000;
       const lines = [];
       if (ticket.status === "Open") {
-        lines.push(`${ticket.code} is waiting for a technician.`);
+        lines.push(`${ticket.code} is waiting for an agent.`);
         lines.push(
           ctx.queueAhead > 0
             ? `${ctx.queueAhead} other request${ctx.queueAhead === 1 ? " is" : "s are"} ahead of yours.`
@@ -373,7 +373,7 @@ async function handle(choice, ctx, deps) {
         `Our target times by priority: High ${duration(SLA_MINUTES.High)}, Medium ${duration(SLA_MINUTES.Medium)}, Low ${duration(SLA_MINUTES.Low)}.`,
         `Yours is ${ticket.priority}, so we aim to fix it within ${duration(minutes)} of submitting (around ${formatWhen(deadline)}).`,
         overdue
-          ? "That time has passed, so I'm sorry for the wait. Pick \"Talk to a technician\" and I'll nudge the team."
+          ? "That time has passed, so I'm sorry for the wait. Pick \"Talk to an agent\" and I'll nudge the team."
           : "These are targets, not guarantees: complicated problems can take longer.",
       ].join("\n");
       return { replies: [{ text, options: mainMenu(ctx).filter((o) => o.id !== "time") }] };
@@ -431,10 +431,10 @@ async function handle(choice, ctx, deps) {
       return {
         replies: [
           {
-            text: "Sorry that didn't solve it. I've passed on what you tried, so the technician won't ask you to repeat it.",
+            text: "Sorry that didn't solve it. I've passed on what you tried, so the agent won't ask you to repeat it.",
             options: [
               opt("fix", "Try another fix"),
-              opt("human", "👤 Talk to a technician"),
+              opt("human", "👤 Talk to an agent"),
               opt("menu", "🏠 Back to the menu"),
             ],
           },
@@ -471,7 +471,7 @@ async function handle(choice, ctx, deps) {
       return {
         replies: [
           {
-            text: "Done: I've flagged this as urgent to the admins and the technician, with your reason.\nIf there is any danger (smoke, sparks, a burning smell), unplug the device and move away from it.",
+            text: "Done: I've flagged this as urgent to the admins and the agent, with your reason.\nIf there is any danger (smoke, sparks, a burning smell), unplug the device and move away from it.",
             options: mainMenu(ctx).filter((o) => o.id !== "urgent:ask"),
           },
         ],
@@ -491,8 +491,8 @@ async function handle(choice, ctx, deps) {
       return {
         replies: [{ text, options: mainMenu(ctx).filter((o) => o.id !== "human") }],
         note: {
-          text: "Assistant note: the requester asked to talk to a technician.",
-          notify: { type: "bot_handoff", title: "Requester wants a person", body: `${ticket.code}: the requester asked to talk to a technician.` },
+          text: "Assistant note: the requester asked to talk to an agent.",
+          notify: { type: "bot_handoff", title: "Requester wants a person", body: `${ticket.code}: the requester asked to talk to an agent.` },
           throttle: "human",
         },
       };
@@ -519,13 +519,13 @@ async function handle(choice, ctx, deps) {
         cancel:
           "You can't cancel a ticket directly. Instead you send a cancellation request with a reason and an admin approves it. I can send it for you: choose \"Cancel my request\".",
         details:
-          "Just type your message in the box below: the assigned technician and the admins will see it. Photos aren't supported yet, so describe what you see.",
+          "Just type your message in the box below: the assigned agent and the admins will see it. Photos aren't supported yet, so describe what you see.",
         reopen:
           "Once a ticket is marked resolved you'll see an option here (and a Reopen button) if the problem returns. You can reopen a ticket up to 3 times.",
         roles:
           ticket.techName
-            ? `${ticket.techName} is the technician on this ticket. Admins can also see the conversation.`
-            : "No technician is assigned yet. An admin assigns tickets based on skills, and you'll be notified when it happens.",
+            ? `${ticket.techName} is the agent on this ticket. Admins can also see the conversation.`
+            : "No agent is assigned yet. An admin assigns tickets based on skills, and you'll be notified when it happens.",
       };
       const options = [
         ...(part === "cancel" && !["Resolved", "Cancelled"].includes(ticket.status) ? [opt("cancel:ask", "❌ Cancel my request")] : []),
@@ -588,7 +588,7 @@ async function handle(choice, ctx, deps) {
         return {
           replies: [
             {
-              text: "I'm sorry it isn't fixed. I can reopen the ticket and tell the technician. What happened?",
+              text: "I'm sorry it isn't fixed. I can reopen the ticket and tell the agent. What happened?",
               options: [
                 opt("reopen:go:same", "The same problem came back"),
                 opt("reopen:go:never", "It was never really fixed"),
@@ -611,7 +611,7 @@ async function handle(choice, ctx, deps) {
       return {
         replies: [
           {
-            text: `I've reopened ${ticket.code} and told the technician and the admins. Add any extra detail in the box below.`,
+            text: `I've reopened ${ticket.code} and told the agent and the admins. Add any extra detail in the box below.`,
             options: [opt("menu", "🏠 Back to the menu")],
           },
         ],
@@ -650,7 +650,7 @@ async function handle(choice, ctx, deps) {
           replies: [
             {
               text: "Thank you for being honest, and I'm sorry we fell short. I've let the admins know. Would you like me to reopen the ticket?",
-              options: [opt("reopen:ask", "↩ Reopen the ticket"), opt("human", "👤 Talk to a technician"), opt("bye", "No, thanks")],
+              options: [opt("reopen:ask", "↩ Reopen the ticket"), opt("human", "👤 Talk to an agent"), opt("bye", "No, thanks")],
             },
           ],
           note: {
@@ -783,7 +783,7 @@ const PROBLEM_WORDS = {
 const INTENTS = [
   ["urgent:ask", /\b(urgent|asap|emergency|immediately|right now|deadline|exam|class (is )?(starting|in))\b/i],
   ["cancel:ask", /\b(cancel|never ?mind|no need|don'?t need|do not need|by mistake|duplicate)\b/i],
-  ["human", /\b(technician|human|person|someone|real person|staff|admin|talk to|speak to)\b/i],
+  ["human", /\b(agent|human|person|someone|real person|technician|staff|admin|talk to|speak to)\b/i],
   ["time", /\b(how long|when will|how soon|eta|how many (days|hours|minutes)|estimated|taking so long|so long)\b/i],
   ["status", /\b(status|update|progress|where is|any news|assigned|who is|queue|waiting)\b/i],
   ["thanks", /\b(thanks|thank you|salamat|ty|appreciate)\b/i],
@@ -803,7 +803,7 @@ export function isTagalog(text) {
 const TL_INTENTS = [
   ["urgent:ask", /\b(madalian|apurahan|agad|ngayon na|ngayon din|kailangan na|importante|exam|klase|deadline)\b/i],
   ["cancel:ask", /\b(kanselahin|i-cancel|ikansela|huwag na|wag na|hindi na kailangan|di na kailangan|nagkamali|mali ang)\b/i],
-  ["human", /\b(kausapin|makausap|pakausap|tao|teknisyan|technician|staff)\b/i],
+  ["human", /\b(kausapin|makausap|pakausap|tao|teknisyan|agent|technician|staff)\b/i],
   ["time", /\b(gaano katagal|kailan|ilang araw|ilang oras|hanggang kailan|ang tagal|matagal na)\b/i],
   ["status", /\b(anong balita|may balita|may update|nasaan na|ano na|pila|sino ang gumagawa|progress)\b/i],
   ["thanks", /\b(salamat|maraming salamat|thank)\b/i],
@@ -839,7 +839,7 @@ const TL_LABELS = {
   "🛠 Try a quick fix": "🛠 Subukan ang mabilisang ayos",
   "⏱ How long will it take?": "⏱ Gaano katagal ito?",
   "🚨 It's urgent": "🚨 Urgent ito",
-  "👤 Talk to a technician": "👤 Kausapin ang technician",
+  "👤 Talk to an agent": "👤 Kausapin ang agent",
   "💡 More help": "💡 Iba pang tulong",
   "🏠 Back to the menu": "🏠 Bumalik sa menu",
   "✅ That fixed it": "✅ Naayos nito",
@@ -855,7 +855,7 @@ const TL_LABELS = {
 // Ordered sentence patterns: [regex on one line, replacement]. Unknown lines stay in English.
 const TL_LINES = [
   [/^What can I help you with, (.+)\?$/, "Ano ang maitutulong ko sa iyo, $1?"],
-  [/^(#HD\d+) is waiting for a technician\.$/, "Naghihintay pa ng technician ang $1."],
+  [/^(#HD\d+) is waiting for an agent\.$/, "Naghihintay pa ng agent ang $1."],
   [/^(\d+) other requests? (?:is|are) ahead of yours\.$/, "May $1 pang request na nauuna sa iyo."],
   [/^Yours is next in line\.$/, "Ikaw na ang susunod."],
   [/^(.+) is working on (#HD\d+)\.$/, "Si $1 ay gumagawa na sa $2."],
@@ -866,17 +866,17 @@ const TL_LINES = [
   [/^Our target times by priority: (.+)$/, "Ang target namin ayon sa priority: $1"],
   [/^Yours is (\w+), so we aim to fix it within (.+) of submitting \(around (.+)\)\.$/, "Ang sa iyo ay $1, kaya target naming maayos ito sa loob ng $2 mula nang isumite (mga $3)."],
   [/^These are targets, not guarantees.*$/, "Target lang ito at hindi garantiya: maaaring tumagal ang mas komplikadong problema."],
-  [/^That time has passed.*$/, "Lumampas na ang oras na iyon, pasensya na sa paghihintay. Piliin ang \"Kausapin ang technician\" at ipapaalala ko sa team."],
+  [/^That time has passed.*$/, "Lumampas na ang oras na iyon, pasensya na sa paghihintay. Piliin ang \"Kausapin ang agent\" at ipapaalala ko sa team."],
   [/^I'll flag it to the team\. What best describes the urgency\?$/, "Ipapaalam ko ito sa team. Alin ang pinakaakma sa pagka-urgent?"],
-  [/^Done: I've flagged this as urgent.*$/, "Tapos na: minarkahan ko ito bilang urgent sa mga admin at sa technician, kasama ang dahilan mo."],
+  [/^Done: I've flagged this as urgent.*$/, "Tapos na: minarkahan ko ito bilang urgent sa mga admin at san agent, kasama ang dahilan mo."],
   [/^If there is any danger.*$/, "Kung may panganib (usok, kislap, amoy ng sunog), i-unplug agad ang device at lumayo rito."],
   [/^Good news: (.+) is online and can chat now\.$/, "Magandang balita: online si $1 at puwede kang makausap ngayon."],
-  [/^Good news: (.+), your technician, is online and can chat with you now\.$/, "Magandang balita: online si $1, ang technician mo, at puwede kang makausap ngayon."],
-  [/^(.+), your technician, is online and can chat with you now\.$/, "Online si $1, ang technician mo, at puwede kang makausap ngayon."],
-  [/^(.+) \((admin|technician)\) (?:is|are) online and can chat now\.$/, "Online ang $1 ($2) at puwede kang makausap ngayon."],
-  [/^Good news: (.+) \((admin|technician)\) (?:is|are) online and can chat now\.$/, "Magandang balita: online ang $1 ($2) at puwede kang makausap ngayon."],
+  [/^Good news: (.+), your agent, is online and can chat with you now\.$/, "Magandang balita: online si $1, ang agent mo, at puwede kang makausap ngayon."],
+  [/^(.+), your agent, is online and can chat with you now\.$/, "Online si $1, ang agent mo, at puwede kang makausap ngayon."],
+  [/^(.+) \((admin|agent)\) (?:is|are) online and can chat now\.$/, "Online ang $1 ($2) at puwede kang makausap ngayon."],
+  [/^Good news: (.+) \((admin|agent)\) (?:is|are) online and can chat now\.$/, "Magandang balita: online ang $1 ($2) at puwede kang makausap ngayon."],
   [/^I've let them know you'd like to talk\..*$/, "Naipaalam ko na sa kanila na gusto mo silang makausap. I-type ang mensahe mo sa baba at doon sila sasagot."],
-  [/^Our technicians and admins are offline right now.*$/, "Offline ang mga technician at admin ngayon, kaya ako muna ang tutulong. Makikita nila ang lahat dito pagbalik nila."],
+  [/^Our agents and admins are offline right now.*$/, "Offline ang mgan agent at admin ngayon, kaya ako muna ang tutulong. Makikita nila ang lahat dito pagbalik nila."],
   [/^I've notified them, so leave your message.*$/, "Naabisuhan ko na sila, kaya iwan ang mensahe mo sa baba nang may detalye. Sasagot sila rito pagbalik nila. Habang naghihintay, makakatulong pa rin ako sa mga mabilisang ayos."],
   [/^You're welcome! .*$/, "Walang anuman! 😊 May iba pa ba akong maitutulong?"],
   [/^Hi (.+)! What can I help you with\?$/, "Hi $1! Ano ang maitutulong ko?"],
@@ -886,7 +886,7 @@ const TL_LINES = [
   [/^These are the most common .*problems I can help with\..*$/, "Ito ang mga pinakakaraniwang problema na matutulungan ko. Alin ang kahawig ng sa iyo?"],
   [/^Wonderful, glad that worked!.*$/, "Mabuti at gumana! 🎉"],
   [/^Since it's working again.*$/, "Dahil gumagana na ulit, gusto mo bang hilingin ko sa admin na isara ang ticket na ito? Puwede mo rin itong iwanang bukas."],
-  [/^Sorry that didn't solve it\..*$/, "Pasensya na at hindi ito nakatulong. Naipasa ko na ang mga sinubukan mo kaya hindi na kailangang ulitin ng technician."],
+  [/^Sorry that didn't solve it\..*$/, "Pasensya na at hindi ito nakatulong. Naipasa ko na ang mga sinubukan mo kaya hindi na kailangang ulitin ng agent."],
   [/^I can send a cancellation request.*$/, "Maipapadala ko ang cancellation request sa mga admin (sila ang magpapasya). Bakit mo gustong kanselahin?"],
 ];
 
@@ -932,13 +932,13 @@ export function createBot(deps) {
     await insertMessage(
       ticketPk,
       botId,
-      `Hi ${firstName}! 👋 I'm the HelpDesk Assistant.\nYour request ${code} (${subject}) is in the queue and the team has been notified.\n${availabilityLine(availability)}\nWhile you wait, I can check on it, suggest quick ${category && category !== "Others" ? `${category} ` : ""}fixes, or get you to a technician. What would you like to do?`,
+      `Hi ${firstName}! 👋 I'm the HelpDesk Assistant.\nYour request ${code} (${subject}) is in the queue and the team has been notified.\n${availabilityLine(availability)}\nWhile you wait, I can check on it, suggest quick ${category && category !== "Others" ? `${category} ` : ""}fixes, or get you to an agent. What would you like to do?`,
       "bot",
       mainMenu(ctx),
     );
   }
 
-  // When a technician resolves the ticket: check in and ask for a rating.
+  // When an agent resolves the ticket: check in and ask for a rating.
   async function postResolvedPrompt({ ticketPk, code, requesterName, techName }) {
     const firstName = String(requesterName || "there").split(" ")[0];
     const botId = await getBotId();
@@ -1016,7 +1016,7 @@ export function createBot(deps) {
     if (["Cancelled"].includes(ticket.status)) return [];
     const [active] = await query(
       `SELECT COUNT(*) AS n FROM ticket_messages m JOIN users u ON u.user_pk = m.sender_pk
-       WHERE m.ticket_pk = ? AND m.kind = 'chat' AND u.role IN ('technician', 'admin')
+       WHERE m.ticket_pk = ? AND m.kind = 'chat' AND u.role IN ('agent', 'admin')
          AND m.created_at > DATE_SUB(NOW(), INTERVAL 10 MINUTE)`,
       [ticket.ticket_pk],
     );

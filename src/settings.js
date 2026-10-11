@@ -1,7 +1,7 @@
 // Browser-side preferences, persisted in localStorage.
 export const APP_VERSION = "v1.0.2";
 export const APP_DESCRIPTION =
-  "Campus HelpDesk is a role-based IT support desk. Students and employees submit and track technical requests, technicians work their queue, and admins keep everything moving.";
+  "Campus HelpDesk is a role-based IT support desk. Students and staff submit and track technical requests, agents work their queue, and admins keep everything moving.";
 
 const STORAGE_KEY = "helpdesk-settings-v1";
 
