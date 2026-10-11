@@ -20,7 +20,7 @@ export const KPI_CATALOG = [
     unit: "minutes",
     direction: "lower",
     target: 480,
-    description: "How long a technician takes to fix a ticket once it is assigned to them.",
+    description: "How long an agent takes to fix a ticket once it is assigned to them.",
     formula: "Average of (resolved time - assigned time) for tickets created this month that are Resolved.",
   },
   {
@@ -50,7 +50,7 @@ export const KPI_CATALOG = [
     unit: "minutes",
     direction: "lower",
     target: 60,
-    description: "How long a ticket waits before an admin gives it to a technician.",
+    description: "How long a ticket waits before an admin gives it to an agent.",
     formula: "Average of (assigned time - submitted time) for assigned tickets.",
   },
   {
@@ -111,8 +111,8 @@ export const KPI_CATALOG = [
     unit: "percent",
     direction: "higher",
     target: 80,
-    description: "How often a ticket is given to a technician whose skills fit its category.",
-    formula: "Assigned tickets whose category is in the technician's skills / assigned tickets (Others category and technicians without skills excluded).",
+    description: "How often a ticket is given to an agent whose skills fit its category.",
+    formula: "Assigned tickets whose category is in the agent's skills / assigned tickets (Others category and agents without skills excluded).",
   },
   // ---- Volume & backlog -----------------------------------------------------
   {
@@ -159,12 +159,12 @@ export const KPI_CATALOG = [
   {
     key: "TPT",
     category: "Team",
-    name: "Tickets Resolved per Technician",
+    name: "Tickets Resolved per Agent",
     unit: "ratio",
     direction: "higher",
     target: 15,
-    description: "Average output per technician: how many tickets each one closed this month.",
-    formula: "Tickets resolved during the month / number of technicians.",
+    description: "Average output per agent: how many tickets each one closed this month.",
+    formula: "Tickets resolved during the month / number of agents.",
   },
 ];
 

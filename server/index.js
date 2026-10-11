@@ -1,8 +1,10 @@
 import "dotenv/config";
 import express from "express";
 import { authenticate, verifyReportViewer } from "./auth.js";
+import { AUTO_ASSIGN_MINUTES, startAutoAssign } from "./autoassign.js";
 import { createBot, shapeMessage } from "./bot.js";
 import { pool, query } from "./db.js";
+import { calculatePriority } from "./priority.js";
 import { registerKpiRoutes } from "./kpi.js";
 import {
   hashPassword,
@@ -98,8 +100,8 @@ app.post("/api/signup", wrap(async (req, res) => {
     });
   }
 
-  const role = selectedRole === "employee" ? "employee" : "student";
-  const roleName = role === "employee" ? "Employee" : "Student";
+  const role = ["staff", "university staff"].includes(selectedRole) ? "staff" : "student";
+  const roleName = role === "staff" ? "University Staff" : "Student";
 
   const existing = await query(
     "SELECT user_pk FROM users WHERE id_number = ? AND role = ? LIMIT 1",
@@ -238,7 +240,7 @@ app.get("/api/me", wrap(async (req, res) => {
 }));
 
 // --- Two-step verification (TOTP authenticator app) ----------------------------------
-const MFA_ROLES = ["technician", "admin", "superadmin", "report_viewer"];
+const MFA_ROLES = ["agent", "admin", "superadmin", "report_viewer"];
 
 app.post("/api/mfa/setup", wrap(async (req, res) => {
   if (!MFA_ROLES.includes(req.user.role)) {
@@ -287,14 +289,14 @@ app.get("/api/tickets", wrap(async (req, res) => {
 
   if (mine === "1" && userId) {
     const rows = await query(
-      "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to WHERE t.created_by = ? ORDER BY t.ticket_pk DESC",
+      `SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.location_id AS locationId, t.impact_level AS impactLevel, t.urgency_level AS urgencyLevel, t.priority_tier AS priorityTier, t.assigned_manually AS assignedManually, t.auto_assign_count AS autoAssignCount, CASE WHEN t.assigned_manually = 0 AND t.status IN ('Open', 'In Progress') THEN DATE_ADD(COALESCE(t.assignment_started_at, t.created_at), INTERVAL ${AUTO_ASSIGN_MINUTES} MINUTE) END AS autoAssignAt, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to WHERE t.created_by = ? ORDER BY t.ticket_pk DESC`,
       [userId],
     );
     return res.json(rows);
   }
 
   const rows = await query(
-    "SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to ORDER BY t.ticket_pk DESC",
+    `SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.location_id AS locationId, t.impact_level AS impactLevel, t.urgency_level AS urgencyLevel, t.priority_tier AS priorityTier, t.assigned_manually AS assignedManually, t.auto_assign_count AS autoAssignCount, CASE WHEN t.assigned_manually = 0 AND t.status IN ('Open', 'In Progress') THEN DATE_ADD(COALESCE(t.assignment_started_at, t.created_at), INTERVAL ${AUTO_ASSIGN_MINUTES} MINUTE) END AS autoAssignAt, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to ORDER BY t.ticket_pk DESC`,
   );
   res.json(rows);
 }));
@@ -312,8 +314,8 @@ app.patch("/api/tickets/:id/status", wrap(async (req, res) => {
   }
 
   const actors = await query("SELECT role FROM users WHERE user_pk = ? LIMIT 1", [actorId ?? 0]);
-  if (!actors[0] || !["technician", "admin"].includes(actors[0].role)) {
-    return res.status(403).json({ error: "Only technicians and admins can change a ticket's status." });
+  if (!actors[0] || !["agent", "admin"].includes(actors[0].role)) {
+    return res.status(403).json({ error: "Only agents and admins can change a ticket's status." });
   }
 
   const tickets = await query(
@@ -366,19 +368,41 @@ app.patch("/api/tickets/:id/status", wrap(async (req, res) => {
   res.json({ ok: true, id, status });
 }));
 
-app.post("/api/tickets", wrap(async (req, res) => {
-  const { subject, category, priority, location, description, createdBy } = req.body ?? {};
-  if (!subject?.trim() || !category?.trim() || !priority?.trim()) {
-    return res.status(400).json({ error: "subject, category, and priority are required." });
+// Rooms for the cascading Campus zone > Building > Room dropdown.
+app.get("/api/locations", wrap(async (_req, res) => {
+  const rows = await query(
+    "SELECT location_id AS id, campus_zone AS campusZone, building_name AS buildingName, room_name AS roomName, room_type AS roomType FROM locations ORDER BY campus_zone, building_name, room_name",
+  );
+  res.json(rows);
+}));
+
+// The priority tier is calculated on the server (server/priority.js) from the two intake answers;
+// any priority sent by the client is ignored.
+app.post("/api/tickets", calculatePriority, wrap(async (req, res) => {
+  const { subject, category, locationId, description, createdBy } = req.body ?? {};
+  if (!subject?.trim() || !category?.trim()) {
+    return res.status(400).json({ error: "subject and category are required." });
   }
+  const rooms = await query(
+    "SELECT location_id, building_name, room_name FROM locations WHERE location_id = ? LIMIT 1",
+    [Number(locationId) || 0],
+  );
+  const room = rooms[0];
+  if (!room) return res.status(400).json({ error: "Please choose a campus zone, building and room." });
+  const { tier, label: priority } = req.priority;
+  // Readable snapshot of the room, kept for reports and the location heat map.
+  const locationText = `${room.room_name}, ${room.building_name}`;
 
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
     const code = await nextCode(conn, "tickets", "#HD", "tickets_archive");
     await conn.execute(
-      "INSERT INTO tickets (code, subject, category, priority, status, location, description, created_by) VALUES (?, ?, ?, ?, 'Open', ?, ?, ?)",
-      [code, subject, category, priority, location ?? null, description ?? null, createdBy ?? null],
+      "INSERT INTO tickets (code, subject, category, priority, status, location, location_id, impact_level, urgency_level, priority_tier, description, created_by) VALUES (?, ?, ?, ?, 'Open', ?, ?, ?, ?, ?, ?, ?)",
+      [
+        code, subject, category, priority, locationText, room.location_id,
+        req.body.impactLevel, req.body.urgencyLevel, tier, description ?? null, createdBy ?? null,
+      ],
     );
     await conn.commit();
     const submitters = await query("SELECT name FROM users WHERE user_pk = ?", [createdBy ?? 0]);
@@ -398,7 +422,10 @@ app.post("/api/tickets", wrap(async (req, res) => {
     } catch (err) {
       console.error("assistant greeting failed", err.message);
     }
-    res.status(201).json({ id: code, subject, category, priority, status: "Open" });
+    res.status(201).json({
+      id: code, subject, category, priority, priorityTier: tier, escalated: req.priority.escalated,
+      location: locationText, status: "Open",
+    });
   } catch (err) {
     await conn.rollback();
     throw err;
@@ -407,9 +434,77 @@ app.post("/api/tickets", wrap(async (req, res) => {
   }
 }));
 
+// Queue-safe cancellation by an admin. The row is never deleted: the status guard in the UPDATE
+// means two admins (or an admin and an agent) cannot both win, and because only active
+// tickets (Open / In Progress) count toward an agent's load, cancelling frees the slot at once.
+// Requesters still use the cancellation-request flow below; they cannot cancel directly.
+const ACTIVE_STATUSES = ["Open", "In Progress"];
+
+app.put("/api/tickets/:id/cancel", wrap(async (req, res) => {
+  const admin = await requireAdmin(req.body?.actorId);
+  if (!admin) return res.status(403).json({ error: "Only admins can cancel a ticket directly." });
+  const reason = String(req.body?.reason ?? "").trim().slice(0, 500) || "Cancelled by an admin.";
+  const tickets = await query(
+    "SELECT ticket_pk, code, subject, status, created_by, assigned_to FROM tickets WHERE code = ? LIMIT 1",
+    [req.params.id],
+  );
+  const ticket = tickets[0];
+  if (!ticket) return res.status(404).json({ error: "Ticket not found." });
+
+  const marks = ACTIVE_STATUSES.map(() => "?").join(", ");
+  const [result] = await pool.execute(
+    `UPDATE tickets SET status = 'Cancelled' WHERE ticket_pk = ? AND status IN (${marks})`,
+    [ticket.ticket_pk, ...ACTIVE_STATUSES],
+  );
+  if (result.affectedRows === 0) {
+    return res.status(409).json({ error: `This ticket is already ${ticket.status.toLowerCase()} and cannot be cancelled.` });
+  }
+
+  // A waiting cancellation request is settled by this decision.
+  await query(
+    "UPDATE cancellation_requests SET status = 'Approved', review_note = ?, reviewed_by = ?, reviewed_at = NOW() WHERE ticket_pk = ? AND status = 'Pending'",
+    [reason, admin.user_pk, ticket.ticket_pk],
+  );
+  await query(
+    "INSERT INTO ticket_messages (ticket_pk, sender_pk, message_text, kind) VALUES (?, ?, ?, 'cancellation_decision')",
+    [ticket.ticket_pk, admin.user_pk, `Ticket cancelled by ${admin.name}: ${reason}`],
+  );
+  await notify([ticket.created_by], {
+    type: "cancellation_approved",
+    title: "Your request was cancelled",
+    body: `${ticket.code} was cancelled by an admin: ${reason.slice(0, 90)}`,
+    ticketCode: ticket.code,
+  });
+  await notify([ticket.assigned_to], {
+    type: "cancellation_approved",
+    title: "Ticket cancelled",
+    body: `${ticket.code} was cancelled. You can stop working on it.`,
+    ticketCode: ticket.code,
+  });
+  await query(
+    "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
+    [admin.name, admin.role_name, `Cancelled ticket ${ticket.code}`],
+  );
+  res.json({ ok: true, id: ticket.code, status: "Cancelled" });
+}));
+
+// Active tickets per agent (what an auto-assigner or the admin looks at when balancing work).
+app.get("/api/agents/workload", wrap(async (req, res) => {
+  const admin = await requireAdmin(req.query.userId);
+  if (!admin) return res.status(403).json({ error: "Only admins can see agent workload." });
+  const marks = ACTIVE_STATUSES.map(() => "?").join(", ");
+  const rows = await query(
+    `SELECT u.user_pk AS userId, u.name, u.skills,
+       (SELECT COUNT(*) FROM tickets t WHERE t.assigned_to = u.user_pk AND t.status IN (${marks})) AS activeTickets
+     FROM users u WHERE u.role = 'agent' ORDER BY activeTickets ASC, u.name`,
+    ACTIVE_STATUSES,
+  );
+  res.json(rows);
+}));
+
 // --- Ticket assignment, messaging, and cancellation requests -------------------
 const CLOSED_STATUSES = ["Resolved", "Done", "Closed", "Cancelled"];
-const TICKET_STAFF_ROLES = ["technician", "admin", "superadmin"];
+const TICKET_STAFF_ROLES = ["agent", "admin", "superadmin"];
 
 async function ticketAccess(code, userId) {
   const tickets = await query(
@@ -439,17 +534,17 @@ async function requireAdmin(userId) {
   return rows[0] && rows[0].role === "admin" ? rows[0] : null;
 }
 
-// Admin assigns a technician: records who, and moves the ticket to In Progress.
+// Admin assigns an agent: records who, and moves the ticket to In Progress.
 app.patch("/api/tickets/:id/assign", wrap(async (req, res) => {
-  const { actorId, technicianId } = req.body ?? {};
+  const { actorId, agentId } = req.body ?? {};
   const admin = await requireAdmin(actorId);
   if (!admin) return res.status(403).json({ error: "Only admins can assign tickets." });
-  const technicians = await query(
-    "SELECT user_pk, name FROM users WHERE user_pk = ? AND role = 'technician' LIMIT 1",
-    [technicianId ?? 0],
+  const agents = await query(
+    "SELECT user_pk, name FROM users WHERE user_pk = ? AND role = 'agent' LIMIT 1",
+    [agentId ?? 0],
   );
-  const technician = technicians[0];
-  if (!technician) return res.status(404).json({ error: "Technician not found." });
+  const agent = agents[0];
+  if (!agent) return res.status(404).json({ error: "Agent not found." });
   const tickets = await query(
     "SELECT ticket_pk, code, subject, created_by FROM tickets WHERE code = ? LIMIT 1",
     [req.params.id],
@@ -459,13 +554,18 @@ app.patch("/api/tickets/:id/assign", wrap(async (req, res) => {
 
   const placeholders = CLOSED_STATUSES.map(() => "?").join(", ");
   const [result] = await pool.execute(
-    `UPDATE tickets SET assigned_to = ?, status = 'In Progress', assigned_at = COALESCE(assigned_at, NOW()), first_response_at = COALESCE(first_response_at, NOW()) WHERE ticket_pk = ? AND status NOT IN (${placeholders})`,
-    [technician.user_pk, ticket.ticket_pk, ...CLOSED_STATUSES],
+    `UPDATE tickets SET assigned_to = ?, status = 'In Progress', assigned_at = COALESCE(assigned_at, NOW()), first_response_at = COALESCE(first_response_at, NOW()), assignment_started_at = NOW(), assigned_manually = 1 WHERE ticket_pk = ? AND status NOT IN (${placeholders})`,
+    [agent.user_pk, ticket.ticket_pk, ...CLOSED_STATUSES],
   );
   if (result.affectedRows === 0) {
     return res.status(409).json({ error: "This ticket is already finished and cannot be assigned." });
   }
-  await notify([technician.user_pk], {
+  await query("INSERT INTO ticket_assignments (ticket_pk, agent_pk, assigned_by, method) VALUES (?, ?, ?, 'manual')", [
+    ticket.ticket_pk,
+    agent.user_pk,
+    admin.user_pk,
+  ]);
+  await notify([agent.user_pk], {
     type: "assigned",
     title: "New ticket assigned to you",
     body: `${ticket.code}: ${ticket.subject}`,
@@ -473,29 +573,29 @@ app.patch("/api/tickets/:id/assign", wrap(async (req, res) => {
   });
   await notify([ticket.created_by], {
     type: "in_progress",
-    title: "A technician is on your request",
-    body: `${technician.name} was assigned to ${ticket.code}: ${ticket.subject}`,
+    title: "An agent is on your request",
+    body: `${agent.name} was assigned to ${ticket.code}: ${ticket.subject}`,
     ticketCode: ticket.code,
   });
   await query(
     "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
-    [admin.name, admin.role_name, `Assigned ${ticket.code} to ${technician.name}`],
+    [admin.name, admin.role_name, `Assigned ${ticket.code} to ${agent.name}`],
   );
-  res.json({ ok: true, id: ticket.code, status: "In Progress", assignedTo: technician.user_pk });
+  res.json({ ok: true, id: ticket.code, status: "In Progress", assignedTo: agent.user_pk });
 }));
 
 // Everyone who can see this ticket's conversation: the requester, the assigned
-// technician, and the admins.
+// agent, and the admins.
 app.get("/api/tickets/:id/participants", wrap(async (req, res) => {
   const access = await ticketAccess(req.params.id, req.query.userId);
   if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
   const { ticket } = access;
   const rows = await query(
     `SELECT user_pk AS userId, name, role_name AS roleName,
-       CASE WHEN user_pk = ? THEN 'Requester' WHEN user_pk = ? THEN 'Technician' ELSE 'Admin' END AS part
+       CASE WHEN user_pk = ? THEN 'Requester' WHEN user_pk = ? THEN 'Agent' ELSE 'Admin' END AS part
      FROM users
      WHERE user_pk = ? OR user_pk = ? OR role = 'admin'
-     ORDER BY FIELD(CASE WHEN user_pk = ? THEN 'Requester' WHEN user_pk = ? THEN 'Technician' ELSE 'Admin' END, 'Requester', 'Technician', 'Admin'), name`,
+     ORDER BY FIELD(CASE WHEN user_pk = ? THEN 'Requester' WHEN user_pk = ? THEN 'Agent' ELSE 'Admin' END, 'Requester', 'Agent', 'Admin'), name`,
     [
       ticket.created_by ?? 0, ticket.assigned_to ?? 0,
       ticket.created_by ?? 0, ticket.assigned_to ?? 0,
@@ -532,8 +632,8 @@ app.post("/api/tickets/:id/messages", wrap(async (req, res) => {
     "INSERT INTO ticket_messages (ticket_pk, sender_pk, message_text, kind) VALUES (?, ?, ?, 'chat')",
     [ticket.ticket_pk, user.user_pk, body],
   );
-  // The first reply from technician/admin counts as the first response (KPI: FRT).
-  if (user.role === "technician" || user.role === "admin") {
+  // The first reply from agent/admin counts as the first response (KPI: FRT).
+  if (user.role === "agent" || user.role === "admin") {
     await query(
       "UPDATE tickets SET first_response_at = COALESCE(first_response_at, NOW()) WHERE ticket_pk = ?",
       [ticket.ticket_pk],
@@ -652,7 +752,7 @@ async function reopenTicketFor({ ticket, user, reason }) {
 
   const nextStatus = ticket.assigned_to ? "In Progress" : "Open";
   const [result] = await pool.execute(
-    "UPDATE tickets SET status = ?, reopen_count = reopen_count + 1, resolved_at = NULL WHERE ticket_pk = ? AND status = 'Resolved' AND reopen_count < ?",
+    "UPDATE tickets SET status = ?, reopen_count = reopen_count + 1, resolved_at = NULL, assignment_started_at = NOW() WHERE ticket_pk = ? AND status = 'Resolved' AND reopen_count < ?",
     [nextStatus, ticket.ticket_pk, MAX_REOPENS],
   );
   if (result.affectedRows === 0) {
@@ -961,22 +1061,22 @@ app.get("/api/users", wrap(async (_req, res) => {
   res.json(rows.map((row) => ({ ...row, skills: parseSkills(row.skills) })));
 }));
 
-// Admins assign the skills a technician is recommended for.
+// Admins assign the skills an agent is recommended for.
 app.patch("/api/users/:userId/skills", wrap(async (req, res) => {
   const { actorId, skills } = req.body ?? {};
   const actors = await query("SELECT role FROM users WHERE user_pk = ? LIMIT 1", [actorId ?? 0]);
   if (!actors[0] || !["admin", "superadmin"].includes(actors[0].role)) {
-    return res.status(403).json({ error: "Only admins can assign technician skills." });
+    return res.status(403).json({ error: "Only admins can assign agent skills." });
   }
   if (!Array.isArray(skills)) {
     return res.status(400).json({ error: "skills must be a list." });
   }
   const targets = await query(
-    "SELECT user_pk, name FROM users WHERE user_pk = ? AND role = 'technician' LIMIT 1",
+    "SELECT user_pk, name FROM users WHERE user_pk = ? AND role = 'agent' LIMIT 1",
     [req.params.userId],
   );
   if (!targets[0]) {
-    return res.status(404).json({ error: "Technician not found." });
+    return res.status(404).json({ error: "Agent not found." });
   }
   const clean = [...new Set(skills.map((s) => String(s).trim()).filter(Boolean))];
   await query("UPDATE users SET skills = ? WHERE user_pk = ?", [clean.join(","), targets[0].user_pk]);
@@ -997,7 +1097,7 @@ app.patch("/api/users/:userId/skills", wrap(async (req, res) => {
   res.json({ ok: true, skills: clean });
 }));
 
-// Admins can switch an account between Employee and Technician.
+// Admins can switch an account between Staff and Agent.
 app.patch("/api/users/:userId/role", wrap(async (req, res) => {
   const { actorId, role } = req.body ?? {};
   const actors = await query(
@@ -1008,19 +1108,19 @@ app.patch("/api/users/:userId/role", wrap(async (req, res) => {
   if (!actor || actor.role !== "admin") {
     return res.status(403).json({ error: "Only admins can change a user's type." });
   }
-  if (!["employee", "technician"].includes(role)) {
-    return res.status(400).json({ error: "Type must be employee or technician." });
+  if (!["staff", "agent"].includes(role)) {
+    return res.status(400).json({ error: "Type must be staff or agent." });
   }
   const targets = await query(
     "SELECT user_pk, id_number, name, role FROM users WHERE user_pk = ? LIMIT 1",
     [req.params.userId],
   );
   const target = targets[0];
-  if (!target || !["employee", "technician"].includes(target.role)) {
-    return res.status(404).json({ error: "Only employees and technicians can be changed." });
+  if (!target || !["staff", "agent"].includes(target.role)) {
+    return res.status(404).json({ error: "Only staff and agents can be changed." });
   }
   if (target.role === role) {
-    return res.json({ ok: true, role, roleName: role === "employee" ? "Employee" : "Technician" });
+    return res.json({ ok: true, role, roleName: role === "staff" ? "University Staff" : "Agent" });
   }
   const clash = await query(
     "SELECT user_pk FROM users WHERE id_number = ? AND role = ? LIMIT 1",
@@ -1031,10 +1131,10 @@ app.patch("/api/users/:userId/role", wrap(async (req, res) => {
       error: `A ${role} account with ID ${target.id_number} already exists.`,
     });
   }
-  const roleName = role === "employee" ? "Employee" : "Technician";
-  // Skills only apply to technicians, so clear them when leaving that role.
+  const roleName = role === "staff" ? "University Staff" : "Agent";
+  // Skills only apply to agents, so clear them when leaving that role.
   await query(
-    "UPDATE users SET role = ?, role_name = ?, skills = IF(? = 'technician', skills, '') WHERE user_pk = ?",
+    "UPDATE users SET role = ?, role_name = ?, skills = IF(? = 'agent', skills, '') WHERE user_pk = ?",
     [role, roleName, role, target.user_pk],
   );
   await query(
@@ -1049,8 +1149,8 @@ app.patch("/api/users/:userId/role", wrap(async (req, res) => {
   res.json({ ok: true, role, roleName });
 }));
 
-// --- Messaging (admins <-> technicians only) -----------------------------------
-const CHAT_ROLES = ["admin", "technician"];
+// --- Messaging (admins <-> agents only) -----------------------------------
+const CHAT_ROLES = ["admin", "agent"];
 
 async function chatUser(userId) {
   const rows = await query(
@@ -1063,13 +1163,13 @@ async function chatUser(userId) {
 // Contacts for the chat dock, with last message + unread count per contact.
 app.get("/api/messages/contacts", wrap(async (req, res) => {
   const me = await chatUser(req.query.userId);
-  if (!me) return res.status(403).json({ error: "Messaging is limited to admins and technicians." });
+  if (!me) return res.status(403).json({ error: "Messaging is limited to admins and agents." });
   const rows = await query(
     `SELECT u.user_pk AS userId, u.name, u.role_name AS roleName,
        (SELECT body FROM messages m WHERE (m.sender_pk = u.user_pk AND m.recipient_pk = ?) OR (m.sender_pk = ? AND m.recipient_pk = u.user_pk) ORDER BY m.message_pk DESC LIMIT 1) AS lastBody,
        (SELECT created_at FROM messages m WHERE (m.sender_pk = u.user_pk AND m.recipient_pk = ?) OR (m.sender_pk = ? AND m.recipient_pk = u.user_pk) ORDER BY m.message_pk DESC LIMIT 1) AS lastAt,
        (SELECT COUNT(*) FROM messages m WHERE m.sender_pk = u.user_pk AND m.recipient_pk = ? AND m.read_at IS NULL) AS unread
-     FROM users u WHERE u.role IN ('admin','technician') AND u.user_pk <> ?
+     FROM users u WHERE u.role IN ('admin','agent') AND u.user_pk <> ?
      ORDER BY lastAt IS NULL, lastAt DESC, u.name`,
     [me.user_pk, me.user_pk, me.user_pk, me.user_pk, me.user_pk, me.user_pk],
   );
@@ -1080,7 +1180,7 @@ app.get("/api/messages/contacts", wrap(async (req, res) => {
 app.get("/api/messages", wrap(async (req, res) => {
   const me = await chatUser(req.query.userId);
   const other = await chatUser(req.query.withId);
-  if (!me || !other) return res.status(403).json({ error: "Messaging is limited to admins and technicians." });
+  if (!me || !other) return res.status(403).json({ error: "Messaging is limited to admins and agents." });
   await query(
     "UPDATE messages SET read_at = NOW() WHERE sender_pk = ? AND recipient_pk = ? AND read_at IS NULL",
     [other.user_pk, me.user_pk],
@@ -1101,7 +1201,7 @@ app.post("/api/messages", wrap(async (req, res) => {
   const sender = await chatUser(senderId);
   const recipient = await chatUser(recipientId);
   if (!sender || !recipient || sender.user_pk === recipient.user_pk) {
-    return res.status(403).json({ error: "Messaging is limited to admins and technicians." });
+    return res.status(403).json({ error: "Messaging is limited to admins and agents." });
   }
   const text = String(body ?? "").trim().slice(0, 1000);
   if (!text) return res.status(400).json({ error: "Message cannot be empty." });
@@ -1278,6 +1378,10 @@ app.use((err, _req, res, _next) => {
   console.error(err);
   res.status(500).json({ error: "Internal server error." });
 });
+
+// Expires unresolved assignments after AUTO_ASSIGN_MINUTES (30) and passes the ticket to another
+// agent with the same specialty; tickets an admin assigned by hand are left alone.
+startAutoAssign({ query, pool, notify, adminIds, postNotice: (ticketPk, text) => bot.postNotice(ticketPk, text) });
 
 app.listen(PORT, () => {
   console.log(`HelpDesk API listening on http://localhost:${PORT}`);

@@ -24,7 +24,9 @@ DROP TABLE IF EXISTS ticket_messages;
 DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS activities;
 DROP TABLE IF EXISTS password_requests;
+DROP TABLE IF EXISTS ticket_assignments;
 DROP TABLE IF EXISTS tickets;
+DROP TABLE IF EXISTS locations;
 DROP TABLE IF EXISTS users;
 
 CREATE TABLE users (
@@ -32,18 +34,29 @@ CREATE TABLE users (
   id_number  VARCHAR(32)  NOT NULL,
   password   VARCHAR(255) NOT NULL,
   name       VARCHAR(120) NOT NULL,
-  role       VARCHAR(32)  NOT NULL,          -- student | employee | technician | admin | superadmin | report_viewer (read-only)
+  role       VARCHAR(32)  NOT NULL,          -- student | staff | agent | admin | superadmin | report_viewer (read-only)
   role_name  VARCHAR(120) NOT NULL,
   email      VARCHAR(160) NULL,
-  skills     VARCHAR(255) NOT NULL DEFAULT '',  -- comma-separated ticket categories a technician is recommended for
+  skills     VARCHAR(255) NOT NULL DEFAULT '',  -- comma-separated ticket categories an agent is recommended for
   failed_logins  INT NOT NULL DEFAULT 0,        -- wrong passwords in a row (5 locks the account)
   locked_until   DATETIME NULL,                 -- set while the account is locked
   mfa_enabled    TINYINT(1) NOT NULL DEFAULT 0, -- two-step verification (authenticator app)
   mfa_secret     VARCHAR(64) NULL,
   last_login_at  TIMESTAMP NULL,
-  last_seen_at   TIMESTAMP NULL,                -- last API call by a technician/admin (presence for the assistant)
+  last_seen_at   TIMESTAMP NULL,                -- last API call by an agent/admin (presence for the assistant)
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_user_role (id_number, role)
+);
+
+-- Campus locations: the source of truth for the Campus zone > Building > Room dropdown.
+CREATE TABLE locations (
+  location_id   INT AUTO_INCREMENT PRIMARY KEY,
+  campus_zone   VARCHAR(80)  NOT NULL,
+  building_name VARCHAR(120) NOT NULL,
+  room_name     VARCHAR(120) NOT NULL,
+  room_type     VARCHAR(40)  NOT NULL,
+  UNIQUE KEY uq_location (campus_zone, building_name, room_name),
+  KEY idx_location_zone (campus_zone, building_name)
 );
 
 CREATE TABLE tickets (
@@ -56,16 +69,26 @@ CREATE TABLE tickets (
   location    VARCHAR(160) NULL,
   description TEXT NULL,
   created_by  INT NULL,
-  assigned_to INT NULL,                      -- technician assigned by an admin
+  assigned_to INT NULL,                      -- agent assigned by an admin
   reopen_count INT NOT NULL DEFAULT 0,       -- times the requester reopened it after Resolved
   assigned_at TIMESTAMP NULL,                -- first time an admin assigned it (KPI: TTA, AHT)
   first_response_at TIMESTAMP NULL,          -- first IT reply or assignment (KPI: FRT)
   resolved_at TIMESTAMP NULL,                -- when it was marked Resolved (KPI: AHT, ART, SLA)
   csat_rating TINYINT NULL,                  -- 1-5 stars the requester gave via the assistant
   csat_at     TIMESTAMP NULL,
+  location_id   INT NULL,                    -- structured location (replaces free-text entry)
+  impact_level  ENUM('Organization', 'Department', 'Individual') NULL,  -- who is affected
+  urgency_level ENUM('High', 'Medium', 'Low') NULL,                     -- when it is needed
+  priority_tier ENUM('P1', 'P2', 'P3', 'P4') NULL,                      -- calculated by server/priority.js
+  assignment_started_at TIMESTAMP NULL,      -- start of the current assignment (auto-assign expires it after 30 min)
+  assigned_manually TINYINT(1) NOT NULL DEFAULT 0,  -- 1 = an admin assigned it, so it is never moved automatically
+  auto_assign_count INT NOT NULL DEFAULT 0,  -- how many times the engine assigned or reassigned it
   created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_ticket_tier (priority_tier),
   CONSTRAINT fk_ticket_user FOREIGN KEY (created_by)
-    REFERENCES users(user_pk) ON DELETE SET NULL
+    REFERENCES users(user_pk) ON DELETE SET NULL,
+  CONSTRAINT fk_ticket_location FOREIGN KEY (location_id)
+    REFERENCES locations(location_id) ON DELETE SET NULL
 );
 
 CREATE TABLE activities (
@@ -103,21 +126,21 @@ CREATE TABLE password_requests (
 
 INSERT INTO users (id_number, password, name, role, role_name, email) VALUES
   ('2404154', '123456student',    'Student User', 'student',    'Student',                    'student@campus.edu'),
-  ('2404154', '123456employee',   'Employee User','employee',   'Employee',                   'employee@campus.edu'),
-  ('2404154', '123456technician', 'Technician User','technician','Technician',                'technician@campus.edu'),
-  ('2404154', '123456admin',      'Users Admin',  'admin',      'Student / Employee Admin',   'admin@campus.edu'),
+  ('2404154', '123456employee',   'Staff User','staff',   'University Staff',        'employee@campus.edu'),
+  ('2404154', '123456technician', 'Agent User','agent','Agent',                'technician@campus.edu'),
+  ('2404154', '123456admin',      'Users Admin',  'admin',      'Student / Staff Admin',   'admin@campus.edu'),
   ('2404154', '123456superadmin', 'Super Admin',  'superadmin', 'Super Admin',                'superadmin@campus.edu');
 
 INSERT INTO activities (actor_name, actor_role, action, created_at) VALUES
   ('System', 'System', 'Database initialized', '2026-08-30 10:30:00');
 
--- Extra technicians with different skills, so recommendations are visible.
+-- Extran agents with different skills, so recommendations are visible.
 INSERT INTO users (id_number, password, name, role, role_name, email, skills) VALUES
-  ('2404155', '123456technician', 'Software Technician', 'technician', 'Technician', 'software.tech@campus.edu', 'Software,Account / Login'),
-  ('2404156', '123456technician', 'Network Technician',  'technician', 'Technician', 'network.tech@campus.edu',  'Network / Internet');
-UPDATE users SET skills = 'Hardware,Printer' WHERE id_number = '2404154' AND role = 'technician';
+  ('2404155', '123456technician', 'Software Agent', 'agent', 'Agent', 'software.tech@campus.edu', 'Software,Account / Login'),
+  ('2404156', '123456technician', 'Network Agent',  'agent', 'Agent', 'network.tech@campus.edu',  'Network / Internet');
+UPDATE users SET skills = 'Hardware,Printer' WHERE id_number = '2404154' AND role = 'agent';
 
--- Read-only account for dashboards (kept after the technicians so existing user ids stay the same).
+-- Read-only account for dashboards (kept after the agents so existing user ids stay the same).
 INSERT INTO users (id_number, password, name, role, role_name, email) VALUES
   ('2404154', '123456viewer', 'Report Viewer', 'report_viewer', 'Report Viewer', 'viewer@campus.edu');
 
@@ -125,7 +148,46 @@ INSERT INTO users (id_number, password, name, role, role_name, email) VALUES
 INSERT INTO users (id_number, password, name, role, role_name, email) VALUES
   ('assistant', 'scrypt$locked$locked', 'HelpDesk Assistant', 'bot', 'Assistant Bot', NULL);
 
--- Instant messages between admins and technicians (chat dock).
+-- Who had each ticket and how it got to them (manual, auto, expired); used to rotate between specialists.
+CREATE TABLE ticket_assignments (
+  assignment_pk INT AUTO_INCREMENT PRIMARY KEY,
+  ticket_pk     INT NOT NULL,
+  agent_pk      INT NOT NULL,
+  assigned_by   INT NULL,                        -- the admin, or NULL when the engine did it
+  method        ENUM('manual', 'auto', 'expired') NOT NULL,
+  created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_assign_agent (agent_pk, created_at),
+  KEY idx_assign_ticket (ticket_pk),
+  CONSTRAINT fk_assign_ticket FOREIGN KEY (ticket_pk) REFERENCES tickets(ticket_pk) ON DELETE CASCADE,
+  CONSTRAINT fk_assign_agent FOREIGN KEY (agent_pk) REFERENCES users(user_pk) ON DELETE CASCADE,
+  CONSTRAINT fk_assign_by FOREIGN KEY (assigned_by) REFERENCES users(user_pk) ON DELETE SET NULL
+);
+
+-- Rooms offered in the ticket form.
+INSERT INTO locations (campus_zone, building_name, room_name, room_type) VALUES
+  ('Main Campus', 'Administration Building', 'Registrar''s Office', 'Office'),
+  ('Main Campus', 'Administration Building', 'Dean''s Office', 'Office'),
+  ('Main Campus', 'Administration Building', 'Faculty Room', 'Office'),
+  ('Main Campus', 'Library', 'Reading Hall', 'Library'),
+  ('Main Campus', 'Library', 'Computer Section', 'Computer Lab'),
+  ('Academic Zone', 'IT Building', 'Computer Laboratory 1', 'Computer Lab'),
+  ('Academic Zone', 'IT Building', 'Computer Laboratory 2', 'Computer Lab'),
+  ('Academic Zone', 'IT Building', 'Computer Laboratory 3', 'Computer Lab'),
+  ('Academic Zone', 'IT Building', 'Server Room', 'Server Room'),
+  ('Academic Zone', 'IT Building', 'Lecture Room 201', 'Classroom'),
+  ('Academic Zone', 'Science Building', 'Chemistry Laboratory', 'Laboratory'),
+  ('Academic Zone', 'Science Building', 'Physics Laboratory', 'Laboratory'),
+  ('Academic Zone', 'Science Building', 'Lecture Room 101', 'Classroom'),
+  ('Academic Zone', 'Engineering Building', 'Drafting Room', 'Laboratory'),
+  ('Academic Zone', 'Engineering Building', 'Engineering Laboratory', 'Laboratory'),
+  ('Academic Zone', 'Engineering Building', 'Lecture Room 301', 'Classroom'),
+  ('Student Services Zone', 'Student Center', 'Student Lounge', 'Common Area'),
+  ('Student Services Zone', 'Student Center', 'Cafeteria', 'Common Area'),
+  ('Student Services Zone', 'Student Center', 'Clinic', 'Office'),
+  ('Student Services Zone', 'Gymnasium', 'Main Court', 'Common Area'),
+  ('Student Services Zone', 'Gymnasium', 'Auditorium', 'Auditorium');
+
+-- Instant messages between admins and agents (chat dock).
 CREATE TABLE messages (
   message_pk   INT AUTO_INCREMENT PRIMARY KEY,
   sender_pk    INT NOT NULL,
@@ -146,7 +208,7 @@ CREATE TABLE ticket_messages (
   ticket_pk    INT NOT NULL,
   sender_pk    INT NOT NULL,
   message_text VARCHAR(1000) NOT NULL,
-  kind         VARCHAR(24)   NOT NULL DEFAULT 'chat',  -- chat | cancellation_request | cancellation_decision | reopen | bot | bot_choice | bot_note
+  kind         VARCHAR(24)   NOT NULL DEFAULT 'chat',  -- chat | cancellation_request | cancellation_decision | reopen | assignment | bot | bot_choice | bot_note
   meta         TEXT NULL,                              -- JSON quick-reply options on assistant messages
   created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   KEY idx_ticket_msg (ticket_pk, message_pk),

@@ -19,7 +19,7 @@ if (!DB_NAME || !DB_NAME.includes("demo")) {
 
 // Seeded account ids (see server/schema.sql)
 const STUDENT = 1;
-const EMPLOYEE = 2;
+const STAFF = 2;
 const HARDWARE_TECH = 3;
 const ADMIN = 4;
 const SOFTWARE_TECH = 6;
@@ -28,11 +28,11 @@ const NETWORK_TECH = 7;
 // The API needs a signed-in user for everything, so sign in as each seeded account once.
 const ACCOUNTS = {
   [STUDENT]: ["2404154", "student", "123456student"],
-  [EMPLOYEE]: ["2404154", "employee", "123456employee"],
-  [HARDWARE_TECH]: ["2404154", "technician", "123456technician"],
+  [STAFF]: ["2404154", "staff", "123456employee"],
+  [HARDWARE_TECH]: ["2404154", "agent", "123456technician"],
   [ADMIN]: ["2404154", "admin", "123456admin"],
-  [SOFTWARE_TECH]: ["2404155", "technician", "123456technician"],
-  [NETWORK_TECH]: ["2404156", "technician", "123456technician"],
+  [SOFTWARE_TECH]: ["2404155", "agent", "123456technician"],
+  [NETWORK_TECH]: ["2404156", "agent", "123456technician"],
 };
 const tokens = {};
 for (const [userId, [id, role, password]] of Object.entries(ACCOUNTS)) {
@@ -61,17 +61,31 @@ async function call(method, path, body, as) {
 const enc = encodeURIComponent;
 const created = [];
 
+// The ticket form now picks a room from the locations table and answers two intake questions;
+// the server calculates the P1-P4 tier from them. Old specs (priority + room name) are translated.
+const rooms = await call("GET", "/locations", undefined, ADMIN);
+const INTAKE = {
+  High: { impactLevel: "Department", urgencyLevel: "High" }, // P1
+  Medium: { impactLevel: "Individual", urgencyLevel: "Medium" }, // P3
+  Low: { impactLevel: "Individual", urgencyLevel: "Low" }, // P4
+};
+function roomFor(name) {
+  const wanted = String(name).toLowerCase();
+  const match = rooms.find((room) => room.roomName.toLowerCase().includes(wanted.split(",")[0]));
+  return (match || rooms[Math.abs([...wanted].reduce((sum, ch) => sum + ch.charCodeAt(0), 0)) % rooms.length]).id;
+}
+
 async function ticket(spec) {
   const { id } = await call("POST", "/tickets", {
     subject: spec.subject,
     category: spec.category,
-    priority: spec.priority,
-    location: spec.location,
+    ...INTAKE[spec.priority],
+    locationId: roomFor(spec.location),
     description: spec.description,
     createdBy: spec.by,
   }, spec.by);
   created.push({ id, daysAgo: spec.daysAgo ?? 0, assigned: Boolean(spec.assign), resolved: Boolean(spec.resolve) });
-  if (spec.assign) await call("PATCH", `/tickets/${enc(id)}/assign`, { actorId: ADMIN, technicianId: spec.assign }, ADMIN);
+  if (spec.assign) await call("PATCH", `/tickets/${enc(id)}/assign`, { actorId: ADMIN, agentId: spec.assign }, ADMIN);
   for (const [userId, text] of spec.chat || []) {
     await call("POST", `/tickets/${enc(id)}/messages`, { userId, text }, userId);
   }
@@ -123,7 +137,7 @@ await ticket({
 
 await ticket({
   subject: "Printer jam in the Registrar's office",
-  category: "Printer", priority: "Low", location: "Registrar's Office", by: EMPLOYEE, daysAgo: 3,
+  category: "Printer", priority: "Low", location: "Registrar's Office", by: STAFF, daysAgo: 3,
   description: "Paper is stuck inside and the tray will not open.",
   assign: HARDWARE_TECH,
   resolve: HARDWARE_TECH,
@@ -131,7 +145,7 @@ await ticket({
 
 await ticket({
   subject: "Install MATLAB on the Lab 3 computers",
-  category: "Software", priority: "Medium", location: "Computer Laboratory 3", by: EMPLOYEE, daysAgo: 0,
+  category: "Software", priority: "Medium", location: "Computer Laboratory 3", by: STAFF, daysAgo: 0,
   description: "The engineering class needs MATLAB R2024b on all 30 machines before Monday.",
 });
 
@@ -150,7 +164,7 @@ for (let i = 0; i < 70; i += 1) {
     category,
     priority: priorities[(i * 7) % 3],
     location: locations[(i * 3) % locations.length],
-    by: i % 3 === 0 ? EMPLOYEE : STUDENT,
+    by: i % 3 === 0 ? STAFF : STUDENT,
     daysAgo: i < 32 ? 1 + ((i * 5) % 29) : 30 + ((i * 7) % 130),
     description: "Routine request created for demo data.",
     assign: stage >= 1 ? tech : undefined,

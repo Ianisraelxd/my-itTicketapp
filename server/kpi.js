@@ -81,7 +81,7 @@ async function computeMonth(month) {
      WHERE resolved_at >= ? AND resolved_at < DATE_ADD(?, INTERVAL 1 MONTH)`,
     [start, start],
   );
-  const [staff] = await query("SELECT COUNT(*) AS n FROM users WHERE role = 'technician'");
+  const [staff] = await query("SELECT COUNT(*) AS n FROM users WHERE role = 'agent'");
 
   const total = Number(cohort.total);
   const cancelled = Number(cohort.cancelled);

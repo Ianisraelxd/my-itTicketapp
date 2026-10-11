@@ -140,7 +140,7 @@ export default function AdminTable({ management }) {
           <label className="field-label">
             Person
             <select value={grantTo} onChange={(event) => setGrantTo(event.target.value)} disabled={isLoading}>
-              <option value="">Choose an employee or technician…</option>
+              <option value="">Choose a staff member or agent…</option>
               {candidates.map((person) => (
                 <option key={person.userId} value={person.userId}>
                   {person.name} ({person.roleName})
@@ -168,7 +168,7 @@ export default function AdminTable({ management }) {
             <h3>{confirm.action === "revoke" ? "Revoke access?" : "Reset two-step verification?"}</h3>
             <p>
               {confirm.action === "revoke"
-                ? `${confirm.account.name} becomes a regular Employee and loses ${confirm.account.role === "admin" ? "admin" : "dashboard"} access straight away. Their history is kept.`
+                ? `${confirm.account.name} becomes regular University Staff and loses ${confirm.account.role === "admin" ? "admin" : "dashboard"} access straight away. Their history is kept.`
                 : `${confirm.account.name} will be asked to set up two-step verification again from their profile.`}
             </p>
             <div className="dialog-actions">

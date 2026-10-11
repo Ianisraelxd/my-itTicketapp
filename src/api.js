@@ -108,6 +108,14 @@ export const api = {
     return request(`/tickets${suffix}`);
   },
 
+  getLocations: () => request("/locations"),
+
+  cancelTicket: (ticketId, payload) =>
+    request(`/tickets/${encodeURIComponent(ticketId)}/cancel`, {
+      method: "PUT",
+      body: JSON.stringify(payload),
+    }),
+
   createTicket: (ticket) =>
     request("/tickets", { method: "POST", body: JSON.stringify(ticket) }),
 
@@ -143,7 +151,7 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
-  setTechnicianSkills: (userId, payload) =>
+  setAgentSkills: (userId, payload) =>
     request(`/users/${encodeURIComponent(userId)}/skills`, {
       method: "PATCH",
       body: JSON.stringify(payload),

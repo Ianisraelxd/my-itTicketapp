@@ -24,7 +24,7 @@ export default function useAdminManagement({ onMessage }) {
   const reload = () => setVersion((value) => value + 1);
 
   const SUCCESS = {
-    revoke: "Access revoked. They are an Employee again.",
+    revoke: "Access revoked. They are an Staff again.",
     grant: "Admin access granted. They need to log in again as an Admin.",
     grant_viewer: "Report viewer access granted. They need to log in again as a Report Viewer.",
     unlock: "The lockout was cleared. They can sign in again.",

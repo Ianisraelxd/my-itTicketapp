@@ -103,7 +103,7 @@ async function openTicket(page, subjectPart) {
 
 // Direct API calls (the API needs a signed-in user, so sign in as the account that acts).
 const ACCOUNTS = {
-  technician: ["technician", "123456technician"],
+  agent: ["agent", "123456technician"],
   superadmin: ["superadmin", "123456superadmin"],
 };
 const tokens = {};
@@ -208,14 +208,14 @@ async function api(route, body, method = "POST", as = "superadmin") {
   await context.close();
 }
 
-// ------------------------------------------------------------------ technician
+// ------------------------------------------------------------------ agent
 {
   const { context, page } = await open();
-  await login(page, "technician", "123456technician");
-  await shot(page, "18-technician-dashboard");
+  await login(page, "agent", "123456technician");
+  await shot(page, "18-agent-dashboard");
   await nav(page, "Assigned Requests");
-  await shot(page, "19-technician-queue");
-  // Resolve a ticket outside this technician's skills -> risk warning
+  await shot(page, "19-agent-queue");
+  // Resolve a ticket outside this agent's skills -> risk warning
   await page.evaluate(() => {
     const row = [...document.querySelectorAll("tbody tr")].find(
       (r) => r.textContent.includes("Outside your skills") && !r.querySelector(".table-button:disabled"),
@@ -241,7 +241,7 @@ async function api(route, body, method = "POST", as = "superadmin") {
     [...row.querySelectorAll(".table-button")].find((b) => b.textContent.includes("Assign")).click();
   });
   await sleep(700);
-  await shot(page, "22-assign-technician");
+  await shot(page, "22-assign-agent");
   await closeTopModal(page);
 
   await nav(page, "Users");
@@ -250,17 +250,17 @@ async function api(route, body, method = "POST", as = "superadmin") {
   await nav(page, "Password Requests");
   await shot(page, "24-password-requests");
 
-  // Chat dock: the technician has already written, the admin answers.
+  // Chat dock: the agent has already written, the admin answers.
   await api(
     "/messages",
     { senderId: 3, recipientId: 4, body: "Hi! I am heading to Lab 1 to look at the projector now." },
     "POST",
-    "technician",
+    "agent",
   );
   await sleep(500);
   await page.click(".chat-launcher");
   await sleep(700);
-  await clickText(page, ".chat-contact", "Technician User");
+  await clickText(page, ".chat-contact", "Agent User");
   await sleep(1200);
   await page.type(".chat-window .chat-compose textarea", "Great, thank you! Please update the ticket when it is done.");
   await page.keyboard.press("Enter");

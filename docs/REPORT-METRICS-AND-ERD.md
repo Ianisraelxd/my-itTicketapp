@@ -17,7 +17,7 @@ The super admin picks which metrics show for each month with **Choose KPIs**. Un
 | RR | Resolution Rate | % | higher | 85 | Tickets resolved out of those submitted |
 | BKL | Open Backlog | count | lower | 10 | Tickets still Open or In Progress |
 
-The other 9 metrics can be switched on in the picker: ART (Average Resolution Time), TTA (Time to Assign), REO (Reopen Rate), HPR (High-Priority Resolution Rate), SKM (Skill Match Rate), VOL (Ticket Volume), CAN (Cancellation Rate), AGE (Backlog Age), TPT (Tickets Resolved per Technician). Formulas: [KPI-METRICS.md](KPI-METRICS.md) and `server/kpiCatalog.js`.
+The other 9 metrics can be switched on in the picker: ART (Average Resolution Time), TTA (Time to Assign), REO (Reopen Rate), HPR (High-Priority Resolution Rate), SKM (Skill Match Rate), VOL (Ticket Volume), CAN (Cancellation Rate), AGE (Backlog Age), TPT (Tickets Resolved per Agent). Formulas: [KPI-METRICS.md](KPI-METRICS.md) and `server/kpiCatalog.js`.
 
 Below the cards is the **KPI trend** chart: any chosen KPI over six months, with its target as a dashed line.
 
@@ -61,10 +61,10 @@ erDiagram
         varchar id_number
         varchar password "scrypt hash"
         varchar name
-        varchar role "student employee technician admin superadmin report_viewer bot"
+        varchar role "student staff agent admin superadmin report_viewer bot"
         varchar role_name
         varchar email
-        varchar skills "technician categories"
+        varchar skills "agent categories"
         int failed_logins
         datetime locked_until
         tinyint mfa_enabled
