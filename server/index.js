@@ -1,10 +1,23 @@
-import "dotenv/config";
+import "./env.js";
+import compression from "compression";
 import express from "express";
-import { authenticate, verifyReportViewer } from "./auth.js";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { registerAttachmentRoutes } from "./attachments.js";
+import { authenticate, verifyReportViewer, verifySuperAdmin } from "./auth.js";
+import { startAutoClose, CLOSE_DAYS } from "./autoclose.js";
+import { registerBackupRoutes, startBackupSchedule } from "./backup.js";
+import { connectEvents, issueEventTicket, publish } from "./events.js";
+import { registerKbRoutes } from "./kb.js";
+import { alertUsers, mailMode } from "./mailer.js";
 import { AUTO_ASSIGN_MINUTES, startAutoAssign } from "./autoassign.js";
+import { EVENT_LABELS, logEvent } from "./audit.js";
 import { createBot, shapeMessage } from "./bot.js";
 import { pool, query } from "./db.js";
 import { calculatePriority } from "./priority.js";
+import { rateLimit } from "./ratelimit.js";
+import { ensureSchema } from "./setup.js";
 import { registerKpiRoutes } from "./kpi.js";
 import {
   hashPassword,
@@ -21,6 +34,19 @@ import { registerSuperAdminRoutes } from "./superadmin.js";
 
 const app = express();
 app.disable("x-powered-by");
+// Behind Render, Railway, Nginx and similar, set TRUST_PROXY=1 so the real visitor address is used.
+if (process.env.TRUST_PROXY) app.set("trust proxy", Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY);
+// With FORCE_HTTPS=true (behind a proxy that sets X-Forwarded-Proto) plain http is sent to https.
+if (process.env.FORCE_HTTPS === "true") {
+  app.use((req, res, next) => {
+    res.set("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
+    if (req.secure || req.headers["x-forwarded-proto"] === "https" || req.path === "/api/health") return next();
+    res.redirect(301, `https://${req.headers.host}${req.originalUrl}`);
+  });
+}
+app.use(compression({ filter: (req, res) => !String(res.getHeader("Content-Type")).includes("text/event-stream") && compression.filter(req, res) }));
+// Photos arrive as base64 text, so that one route accepts a larger body than the rest of the API.
+app.use("/api/tickets/:id/attachments", express.json({ limit: "8mb" }));
 app.use(express.json({ limit: "100kb" }));
 
 // Basic hardening headers; API responses are never cached.
@@ -33,6 +59,9 @@ app.use("/api", (_req, res, next) => {
   });
   next();
 });
+
+const authLimit = rateLimit({ max: Number(process.env.RATE_LIMIT_AUTH) || 100 });
+app.use(["/api/login", "/api/login/mfa", "/api/signup", "/api/forgot-password"], authLimit);
 
 // Everything under /api needs a signed-in user except login, signup and the health check.
 app.use("/api", authenticate);
@@ -58,6 +87,36 @@ async function nextCode(conn, table, prefix, archiveTable = null) {
   return `${prefix}${String(rows[0].n).padStart(3, "0")}`;
 }
 
+// Creates a row that needs a generated code (#HD001, #CR001, #PW001). Requests are queued one at a
+// time (the "max + 1" lookup would otherwise hand two parallel requests the same code), and a
+// duplicate-code error from a second API process is retried.
+let codeQueue = Promise.resolve();
+function createWithCode({ table, prefix, archiveTable = null, work }) {
+  const run = codeQueue.then(async () => {
+    for (let attempt = 0; ; attempt += 1) {
+      const conn = await pool.getConnection();
+      try {
+        await conn.beginTransaction();
+        const code = await nextCode(conn, table, prefix, archiveTable);
+        const result = await work(conn, code);
+        await conn.commit();
+        return { code, result };
+      } catch (err) {
+        await conn.rollback();
+        if (err.code === "ER_DUP_ENTRY" && attempt < 4) continue;
+        throw err;
+      } finally {
+        conn.release();
+      }
+    }
+  });
+  codeQueue = run.catch(() => {});
+  return run;
+}
+
+// Plain-text input helpers: a non-string (array, object, number) is treated as missing.
+const asText = (value, max = 1000) => (typeof value === "string" ? value.trim().slice(0, max) : "");
+
 // Notifications never break the action that triggered them.
 async function notify(userIds, { type, title, body, ticketCode = null }) {
   const targets = [...new Set((userIds || []).filter(Boolean))];
@@ -71,6 +130,15 @@ async function notify(userIds, { type, title, body, ticketCode = null }) {
       console.error("notify failed", err.message);
     }
   }
+  if (targets.length > 0) {
+    publish(targets, { type: "notification" });
+    alertUsers(targets, { type, title, body, ticketCode }).catch((err) => console.error("alert failed", err.message));
+  }
+}
+
+// Tell everyone on a ticket (requester, assigned agent, admins) that its conversation changed.
+async function publishTicket(ticket) {
+  publish([ticket.created_by, ticket.assigned_to, ...(await adminIds())], { type: "message", code: ticket.code });
 }
 
 async function adminIds() {
@@ -89,16 +157,24 @@ app.get("/api/health", wrap(async (_req, res) => {
 // store bcrypt hashes and compare with bcrypt.compare() instead.
 app.post("/api/signup", wrap(async (req, res) => {
   const { fullName, id, email, userType, password } = req.body ?? {};
-  const trimmedName = fullName?.trim();
-  const trimmedId = id?.trim();
-  const trimmedEmail = email?.trim();
-  const selectedRole = String(userType || "Student").toLowerCase();
+  const trimmedName = asText(fullName, 500);
+  const trimmedId = asText(id, 500);
+  const trimmedEmail = asText(email, 500);
+  const selectedRole = String(typeof userType === "string" ? userType : "Student").toLowerCase();
 
-  if (!trimmedName || !trimmedId || !trimmedEmail || !password) {
+  if (!trimmedName || !trimmedId || !trimmedEmail || typeof password !== "string" || !password) {
     return res.status(400).json({
       error: "full name, ID, email, user type, and password are required.",
     });
   }
+  if (trimmedName.length > 120) return res.status(400).json({ error: "Full name must be 120 characters or fewer." });
+  if (!/^[A-Za-z0-9._-]{3,32}$/.test(trimmedId)) {
+    return res.status(400).json({ error: "ID must be 3 to 32 letters, numbers, dots, dashes or underscores." });
+  }
+  if (trimmedEmail.length > 160 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+    return res.status(400).json({ error: "Please enter a valid email address." });
+  }
+  if (password.length > 128) return res.status(400).json({ error: "Password must be 128 characters or fewer." });
 
   const role = ["staff", "university staff"].includes(selectedRole) ? "staff" : "student";
   const roleName = role === "staff" ? "University Staff" : "Student";
@@ -127,7 +203,11 @@ app.post("/api/signup", wrap(async (req, res) => {
   });
 }));
 
-const MAX_FAILED_LOGINS = 5;
+// Wrong passwords in a row: the 5th starts a short cooldown (the sign-in page warns for 10 seconds
+// and then offers "Forgot password?"), and the 10th locks the account for 15 minutes.
+const COOLDOWN_AFTER = 5;
+const COOLDOWN_SECONDS = 10;
+const MAX_FAILED_LOGINS = 10;
 const LOCK_MINUTES = 15;
 
 // Everything a client needs after signing in.
@@ -151,9 +231,16 @@ async function sessionFor(account) {
   };
 }
 
-// Counts a wrong password / code and locks the account after too many.
+// Counts a wrong password / code. Returns "lock" (15 minutes), "cooldown" (10 seconds) or false.
 async function recordFailure(account) {
   const failed = Number(account.failed_logins) + 1;
+  if (failed === COOLDOWN_AFTER) {
+    await query(
+      "UPDATE users SET failed_logins = ?, locked_until = DATE_ADD(NOW(), INTERVAL ? SECOND) WHERE user_pk = ?",
+      [failed, COOLDOWN_SECONDS, account.user_pk],
+    );
+    return "cooldown";
+  }
   if (failed >= MAX_FAILED_LOGINS) {
     await query(
       "UPDATE users SET failed_logins = 0, locked_until = DATE_ADD(NOW(), INTERVAL ? MINUTE) WHERE user_pk = ?",
@@ -163,11 +250,22 @@ async function recordFailure(account) {
       "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
       [account.name, account.role_name, `Account locked for ${LOCK_MINUTES} minutes after ${MAX_FAILED_LOGINS} failed sign-ins`],
     );
-    return true;
+    return "lock";
   }
   await query("UPDATE users SET failed_logins = ? WHERE user_pk = ?", [failed, account.user_pk]);
   return false;
 }
+
+const lockSeconds = (account) => Math.max(1, Math.ceil((new Date(account.locked_until) - new Date()) / 1000));
+
+// A lock this short is the cooldown, not the 15-minute lock.
+const isCooldown = (account) => lockSeconds(account) <= COOLDOWN_SECONDS + 5;
+
+const cooldownReply = (res, account) =>
+  res.status(429).json({
+    error: `Too many attempts. Please wait ${lockSeconds(account)} seconds before trying again.`,
+    retryAfter: lockSeconds(account),
+  });
 
 const lockMessage = (account) => {
   const minutes = Math.max(1, Math.ceil((new Date(account.locked_until) - new Date()) / 60000));
@@ -175,6 +273,20 @@ const lockMessage = (account) => {
 };
 
 const isLocked = (account) => Boolean(account.locked_until && new Date(account.locked_until) > new Date());
+
+// "Forgot password" is announced for the next version: the request is accepted and nothing is changed.
+// It never says whether the email belongs to an account.
+app.post("/api/forgot-password", wrap(async (req, res) => {
+  const email = asText(req.body?.email, 500);
+  if (!email || email.length > 160 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: "Please enter a valid email address." });
+  }
+  res.json({
+    ok: true,
+    available: false,
+    message: "Password reset by email is a feature for the next version. Your request was received, but nothing has been changed. For now, ask an admin to review a password change request, or contact IT Support Services.",
+  });
+}));
 
 const ACCOUNT_COLUMNS =
   "user_pk, id_number, password, name, role, role_name, failed_logins, locked_until, mfa_enabled, mfa_secret";
@@ -190,13 +302,17 @@ app.post("/api/login", wrap(async (req, res) => {
   );
   const account = rows[0];
   if (account && isLocked(account)) {
-    return res.status(423).json({ error: lockMessage(account) });
+    return isCooldown(account) ? cooldownReply(res, account) : res.status(423).json({ error: lockMessage(account) });
   }
   if (!account || !(await verifyPassword(password, account.password))) {
-    if (account && (await recordFailure(account))) {
+    const outcome = account ? await recordFailure(account) : false;
+    if (outcome === "lock") {
       return res.status(423).json({ error: `Too many failed attempts. The account is locked for ${LOCK_MINUTES} minutes.` });
     }
-    return res.status(401).json({ error: "Incorrect ID, password, or selected role." });
+    return res.status(401).json({
+      error: "Incorrect ID, password, or selected role.",
+      ...(outcome === "cooldown" ? { cooldownSeconds: COOLDOWN_SECONDS } : {}),
+    });
   }
 
   // Upgrade an old plaintext password to a hash the first time it is used.
@@ -218,13 +334,19 @@ app.post("/api/login/mfa", wrap(async (req, res) => {
   const rows = await query(`SELECT ${ACCOUNT_COLUMNS} FROM users WHERE user_pk = ? LIMIT 1`, [payload.sub]);
   const account = rows[0];
   if (!account || !account.mfa_enabled) return res.status(401).json({ error: "Start the sign-in again." });
-  if (isLocked(account)) return res.status(423).json({ error: lockMessage(account) });
+  if (isLocked(account)) {
+    return isCooldown(account) ? cooldownReply(res, account) : res.status(423).json({ error: lockMessage(account) });
+  }
 
   if (!verifyTotp(account.mfa_secret, code)) {
-    if (await recordFailure(account)) {
+    const outcome = await recordFailure(account);
+    if (outcome === "lock") {
       return res.status(423).json({ error: `Too many failed attempts. The account is locked for ${LOCK_MINUTES} minutes.` });
     }
-    return res.status(401).json({ error: "That code is not correct. Check the app and try again." });
+    return res.status(401).json({
+      error: "That code is not correct. Check the app and try again.",
+      ...(outcome === "cooldown" ? { cooldownSeconds: COOLDOWN_SECONDS } : {}),
+    });
   }
   res.json(await sessionFor(account));
 }));
@@ -284,23 +406,35 @@ app.post("/api/mfa/disable", wrap(async (req, res) => {
 }));
 
 // --- Tickets ----------------------------------------------------------------
+// Columns every ticket list needs (ticket_pk is only used to merge and sort).
+const TICKET_LIST_SQL = `SELECT t.ticket_pk AS pk, t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.location_id AS locationId, t.impact_level AS impactLevel, t.urgency_level AS urgencyLevel, t.priority_tier AS priorityTier, t.assigned_manually AS assignedManually, t.auto_assign_count AS autoAssignCount, CASE WHEN t.assigned_manually = 0 AND t.status IN ('Open', 'In Progress') THEN DATE_ADD(COALESCE(t.assignment_started_at, t.created_at), INTERVAL ${AUTO_ASSIGN_MINUTES} MINUTE) END AS autoAssignAt, t.closed_at AS closedAt,
+  CASE WHEN ${CLOSE_DAYS > 0 ? 1 : 0} = 1 AND t.status = 'Resolved' AND t.closed_at IS NULL AND t.resolved_at IS NOT NULL THEN DATE_ADD(t.resolved_at, INTERVAL ${Number(CLOSE_DAYS)} DAY) END AS closesAt, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey
+  FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to`;
+const OWN_TICKET_LIMIT = 500; // a requester's newest tickets
+const FINISHED_TICKET_LIMIT = 500; // staff lists: all active tickets plus this many finished ones
+
 app.get("/api/tickets", wrap(async (req, res) => {
   const { mine, userId } = req.query ?? {};
+  const strip = (rows) => rows.map(({ pk: _pk, ...rest }) => rest); // pk was only for sorting
 
   if (mine === "1" && userId) {
     const rows = await query(
-      `SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.location_id AS locationId, t.impact_level AS impactLevel, t.urgency_level AS urgencyLevel, t.priority_tier AS priorityTier, t.assigned_manually AS assignedManually, t.auto_assign_count AS autoAssignCount, CASE WHEN t.assigned_manually = 0 AND t.status IN ('Open', 'In Progress') THEN DATE_ADD(COALESCE(t.assignment_started_at, t.created_at), INTERVAL ${AUTO_ASSIGN_MINUTES} MINUTE) END AS autoAssignAt, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to WHERE t.created_by = ? ORDER BY t.ticket_pk DESC`,
+      `${TICKET_LIST_SQL} WHERE t.created_by = ? ORDER BY t.ticket_pk DESC LIMIT ${OWN_TICKET_LIMIT}`,
       [userId],
     );
-    return res.json(rows);
+    return res.json(strip(rows));
   }
 
-  const rows = await query(
-    `SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.location_id AS locationId, t.impact_level AS impactLevel, t.urgency_level AS urgencyLevel, t.priority_tier AS priorityTier, t.assigned_manually AS assignedManually, t.auto_assign_count AS autoAssignCount, CASE WHEN t.assigned_manually = 0 AND t.status IN ('Open', 'In Progress') THEN DATE_ADD(COALESCE(t.assignment_started_at, t.created_at), INTERVAL ${AUTO_ASSIGN_MINUTES} MINUTE) END AS autoAssignAt, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to ORDER BY t.ticket_pk DESC`,
-  );
-  res.json(rows);
+  // Everything still being worked on, plus the most recent finished tickets. Without the cap the
+  // list (and every refresh of it) grows with the whole history of the help desk.
+  const [active, finished, total] = await Promise.all([
+    query(`${TICKET_LIST_SQL} WHERE t.status IN ('Open', 'In Progress') ORDER BY t.ticket_pk DESC LIMIT 2000`),
+    query(`${TICKET_LIST_SQL} WHERE t.status NOT IN ('Open', 'In Progress') ORDER BY t.ticket_pk DESC LIMIT ${FINISHED_TICKET_LIMIT}`),
+    query("SELECT COUNT(*) AS n FROM tickets"),
+  ]);
+  res.set("X-Total-Count", String(total[0].n));
+  res.json(strip([...active, ...finished].sort((a, b) => b.pk - a.pk)));
 }));
-
 app.patch("/api/tickets/:id/status", wrap(async (req, res) => {
   const { id } = req.params;
   const { status, actorId } = req.body ?? {};
@@ -333,6 +467,10 @@ app.patch("/api/tickets/:id/status", wrap(async (req, res) => {
     "UPDATE tickets SET status = ?, resolved_at = IF(? = 'Resolved', COALESCE(resolved_at, NOW()), NULL) WHERE ticket_pk = ?",
     [status, status, ticket.ticket_pk],
   );
+
+  if (ticket.status !== status) {
+    await logEvent({ ticketPk: ticket.ticket_pk, actor: { userId: req.user.userId, name: req.user.name, roleName: req.user.roleName }, action: "status", detail: `${ticket.status} → ${status}` });
+  }
 
   // Keep the requester in the loop.
   if (ticket.status !== status && ticket.created_by !== actorId) {
@@ -378,10 +516,27 @@ app.get("/api/locations", wrap(async (_req, res) => {
 
 // The priority tier is calculated on the server (server/priority.js) from the two intake answers;
 // any priority sent by the client is ignored.
+const TICKET_CATEGORIES = ["Hardware", "Software", "Network / Internet", "Account / Login", "Printer", "Others"];
+
 app.post("/api/tickets", calculatePriority, wrap(async (req, res) => {
-  const { subject, category, locationId, description, createdBy } = req.body ?? {};
-  if (!subject?.trim() || !category?.trim()) {
+  if (!["student", "staff"].includes(req.user.role)) {
+    return res.status(403).json({ error: "Only students and university staff can submit requests." });
+  }
+  const { createdBy } = req.body ?? {};
+  const locationId = req.body?.locationId;
+  const subject = asText(req.body?.subject, 1000);
+  const category = asText(req.body?.category, 100);
+  const description = asText(req.body?.description, 100000);
+  if (!subject || !category) {
     return res.status(400).json({ error: "subject and category are required." });
+  }
+  if (subject.length > 200) return res.status(400).json({ error: "The subject must be 200 characters or fewer." });
+  if (description.length > 5000) return res.status(400).json({ error: "The description must be 5000 characters or fewer." });
+  if (!TICKET_CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: `Category must be one of: ${TICKET_CATEGORIES.join(", ")}.` });
+  }
+  if (!/^\d{1,9}$/.test(String(locationId ?? ""))) {
+    return res.status(400).json({ error: "Please choose a campus zone, building and room." });
   }
   const rooms = await query(
     "SELECT location_id, building_name, room_name FROM locations WHERE location_id = ? LIMIT 1",
@@ -393,45 +548,51 @@ app.post("/api/tickets", calculatePriority, wrap(async (req, res) => {
   // Readable snapshot of the room, kept for reports and the location heat map.
   const locationText = `${room.room_name}, ${room.building_name}`;
 
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    const code = await nextCode(conn, "tickets", "#HD", "tickets_archive");
-    await conn.execute(
-      "INSERT INTO tickets (code, subject, category, priority, status, location, location_id, impact_level, urgency_level, priority_tier, description, created_by) VALUES (?, ?, ?, ?, 'Open', ?, ?, ?, ?, ?, ?, ?)",
-      [
-        code, subject, category, priority, locationText, room.location_id,
-        req.body.impactLevel, req.body.urgencyLevel, tier, description ?? null, createdBy ?? null,
-      ],
-    );
-    await conn.commit();
-    const submitters = await query("SELECT name FROM users WHERE user_pk = ?", [createdBy ?? 0]);
+  const { code } = await createWithCode({
+    table: "tickets",
+    prefix: "#HD",
+    archiveTable: "tickets_archive",
+    work: (conn, newCode) =>
+      conn.execute(
+        "INSERT INTO tickets (code, subject, category, priority, status, location, location_id, impact_level, urgency_level, priority_tier, description, created_by) VALUES (?, ?, ?, ?, 'Open', ?, ?, ?, ?, ?, ?, ?)",
+        [
+          newCode, subject, category, priority, locationText, room.location_id,
+          req.body.impactLevel, req.body.urgencyLevel, tier, description || null, createdBy ?? null,
+        ],
+      ),
+  });
+  const submitters = await query("SELECT name FROM users WHERE user_pk = ?", [createdBy ?? 0]);
+  await notify(await adminIds(), {
+    type: "new_ticket",
+    title: "New request submitted",
+    body: `${submitters[0]?.name || "A user"} filed ${code} (${category}): ${subject}`,
+    ticketCode: code,
+  });
+  if (tier === "P1") {
     await notify(await adminIds(), {
-      type: "new_ticket",
-      title: "New request submitted",
-      body: `${submitters[0]?.name || "A user"} filed ${code} (${category}): ${subject}`,
+      type: "urgent_ticket",
+      title: `Urgent request ${code}`,
+      body: `${submitters[0]?.name || "A user"} filed a P1 request (${category}) in ${locationText}: ${subject}`,
       ticketCode: code,
     });
-    try {
-      const [created] = await query("SELECT ticket_pk FROM tickets WHERE code = ?", [code]);
-      if (created && createdBy) {
-        await bot.postGreeting({
-          ticketPk: created.ticket_pk, code, subject, category, requesterName: submitters[0]?.name,
-        });
-      }
-    } catch (err) {
-      console.error("assistant greeting failed", err.message);
-    }
-    res.status(201).json({
-      id: code, subject, category, priority, priorityTier: tier, escalated: req.priority.escalated,
-      location: locationText, status: "Open",
-    });
-  } catch (err) {
-    await conn.rollback();
-    throw err;
-  } finally {
-    conn.release();
   }
+  try {
+    const [created] = await query("SELECT ticket_pk FROM tickets WHERE code = ?", [code]);
+    if (created) {
+      await logEvent({ ticketPk: created.ticket_pk, actor: { userId: req.user.userId, name: req.user.name, roleName: req.user.roleName }, action: "created", detail: `${tier} (${priority}) · ${locationText}${req.priority.escalated ? " · raised one level for exam or lecture wording" : ""}` });
+    }
+    if (created && createdBy) {
+      await bot.postGreeting({
+        ticketPk: created.ticket_pk, code, subject, category, requesterName: submitters[0]?.name,
+      });
+    }
+  } catch (err) {
+    console.error("assistant greeting failed", err.stack);
+  }
+  res.status(201).json({
+    id: code, subject, category, priority, priorityTier: tier, escalated: req.priority.escalated,
+    location: locationText, status: "Open",
+  });
 }));
 
 // Queue-safe cancellation by an admin. The row is never deleted: the status guard in the UPDATE
@@ -459,6 +620,13 @@ app.put("/api/tickets/:id/cancel", wrap(async (req, res) => {
   if (result.affectedRows === 0) {
     return res.status(409).json({ error: `This ticket is already ${ticket.status.toLowerCase()} and cannot be cancelled.` });
   }
+
+  await logEvent({
+    ticketPk: ticket.ticket_pk,
+    actor: { userId: admin.user_pk, name: admin.name, roleName: admin.role_name },
+    action: "cancelled",
+    detail: reason,
+  });
 
   // A waiting cancellation request is settled by this decision.
   await query(
@@ -495,6 +663,7 @@ app.get("/api/agents/workload", wrap(async (req, res) => {
   const marks = ACTIVE_STATUSES.map(() => "?").join(", ");
   const rows = await query(
     `SELECT u.user_pk AS userId, u.name, u.skills,
+       (u.last_seen_at > DATE_SUB(NOW(), INTERVAL 90 SECOND)) AS online,
        (SELECT COUNT(*) FROM tickets t WHERE t.assigned_to = u.user_pk AND t.status IN (${marks})) AS activeTickets
      FROM users u WHERE u.role = 'agent' ORDER BY activeTickets ASC, u.name`,
     ACTIVE_STATUSES,
@@ -565,6 +734,12 @@ app.patch("/api/tickets/:id/assign", wrap(async (req, res) => {
     agent.user_pk,
     admin.user_pk,
   ]);
+  await logEvent({
+    ticketPk: ticket.ticket_pk,
+    actor: { userId: admin.user_pk, name: admin.name, roleName: admin.role_name },
+    action: "assigned",
+    detail: `to ${agent.name}`,
+  });
   await notify([agent.user_pk], {
     type: "assigned",
     title: "New ticket assigned to you",
@@ -605,6 +780,17 @@ app.get("/api/tickets/:id/participants", wrap(async (req, res) => {
   res.json(rows);
 }));
 
+// Who did what to this ticket, oldest first.
+app.get("/api/tickets/:id/history", wrap(async (req, res) => {
+  const access = await ticketAccess(req.params.id, req.query.userId);
+  if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
+  const rows = await query(
+    "SELECT event_pk AS id, actor_name AS actorName, actor_role AS actorRole, action, detail, created_at AS createdAt FROM ticket_events WHERE ticket_pk = ? ORDER BY event_pk ASC LIMIT 500",
+    [access.ticket.ticket_pk],
+  );
+  res.json(rows.map((row) => ({ ...row, label: EVENT_LABELS[row.action] || row.action })));
+}));
+
 app.get("/api/tickets/:id/messages", wrap(async (req, res) => {
   const access = await ticketAccess(req.params.id, req.query.userId);
   if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
@@ -623,7 +809,7 @@ app.post("/api/tickets/:id/messages", wrap(async (req, res) => {
   const access = await ticketAccess(req.params.id, req.body?.userId);
   if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
   const { ticket, user, isOwner } = access;
-  const body = String(req.body?.text ?? "").trim().slice(0, 1000);
+  const body = asText(req.body?.text, 1000);
   if (!body) return res.status(400).json({ error: "Message cannot be empty." });
   if (CLOSED_STATUSES.includes(ticket.status)) {
     return res.status(409).json({ error: `This ticket is ${ticket.status}; the chat is closed.` });
@@ -656,6 +842,7 @@ app.post("/api/tickets/:id/messages", wrap(async (req, res) => {
       console.error("assistant auto-reply failed", err.message);
     }
   }
+  await publishTicket(ticket);
   res.status(201).json({ ok: true, id: result.insertId });
 }));
 
@@ -673,26 +860,20 @@ async function fileCancellationRequest({ ticket, user, reason }) {
     return { error: [409, `A cancellation request (${pending[0].code}) is already waiting for an admin.`] };
   }
 
-  const conn = await pool.getConnection();
-  let code;
-  try {
-    await conn.beginTransaction();
-    code = await nextCode(conn, "cancellation_requests", "#CR");
-    await conn.execute(
-      "INSERT INTO cancellation_requests (code, ticket_pk, requested_by, reason) VALUES (?, ?, ?, ?)",
-      [code, ticket.ticket_pk, user.user_pk, reason],
-    );
-    await conn.execute(
-      "INSERT INTO ticket_messages (ticket_pk, sender_pk, message_text, kind) VALUES (?, ?, ?, 'cancellation_request')",
-      [ticket.ticket_pk, user.user_pk, `Cancellation Requested: ${reason}`],
-    );
-    await conn.commit();
-  } catch (err) {
-    await conn.rollback();
-    throw err;
-  } finally {
-    conn.release();
-  }
+  const { code } = await createWithCode({
+    table: "cancellation_requests",
+    prefix: "#CR",
+    work: async (conn, newCode) => {
+      await conn.execute(
+        "INSERT INTO cancellation_requests (code, ticket_pk, requested_by, reason) VALUES (?, ?, ?, ?)",
+        [newCode, ticket.ticket_pk, user.user_pk, reason],
+      );
+      await conn.execute(
+        "INSERT INTO ticket_messages (ticket_pk, sender_pk, message_text, kind) VALUES (?, ?, ?, 'cancellation_request')",
+        [ticket.ticket_pk, user.user_pk, `Cancellation Requested: ${reason}`],
+      );
+    },
+  });
 
   await notify(await adminIds(), {
     type: "cancellation_requested",
@@ -710,6 +891,12 @@ async function fileCancellationRequest({ ticket, user, reason }) {
     "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
     [user.name, user.role_name, `Requested cancellation of ticket ${ticket.code}`],
   );
+  await logEvent({
+    ticketPk: ticket.ticket_pk,
+    actor: { userId: user.user_pk, name: user.name, roleName: user.role_name },
+    action: "cancellation_requested",
+    detail: reason,
+  });
   return { code };
 }
 
@@ -745,14 +932,17 @@ const MAX_REOPENS = 3;
 async function reopenTicketFor({ ticket, user, reason }) {
   if (!reason) return { error: [400, "Please explain what is still wrong."] };
 
-  const counts = await query("SELECT reopen_count FROM tickets WHERE ticket_pk = ?", [ticket.ticket_pk]);
+  const counts = await query("SELECT reopen_count, closed_at FROM tickets WHERE ticket_pk = ?", [ticket.ticket_pk]);
+  if (counts[0]?.closed_at) {
+    return { error: [409, "This ticket was closed for good after it was resolved. Please submit a new request instead."] };
+  }
   if (Number(counts[0]?.reopen_count) >= MAX_REOPENS) {
     return { error: [409, `This ticket was already reopened ${MAX_REOPENS} times. Please submit a new request instead.`] };
   }
 
   const nextStatus = ticket.assigned_to ? "In Progress" : "Open";
   const [result] = await pool.execute(
-    "UPDATE tickets SET status = ?, reopen_count = reopen_count + 1, resolved_at = NULL, assignment_started_at = NOW() WHERE ticket_pk = ? AND status = 'Resolved' AND reopen_count < ?",
+    "UPDATE tickets SET status = ?, reopen_count = reopen_count + 1, resolved_at = NULL, assignment_started_at = NOW() WHERE ticket_pk = ? AND status = 'Resolved' AND reopen_count < ? AND closed_at IS NULL",
     [nextStatus, ticket.ticket_pk, MAX_REOPENS],
   );
   if (result.affectedRows === 0) {
@@ -774,6 +964,12 @@ async function reopenTicketFor({ ticket, user, reason }) {
     "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
     [user.name, user.role_name, `Reopened ticket ${ticket.code}`],
   );
+  await logEvent({
+    ticketPk: ticket.ticket_pk,
+    actor: { userId: user.user_pk, name: user.name, roleName: user.role_name },
+    action: "reopened",
+    detail: reason,
+  });
   return { status: nextStatus };
 }
 
@@ -793,6 +989,7 @@ app.post("/api/tickets/:id/reopen", wrap(async (req, res) => {
 // HelpDesk Assistant: guided multiple-choice chatbot in the ticket conversation (server/bot.js).
 const bot = createBot({
   ticketAccess,
+  publishTicket,
   adminIds,
   notify,
   fileCancellationRequest: async (args) => {
@@ -863,6 +1060,12 @@ app.patch("/api/cancellation-requests/:code/status", wrap(async (req, res) => {
     [finalStatus, finalNote, admin.user_pk, request.request_pk],
   );
   const approved = finalStatus === "Approved";
+  await logEvent({
+    ticketPk: request.ticket_pk,
+    actor: { userId: admin.user_pk, name: admin.name, roleName: admin.role_name },
+    action: approved ? "cancellation_approved" : "cancellation_rejected",
+    detail: finalNote,
+  });
   await query(
     "INSERT INTO ticket_messages (ticket_pk, sender_pk, message_text, kind) VALUES (?, ?, ?, 'cancellation_decision')",
     [
@@ -1022,7 +1225,7 @@ app.post("/api/notifications/read", wrap(async (req, res) => {
 // --- Activities -------------------------------------------------------------
 app.get("/api/activities", wrap(async (_req, res) => {
   const rows = await query(
-    "SELECT actor_name, actor_role, action, created_at FROM activities ORDER BY activity_pk DESC",
+    "SELECT actor_name, actor_role, action, created_at FROM activities ORDER BY activity_pk DESC LIMIT 1000",
   );
   // Shape into the [timestamp, name, role, action] tuple the UI expects.
   res.json(
@@ -1078,7 +1281,11 @@ app.patch("/api/users/:userId/skills", wrap(async (req, res) => {
   if (!targets[0]) {
     return res.status(404).json({ error: "Agent not found." });
   }
-  const clean = [...new Set(skills.map((s) => String(s).trim()).filter(Boolean))];
+  const clean = [...new Set(skills.filter((s) => typeof s === "string").map((s) => s.trim()).filter(Boolean))];
+  const unknown = clean.filter((skill) => !TICKET_CATEGORIES.includes(skill));
+  if (unknown.length > 0) {
+    return res.status(400).json({ error: `Unknown skill: ${unknown.join(", ")}. Choose from ${TICKET_CATEGORIES.join(", ")}.` });
+  }
   await query("UPDATE users SET skills = ? WHERE user_pk = ?", [clean.join(","), targets[0].user_pk]);
   const actorRows = await query("SELECT name, role_name FROM users WHERE user_pk = ?", [actorId]);
   await query(
@@ -1254,12 +1461,13 @@ app.get("/api/password-requests", wrap(async (req, res) => {
 }));
 
 app.post("/api/password-requests", wrap(async (req, res) => {
-  const { userId, newPassword, reason } = req.body ?? {};
-  if (!userId || !newPassword) {
+  const { userId, newPassword } = req.body ?? {};
+  const reason = asText(req.body?.reason, 500);
+  if (!userId || typeof newPassword !== "string" || !newPassword) {
     return res.status(400).json({ error: "userId and newPassword are required." });
   }
-  if (String(newPassword).length < 6) {
-    return res.status(400).json({ error: "New password must be at least 6 characters." });
+  if (newPassword.length < 6 || newPassword.length > 128) {
+    return res.status(400).json({ error: "New password must be 6 to 128 characters." });
   }
 
   const accounts = await query(
@@ -1280,36 +1488,51 @@ app.post("/api/password-requests", wrap(async (req, res) => {
     });
   }
 
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    const code = await nextCode(conn, "password_requests", "#PW");
-    await conn.execute(
-      "INSERT INTO password_requests (code, user_pk, new_password, reason) VALUES (?, ?, ?, ?)",
-      [code, userId, await hashPassword(newPassword), reason?.trim() || null],
-    );
-    await conn.commit();
-    await notify(await adminIds(), {
-      type: "password_request",
-      title: "Password change request",
-      body: `${accounts[0].name} asked to change their password (${code}).`,
+  // One pending request per person, checked again inside the queue so parallel clicks cannot slip two in.
+  const hashed = await hashPassword(newPassword);
+  let duplicate = null;
+  const { code } = await createWithCode({
+    table: "password_requests",
+    prefix: "#PW",
+    work: async (conn, newCode) => {
+      const [again] = await conn.execute(
+        "SELECT code FROM password_requests WHERE user_pk = ? AND status = 'Pending' LIMIT 1",
+        [userId],
+      );
+      if (again.length > 0) {
+        duplicate = again[0].code;
+        return;
+      }
+      await conn.execute(
+        "INSERT INTO password_requests (code, user_pk, new_password, reason) VALUES (?, ?, ?, ?)",
+        [newCode, userId, hashed, reason || null],
+      );
+    },
+  });
+  if (duplicate) {
+    return res.status(409).json({
+      error: `You already have a pending request (${duplicate}). Wait for the admin to review it first.`,
     });
-    res.status(201).json({
-      id: code,
-      status: "Pending",
-      message: "Password change request sent to the admin for review.",
-    });
-  } catch (err) {
-    await conn.rollback();
-    throw err;
-  } finally {
-    conn.release();
   }
+  await notify(await adminIds(), {
+    type: "password_request",
+    title: "Password change request",
+    body: `${accounts[0].name} asked to change their password (${code}).`,
+  });
+  res.status(201).json({
+    id: code,
+    status: "Pending",
+    message: "Password change request sent to the admin for review.",
+  });
 }));
 
 app.patch("/api/password-requests/:id/status", wrap(async (req, res) => {
   const { id } = req.params;
   const { status, note, reviewedBy } = req.body ?? {};
+  // Only an admin may decide: approving swaps the account's password.
+  if (!(await requireAdmin(req.user.userId))) {
+    return res.status(403).json({ error: "Only admins can review password change requests." });
+  }
   if (!["Approved", "Rejected"].includes(status)) {
     return res.status(400).json({ error: "status must be Approved or Rejected." });
   }
@@ -1373,16 +1596,85 @@ app.patch("/api/password-requests/:id/status", wrap(async (req, res) => {
 registerKpiRoutes(app, wrap);
 registerSuperAdminRoutes(app, { wrap, notify });
 
-// --- Error handler ----------------------------------------------------------
+// --- Live updates, photos, help articles, backups, alert settings ----------------------------
+app.post("/api/events/ticket", (req, res) => res.json({ ticket: issueEventTicket(req.user.userId) }));
+app.get("/api/events", connectEvents);
+
+registerAttachmentRoutes(app, { wrap, ticketAccess, notify, adminIds, publishTicket, closedStatuses: CLOSED_STATUSES });
+registerKbRoutes(app, { wrap });
+registerBackupRoutes(app, { wrap, verifySuperAdmin });
+
+// Each person decides whether they get alert emails / texts (the server owner sets up how they are sent).
+app.get("/api/me/alerts", wrap(async (req, res) => {
+  const [row] = await query("SELECT email, phone, email_alerts AS emailAlerts FROM users WHERE user_pk = ?", [req.user.userId]);
+  res.json({ email: row?.email ?? null, phone: row?.phone ?? "", emailAlerts: Boolean(row?.emailAlerts), emailMode: mailMode(), smsConfigured: Boolean(process.env.SMS_WEBHOOK_URL) });
+}));
+
+app.patch("/api/me/alerts", wrap(async (req, res) => {
+  const phone = asText(req.body?.phone, 40);
+  if (phone && !/^\+?[0-9 ()-]{7,20}$/.test(phone)) {
+    return res.status(400).json({ error: "Enter a phone number with digits only, for example +63 912 345 6789." });
+  }
+  if (typeof req.body?.emailAlerts !== "boolean") return res.status(400).json({ error: "emailAlerts must be true or false." });
+  await query("UPDATE users SET email_alerts = ?, phone = ? WHERE user_pk = ?", [req.body.emailAlerts ? 1 : 0, phone || null, req.user.userId]);
+  res.json({ ok: true });
+}));
+
+// --- The website itself (npm run build creates dist/) ---------------------------------------
+const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
+if (fs.existsSync(path.join(DIST, "index.html"))) {
+  // Hashed files under /assets never change, so browsers may keep them; the page itself is never cached.
+  app.use("/assets", express.static(path.join(DIST, "assets"), { maxAge: "365d", immutable: true }));
+  app.use(express.static(DIST, { index: false, maxAge: "1h" }));
+  app.use((req, res, next) => {
+    if (req.method !== "GET" || req.path.startsWith("/api")) return next();
+    res.set("Cache-Control", "no-cache");
+    res.sendFile(path.join(DIST, "index.html"));
+  });
+}
+
+// --- Unknown API routes and errors ----------------------------------------------------
+app.use("/api", (_req, res) => res.status(404).json({ error: "Not found." }));
+
 app.use((err, _req, res, _next) => {
+  // Bad JSON or an oversized body are the client's mistake, not a server failure.
+  if (err.type === "entity.parse.failed") return res.status(400).json({ error: "The request body is not valid JSON." });
+  if (err.type === "entity.too.large") return res.status(413).json({ error: "The request is too large." });
+  if (err.status >= 400 && err.status < 500) return res.status(err.status).json({ error: "Bad request." });
   console.error(err);
   res.status(500).json({ error: "Internal server error." });
 });
 
 // Expires unresolved assignments after AUTO_ASSIGN_MINUTES (30) and passes the ticket to another
 // agent with the same specialty; tickets an admin assigned by hand are left alone.
-startAutoAssign({ query, pool, notify, adminIds, postNotice: (ticketPk, text) => bot.postNotice(ticketPk, text) });
+try {
+  await ensureSchema();
+} catch (error) {
+  console.error(`\n${error.message}\n`);
+  process.exit(1);
+}
 
-app.listen(PORT, () => {
+process.on("unhandledRejection", (reason) => console.error("Unhandled rejection:", reason));
+
+startAutoAssign({ query, pool, notify, adminIds, postNotice: (ticketPk, text) => bot.postNotice(ticketPk, text) });
+startAutoClose({ query, notify, postNotice: (ticketPk, text) => bot.postNotice(ticketPk, text) });
+startBackupSchedule();
+
+const server = app.listen(PORT, () => {
+  const built = fs.existsSync(path.join(DIST, "index.html"));
   console.log(`HelpDesk API listening on http://localhost:${PORT}`);
+  if (built) console.log(`Website: open http://localhost:${PORT} in your browser.`);
 });
+server.on("error", (error) => {
+  if (error.code === "EADDRINUSE") console.error(`Port ${PORT} is already in use. Close the other copy, or set PORT in server/.env.`);
+  else console.error(error);
+  process.exit(1);
+});
+
+// Close the database cleanly on Ctrl+C or when the host stops the process.
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, () => {
+    server.close(() => pool.end().finally(() => process.exit(0)));
+    setTimeout(() => process.exit(0), 3000).unref();
+  });
+}

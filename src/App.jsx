@@ -1,19 +1,15 @@
 import "./App.css";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 
 import { api, hasAuthToken, setAuthToken, setUnauthorizedHandler } from "./api";
 import MfaSettings from "./MfaSettings";
-import SuperAdminPanel from "./SuperAdminPanel";
 import ChartSkeleton from "./ChartSkeleton";
 import ChatInput from "./ChatInput";
 import { downloadCsv, reportToCsvRows } from "./csv";
 import { buildKpiCards, formatKpiValue, monthKey, monthLabel } from "./kpiFormat";
-import KpiScorecard, { KpiPicker, KpiScorecardView } from "./KpiScorecard";
-import KpiTrendCard from "./KpiTrendCard";
 import useKpiData from "./useKpiData";
 import useKpiTrend from "./useKpiTrend";
-import ReportChartContainer from "./ReportChartContainer";
 import ReportFilters from "./ReportFilters";
 import { defaultReportFilters } from "./reportDefaults";
 import useReportData from "./useReportData";
@@ -21,18 +17,35 @@ import { SettingsModal } from "./SettingsModal";
 import { APP_VERSION, motionAllowed } from "./settings";
 import { playSound } from "./sounds";
 import { IntakeQuestions, LocationSelector } from "./SmartIntake";
+import AlertSettings from "./AlertSettings";
+import HelpArticles from "./HelpArticles";
+import { prepareImage } from "./imageTools";
+import PhotoPicker from "./PhotoPicker";
+import { realtimeConnected, startRealtime, stopRealtime, subscribeRealtime } from "./realtime";
+import useLoginGuard, { COOLDOWN_SECONDS } from "./useLoginGuard";
 import { TicketDetailsModal } from "./TicketChat";
+
+// Charts and the super admin screens are only needed by a few roles, so they load on demand
+// instead of making every student download the charting library.
+const KpiScorecard = lazy(() => import("./KpiScorecard"));
+const KpiPicker = lazy(() => import("./KpiScorecard").then((m) => ({ default: m.KpiPicker })));
+const KpiScorecardView = lazy(() => import("./KpiScorecard").then((m) => ({ default: m.KpiScorecardView })));
+const KpiTrendCard = lazy(() => import("./KpiTrendCard"));
+const ReportChartContainer = lazy(() => import("./ReportChartContainer"));
+const SuperAdminPanel = lazy(() => import("./SuperAdminPanel"));
 
 const navFor = {
   user: [
     ["userDashboard", "◈", "Dashboard"],
     ["requestPage", "+", "Submit Request"],
     ["myRequestsPage", "▤", "My Requests"],
+    ["helpPage", "📚", "Help Articles"],
     ["notificationsPage", "🔔", "Notifications"],
   ],
   agent: [
     ["agentDashboard", "◈", "Dashboard"],
     ["agentRequestsPage", "▤", "Assigned Requests"],
+    ["helpPage", "📚", "Help Articles"],
     ["notificationsPage", "🔔", "Notifications"],
   ],
   admin: [
@@ -40,6 +53,7 @@ const navFor = {
     ["manageRequestsPage", "▤", "Manage Requests"],
     ["passwordRequestsPage", "🔑", "Password Requests"],
     ["usersPage", "♙", "Users"],
+    ["helpPage", "📚", "Help Articles"],
     ["notificationsPage", "🔔", "Notifications"],
   ],
   superadmin: [
@@ -133,6 +147,7 @@ function App() {
     password: "",
   });
   const [forgotEmail, setForgotEmail] = useState("");
+  const loginGuard = useLoginGuard();
   const [tickets, setTickets] = useState([]);
   const [allTickets, setAllTickets] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
@@ -158,6 +173,7 @@ function App() {
     subject: "",
     locationId: "",
     description: "",
+    photos: [],
     resetKey: 0,
   });
 
@@ -250,11 +266,27 @@ function App() {
         })
         .catch(() => {});
     load();
-    const timer = setInterval(load, 8000);
+    let ticks = 0;
+    const timer = setInterval(() => {
+      ticks += 1;
+      if (realtimeConnected() && ticks % 4 !== 0) return; // live updates are on: this is only a safety net
+      load();
+    }, 8000);
+    const unsubscribe = subscribeRealtime((event) => {
+      if (event.type === "notification") load();
+    });
     return () => {
       active = false;
       clearInterval(timer);
+      unsubscribe();
     };
+  }, [user]);
+
+  // One live connection per signed-in session.
+  useEffect(() => {
+    if (!user) return undefined;
+    startRealtime();
+    return stopRealtime;
   }, [user]);
 
   // Load tickets and activities from the database once a user is signed in.
@@ -348,16 +380,20 @@ function App() {
 
   async function login(event) {
     event.preventDefault();
+    if (loginGuard.secondsLeft > 0) return; // the warning countdown is still running
     let result;
     try {
       result = await api.login(credentials);
     } catch (error) {
+      if (error.status === 429) loginGuard.recordWait(error.data?.retryAfter);
+      else if (error.status === 401) loginGuard.recordFailure(error.data?.cooldownSeconds);
       showMessage(
         "Login failed",
         error.message || "Incorrect ID, password, or selected role.",
       );
       return;
     }
+    loginGuard.reset();
     if (result.mfaRequired) {
       setMfaChallenge({ token: result.mfaToken });
       setMfaCode("");
@@ -369,7 +405,9 @@ function App() {
   async function submitMfa(event) {
     event.preventDefault();
     try {
-      completeLogin(await api.loginMfa({ mfaToken: mfaChallenge.token, code: mfaCode }));
+      const account = await api.loginMfa({ mfaToken: mfaChallenge.token, code: mfaCode });
+      loginGuard.reset();
+      completeLogin(account);
     } catch (error) {
       showMessage("Could not verify the code", error.message || "Please try again.");
       if (/expired|start/i.test(error.message || "")) setMfaChallenge(null);
@@ -415,6 +453,19 @@ function App() {
       );
       return;
     }
+    let photoNote = "";
+    if (request.photos.length > 0) {
+      let failed = 0;
+      for (const file of request.photos) {
+        try {
+          const photo = await prepareImage(file);
+          await api.uploadAttachment(created.id, { userId: user.userId, ...photo });
+        } catch {
+          failed += 1;
+        }
+      }
+      if (failed > 0) photoNote = ` ${failed} photo${failed === 1 ? " was" : "s were"} not added: open the request and try again.`;
+    }
     setTickets((items) => [created, ...items]);
     refreshData();
     addActivity(`Submitted ${created.id}: ${created.subject}`);
@@ -425,11 +476,12 @@ function App() {
       subject: "",
       locationId: "",
       description: "",
+      photos: [],
       resetKey: previous.resetKey + 1,
     }));
     showMessage(
       "Request submitted",
-      `${created.id} was created with priority ${created.priorityTier}${created.escalated ? " (raised because it affects exams or lectures)" : ""}.`,
+      `${created.id} was created with priority ${created.priorityTier}${created.escalated ? " (raised because it affects exams or lectures)" : ""}.${photoNote}`,
     );
   }
 
@@ -544,6 +596,7 @@ function App() {
         signupForm={signupForm}
         setSignupForm={setSignupForm}
         forgotEmail={forgotEmail}
+        loginGuard={loginGuard}
         setForgotEmail={setForgotEmail}
         login={login}
         showMessage={showMessage}
@@ -625,6 +678,7 @@ function App() {
           <button className="mobile-logout" onClick={logout}>Log out</button>
         </header>
         <div className="page" key={page}>
+        <Suspense fallback={<ChartSkeleton height={220} label="Loading" />}>
         {page === "userDashboard" && (
           <UserDashboard
             setPage={setPage}
@@ -723,6 +777,7 @@ function App() {
           />
         )}
         {page === "activityLogPage" && <ActivityLog activities={activities} />}
+        {page === "helpPage" && <HelpArticles me={user} showMessage={showMessage} />}
         {page === "notificationsPage" && (
           <NotificationsPage
             data={notifications}
@@ -730,6 +785,7 @@ function App() {
             onOpen={openNotification}
           />
         )}
+        </Suspense>
         </div>
       </main>
       {(user.role === "admin" || user.role === "agent") && (
@@ -806,6 +862,7 @@ function AuthScreen({
   setSignupForm,
   forgotEmail,
   setForgotEmail,
+  loginGuard,
   login,
   showMessage,
   modal,
@@ -929,14 +986,31 @@ function AuthScreen({
                     <option value="report_viewer">Report Viewer (read-only)</option>
                   </select>
                 </label>
+                {loginGuard.secondsLeft > 0 && (
+                  <div className="login-warning" role="alert">
+                    <strong>⚠ Too many wrong attempts</strong>
+                    <span>Please wait {loginGuard.secondsLeft} second{loginGuard.secondsLeft === 1 ? "" : "s"} before trying again.</span>
+                    <i style={{ "--cooldown": `${COOLDOWN_SECONDS}s` }} key={loginGuard.failures} aria-hidden="true" />
+                  </div>
+                )}
+                {loginGuard.showForgot && loginGuard.secondsLeft === 0 && (
+                  <div className="login-warning login-hint" role="status">
+                    <strong>Still cannot sign in?</strong>
+                    <button type="button" className="link-button" onClick={() => setPage("forgot")}>
+                      Forgot password?
+                    </button>
+                  </div>
+                )}
                 <button
                   className="button button-primary full-width"
                   type="submit"
+                  disabled={loginGuard.secondsLeft > 0}
                 >
-                  Sign in <span>→</span>
+                  {loginGuard.secondsLeft > 0 ? `Try again in ${loginGuard.secondsLeft}s` : <>Sign in <span>→</span></>}
                 </button>
               </form>
               <AuthLinks
+                showForgot={loginGuard.showForgot}
                 onForgot={() => setPage("forgot")}
                 onSignup={() => setPage("signup")}
               />
@@ -1049,16 +1123,18 @@ function AuthScreen({
             <>
               <AuthHeading
                 title="Reset password"
-                detail="Enter your registered email to receive a reset request."
+                detail="Enter your email address."
               />
               <form
-                onSubmit={(event) => {
+                onSubmit={async (event) => {
                   event.preventDefault();
-                  showMessage(
-                    "Reset request sent",
-                    "A password reset request has been simulated successfully.",
-                  );
-                  setForgotEmail("");
+                  try {
+                    const result = await api.forgotPassword(forgotEmail);
+                    showMessage("Coming in the next version", result.message);
+                    setForgotEmail("");
+                  } catch (error) {
+                    showMessage("Check the email address", error.message || "Please try again.");
+                  }
                 }}
               >
                 <Field
@@ -1097,11 +1173,15 @@ function AuthHeading({ title, detail }) {
     </div>
   );
 }
-function AuthLinks({ onForgot, onSignup }) {
+function AuthLinks({ showForgot, onForgot, onSignup }) {
   return (
     <div className="auth-links">
-      <button onClick={onForgot}>Forgot password?</button>
-      <span>·</span>
+      {showForgot && (
+        <>
+          <button onClick={onForgot}>Forgot password?</button>
+          <span>·</span>
+        </>
+      )}
       <button onClick={onSignup}>Create account</button>
     </div>
   );
@@ -1309,6 +1389,9 @@ function ProfileModal({
               >
                 {isPending ? "Request pending approval" : "Change password"}
               </button>
+              <button type="button" className="button button-outline full-width" onClick={() => setView("alerts")}>
+                Email and text alerts
+              </button>
               {MFA_ROLES.includes(user.role) && (
                 <button
                   type="button"
@@ -1341,6 +1424,8 @@ function ProfileModal({
               </div>
             )}
           </>
+        ) : view === "alerts" ? (
+          <AlertSettings onBack={() => setView("details")} showMessage={showMessage} />
         ) : view === "mfa" ? (
           <MfaSettings
             enabled={Boolean(profile?.mfaEnabled)}
@@ -1624,6 +1709,7 @@ function RequestPage({ request, setRequest, submitRequest }) {
             required
           />
         </label>
+        <PhotoPicker files={request.photos} onChange={(photos) => setRequest({ ...request, photos })} />
         <div className="form-footer">
           <span>We’ll use these details to route your request.</span>
           <button className="button button-primary" type="submit">
@@ -1822,7 +1908,7 @@ function AgentRequests({
 
   // Pick up skill changes an admin makes while this page is open.
   useEffect(() => {
-    const timer = setInterval(refreshData, 30000);
+    const timer = setInterval(() => document.hidden || refreshData(), 30000);
     return () => clearInterval(timer);
   }, [refreshData]);
 
@@ -2039,10 +2125,17 @@ function ManageRequests({
     /agent/i.test(user.role || ""),
   );
 
+  // Real numbers for the assign dialog: who is online and how many open tickets each agent has.
+  const [workload, setWorkload] = useState({});
+
   const handleAssign = async (ticketId) => {
     const ticket = tickets.find((item) => item.id === ticketId);
     if (!ticket) return;
     setAssignDialog({ ticketId, subject: ticket.subject, category: ticket.category });
+    api
+      .getAgentWorkload(me.userId)
+      .then((rows) => setWorkload(Object.fromEntries(rows.map((row) => [row.userId, row]))))
+      .catch(() => setWorkload({}));
   };
 
   const handleView = (ticketId) => {
@@ -2055,7 +2148,7 @@ function ManageRequests({
     });
   };
 
-  const confirmAssign = async (ticketId, agent, slot) => {
+  const confirmAssign = async (ticketId, agent) => {
     try {
       await api.assignTicket(ticketId, { actorId: me.userId, agentId: agent.userId });
       setTicketAssignments((current) => ({
@@ -2064,14 +2157,10 @@ function ManageRequests({
           ...(current[ticketId] || {}),
           assignedAgent: agent.name,
           agentId: agent.id,
-          assignedTime: slot,
           progress: "Agent assigned",
         },
       }));
-      showMessage(
-        "Agent assigned",
-        `${agent.name} is available at ${slot} for ticket ${ticketId}.`,
-      );
+      showMessage("Agent assigned", `${agent.name} was assigned to ${ticketId}. They are told right away.`);
       refreshData();
       setAssignDialog(null);
     } catch (error) {
@@ -2180,23 +2269,29 @@ function ManageRequests({
                   .sort(
                     (a, b) =>
                       Number(skillFit(b.skills, assignDialog.category) === "match") -
-                      Number(skillFit(a.skills, assignDialog.category) === "match"),
+                        Number(skillFit(a.skills, assignDialog.category) === "match") ||
+                      Number(Boolean(workload[b.userId]?.online)) - Number(Boolean(workload[a.userId]?.online)) ||
+                      Number(workload[a.userId]?.activeTickets ?? 0) - Number(workload[b.userId]?.activeTickets ?? 0),
                   )
-                  .map((agent, index) => {
+                  .map((agent) => {
                   const fit = skillFit(agent.skills, assignDialog.category);
-                  const slot = ["9:00 AM - 11:00 AM", "1:00 PM - 3:00 PM", "4:00 PM - 6:00 PM"][index % 3];
+                  const stats = workload[agent.userId];
                   return (
                     <button
                       key={agent.userId}
                       className="assignment-card"
-                      onClick={() => confirmAssign(assignDialog.ticketId, agent, slot)}
+                      onClick={() => confirmAssign(assignDialog.ticketId, agent)}
                     >
                       <span className="assignment-name">
                         {agent.name}
                         {fit === "match" && <span className="fit-badge fit-badge-match">★ Skill match</span>}
                       </span>
                       <SkillChips skills={agent.skills} />
-                      <span className="assignment-slot">Available: {slot}</span>
+                      <span className="assignment-slot">
+                        {stats
+                          ? `${stats.online ? "● Online now" : "○ Offline"} · ${stats.activeTickets} active ticket${Number(stats.activeTickets) === 1 ? "" : "s"}`
+                          : "Checking workload…"}
+                      </span>
                     </button>
                   );
                 })
@@ -2216,7 +2311,6 @@ function ManageRequests({
             <p>{viewDialog.subject}</p>
             <div className="detail-stack">
               <div><strong>Agent:</strong> {viewDialog.tracking.assignedAgent || "Not assigned"}</div>
-              <div><strong>Availability:</strong> {viewDialog.assignment.assignedTime || "Awaiting schedule"}</div>
               <div><strong>Progress:</strong> {viewDialog.tracking.progress}</div>
               <div><strong>Status:</strong> {viewDialog.status}</div>
             </div>
@@ -2661,7 +2755,7 @@ function ChatWindow({ me, contact, onClose }) {
 
   useEffect(() => {
     load();
-    const timer = setInterval(load, 3000);
+    const timer = setInterval(() => document.hidden || load(), 3000);
     return () => clearInterval(timer);
   }, [load]);
 
@@ -2786,7 +2880,7 @@ function ChatDock({ me }) {
         })
         .catch(() => {});
     load();
-    const timer = setInterval(load, 5000);
+    const timer = setInterval(() => document.hidden || load(), 5000);
     return () => {
       active = false;
       clearInterval(timer);
@@ -2866,6 +2960,9 @@ const NOTIFICATION_STYLES = {
   resolved: ["✓", "good"],
   assigned: ["➜", "info"],
   reassigned: ["⟲", "warn"],
+  urgent_ticket: ["🚨", "warn"],
+  bot_urgent: ["🚨", "warn"],
+  bot_handoff: ["👤", "info"],
   auto_assigned: ["⚙", "info"],
   auto_unassigned: ["!", "warn"],
   in_progress: ["◔", "info"],
@@ -3023,7 +3120,7 @@ function CancellationQueue({ me, showMessage, refreshData }) {
 
   useEffect(() => {
     load();
-    const timer = setInterval(load, 8000);
+    const timer = setInterval(() => document.hidden || load(), 8000);
     return () => clearInterval(timer);
   }, [load]);
 

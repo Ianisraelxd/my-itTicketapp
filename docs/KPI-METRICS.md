@@ -1,13 +1,13 @@
 # KPI metrics
 
-The super admin dashboard has a **Monthly KPI Scorecard**. The system can calculate **15 metrics** from ticket data; each month the super admin picks the ones that matter for the company (and sets their targets) with **Choose KPIs**, and only those appear on the dashboard.
+The super admin dashboard has a **Monthly KPI Scorecard**. The system can calculate **16 metrics** from ticket data; each month the super admin picks the ones that matter for the company (and sets their targets) with **Choose KPIs**, and only those appear on the dashboard.
 
 ![Monthly KPI scorecard](screenshots/26-superadmin-dashboard.png)
 
 ## How the monthly selection works
 
 - Use the **month picker** on the scorecard to look at any of the last 12 months.
-- **Choose KPIs** lets you tick any of the 15 metrics and change each target. The choice is saved for that month.
+- **Choose KPIs** lets you tick any of the 16 metrics and change each target. The choice is saved for that month.
 - A month you have not configured **inherits the most recent earlier choice**, so you only touch it when the company's priorities change. Before any choice exists, a default set is shown: AHT, FRT, SLA, FCR, RR and BKL.
 - Each card shows the value, the target, a status (**On target**, **Close**, **Off target**), a bar for how close the target is, the change versus the previous month (green = improvement), and how many tickets the number is based on.
 - Status rules: for "higher is better" metrics, on target = at or above the target and close = within 15% below it. For "lower is better" metrics, on target = at or below the target and close = within 20% above it. Context metrics (Ticket Volume) have no target.
@@ -22,7 +22,7 @@ The super admin dashboard has a **Monthly KPI Scorecard**. The system can calcul
 
 ![Report Manager with the chosen KPIs](screenshots/27-report-manager.png)
 
-## The 15 metrics
+## The 16 metrics
 
 All time values are shown as minutes, hours or days. "Tickets created this month" is the group each metric looks at, except where noted.
 
@@ -60,6 +60,7 @@ All time values are shown as minutes, hours or days. "Tickets created this month
 | Key | Metric | What it tells you | Formula | Better | Default target |
 | --- | --- | --- | --- | --- | --- |
 | TPT | **Tickets Resolved per Agent** | Average output per agent | tickets resolved during the month / number of agents | higher | 15 |
+| CSAT | **Customer Satisfaction** | How requesters rate the support (1 to 5 stars) | average rating given to the HelpDesk Assistant for tickets created in the month | higher | 4.2 |
 
 ## Suggested sets
 

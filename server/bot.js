@@ -12,6 +12,8 @@
 // It is rule-based (no external AI service): every answer is predictable and free.
 // Messages are stored in ticket_messages (kind: bot | bot_choice | bot_note) so the
 // conversation survives a refresh and staff can see what the assistant already covered.
+import { logEvent } from "./audit.js";
+import { getPublishedArticle, recordFeedback, searchArticles } from "./kb.js";
 import { pool, query } from "./db.js";
 import { SLA_MINUTES } from "./kpiCatalog.js";
 
@@ -273,8 +275,8 @@ const listNames = (names) =>
 // One friendly sentence about who can chat right now.
 function availabilityLine(a) {
   if (a.assignedOnline) return `${a.assignedOnline}, your agent, is online and can chat with you now.`;
-  if (a.agents.length) return `${listNames(a.agents)} (agent) ${a.agents.length === 1 ? "is" : "are"} online and can chat now.`;
-  if (a.admins.length) return `${listNames(a.admins)} (admin) ${a.admins.length === 1 ? "is" : "are"} online and can chat now.`;
+  if (a.agents.length) return `${listNames(a.agents)} ${a.agents.length === 1 ? "is" : "are"} online and can chat now.`;
+  if (a.admins.length) return `${listNames(a.admins)} ${a.admins.length === 1 ? "is" : "are"} online and can chat now.`;
   return "Our agents and admins are offline right now, so I'll help in the meantime. They'll see everything here when they're back.";
 }
 
@@ -308,7 +310,7 @@ function mainMenu(ctx) {
   if (status === "Resolved") {
     return [
       ...(ctx.ticket.csat_rating ? [] : [opt("rate:ask", "⭐ Rate the support")]),
-      opt("reopen:ask", "↩ The problem is not fixed"),
+      ...(ctx.ticket.closed_at ? [] : [opt("reopen:ask", "↩ The problem is not fixed")]),
       opt("more", "💡 More help"),
     ];
   }
@@ -507,6 +509,7 @@ async function handle(choice, ctx, deps) {
               opt("faq:details", "How do I add more details?"),
               opt("faq:reopen", "What if it comes back after being fixed?"),
               opt("faq:roles", "Who is working on my ticket?"),
+              opt("kbsearch", "📚 Help articles"),
               opt("menu", "🏠 Back to the menu"),
             ],
           },
@@ -579,7 +582,70 @@ async function handle(choice, ctx, deps) {
       };
     }
 
+    case "kbsearch": {
+      const found = await deps.searchArticles(`${ticket.subject} ${ticket.category}`, { category: ticket.category, limit: 4 });
+      if (found.length === 0) {
+        return { replies: [{ text: "There are no help articles for this yet. I can still suggest a quick fix or bring in an agent.", options: mainMenu(ctx) }] };
+      }
+      return {
+        replies: [
+          {
+            text: "These help articles may answer your question:",
+            options: [...found.map((article) => opt(`kb:${article.id}`, `📄 ${article.title}`.slice(0, 58))), opt("menu", "🏠 Back to the menu")],
+          },
+        ],
+      };
+    }
+
+    case "kb": {
+      const article = await deps.getArticle(part);
+      if (!article) return { replies: [{ text: "That article is no longer available.", options: mainMenu(ctx) }] };
+      const body = article.body.length > 760 ? `${article.body.slice(0, 760).trimEnd()}…\n(The full article is on the Help articles page.)` : article.body;
+      return {
+        replies: [
+          {
+            text: `📄 ${article.title}\n${body}`.slice(0, 990),
+            options: [opt(`kbyes:${article.id}`, "✅ That helped"), opt(`kbno:${article.id}`, "❌ It did not help"), opt("kbsearch", "📚 Other articles")],
+          },
+        ],
+      };
+    }
+
+    case "kbyes": {
+      await deps.articleFeedback(part, true);
+      return {
+        replies: [
+          {
+            text: "Glad that helped! 🎉 Since it is sorted, would you like me to ask an admin to close this ticket? You can also keep it open just in case.",
+            options: [opt("cancel:go:self", "Yes, ask to close it"), opt("menu", "Keep it open for now")],
+          },
+        ],
+      };
+    }
+
+    case "kbno": {
+      await deps.articleFeedback(part, false);
+      return {
+        replies: [
+          {
+            text: "Sorry that did not solve it. Do you want to try a quick fix or talk to an agent?",
+            options: [opt("fix", "🛠 Try a quick fix"), opt("human", "👤 Talk to an agent"), opt("menu", "🏠 Back to the menu")],
+          },
+        ],
+      };
+    }
+
     case "reopen": {
+      if (ticket.closed_at) {
+        return {
+          replies: [
+            {
+              text: `${ticket.code} was closed for good a few days after it was resolved, so it cannot be reopened. Please submit a new request and mention ${ticket.code}.`,
+              options: mainMenu(ctx),
+            },
+          ],
+        };
+      }
       if (ticket.status !== "Resolved") {
         return { replies: [{ text: `${ticket.code} isn't resolved at the moment, so there's nothing to reopen.`, options: mainMenu(ctx) }] };
       }
@@ -684,16 +750,19 @@ const MESSAGE_SELECT = `SELECT m.message_pk AS id, m.sender_pk AS senderId, u.na
 // Shape a stored row for the client (adds the parsed quick-reply options).
 export function shapeMessage(row) {
   let options = null;
+  let attachment = null;
   if (row.meta) {
     try {
-      options = JSON.parse(row.meta).options ?? null;
+      const meta = JSON.parse(row.meta);
+      options = meta.options ?? null;
+      if (meta.attachmentId) attachment = { id: meta.attachmentId, mime: meta.mime };
     } catch {
       options = null;
     }
   }
   const { meta, ...rest } = row;
   void meta;
-  return { ...rest, options };
+  return { ...rest, options, ...(attachment ? { attachment } : {}) };
 }
 
 async function insertMessage(ticketPk, senderPk, text, kind, options = null) {
@@ -717,7 +786,7 @@ async function loadMessages(ids, { staff }) {
 async function loadContext(code, user) {
   const [ticket] = await query(
     `SELECT t.ticket_pk, t.code, t.subject, t.category, t.priority, t.status, t.created_by, t.assigned_to,
-       t.created_at, t.csat_rating, t.priority_tier, t.reopen_count, a.name AS techName
+       t.created_at, t.csat_rating, t.priority_tier, t.reopen_count, t.closed_at, a.name AS techName
      FROM tickets t LEFT JOIN users a ON a.user_pk = t.assigned_to WHERE t.code = ? LIMIT 1`,
     [code],
   );
@@ -840,6 +909,9 @@ const TL_LABELS = {
   "🚨 It's urgent": "🚨 Urgent ito",
   "👤 Talk to an agent": "👤 Kausapin ang agent",
   "💡 More help": "💡 Iba pang tulong",
+  "📚 Help articles": "📚 Mga help article",
+  "✅ That helped": "✅ Nakatulong ito",
+  "❌ It did not help": "❌ Hindi nakatulong",
   "🏠 Back to the menu": "🏠 Bumalik sa menu",
   "✅ That fixed it": "✅ Naayos nito",
   "❌ Still not working": "❌ Hindi pa rin gumagana",
@@ -872,12 +944,15 @@ const TL_LINES = [
   [/^Good news: (.+) is online and can chat now\.$/, "Magandang balita: online si $1 at puwede kang makausap ngayon."],
   [/^Good news: (.+), your agent, is online and can chat with you now\.$/, "Magandang balita: online si $1, ang agent mo, at puwede kang makausap ngayon."],
   [/^(.+), your agent, is online and can chat with you now\.$/, "Online si $1, ang agent mo, at puwede kang makausap ngayon."],
-  [/^(.+) \((admin|agent)\) (?:is|are) online and can chat now\.$/, "Online ang $1 ($2) at puwede kang makausap ngayon."],
-  [/^Good news: (.+) \((admin|agent)\) (?:is|are) online and can chat now\.$/, "Magandang balita: online ang $1 ($2) at puwede kang makausap ngayon."],
+  [/^(.+) (?:is|are) online and can chat now\.$/, "Online si $1 at puwede kang makausap ngayon."],
+  [/^Good news: (.+) (?:is|are) online and can chat now\.$/, "Magandang balita: online si $1 at puwede kang makausap ngayon."],
   [/^I've let them know you'd like to talk\..*$/, "Naipaalam ko na sa kanila na gusto mo silang makausap. I-type ang mensahe mo sa baba at doon sila sasagot."],
   [/^Our agents and admins are offline right now.*$/, "Offline ang mgan agent at admin ngayon, kaya ako muna ang tutulong. Makikita nila ang lahat dito pagbalik nila."],
   [/^I've notified them, so leave your message.*$/, "Naabisuhan ko na sila, kaya iwan ang mensahe mo sa baba nang may detalye. Sasagot sila rito pagbalik nila. Habang naghihintay, makakatulong pa rin ako sa mga mabilisang ayos."],
   [/^You're welcome! .*$/, "Walang anuman! 😊 May iba pa ba akong maitutulong?"],
+  [/^These help articles may answer your question:$/, "Baka masagot ng mga help article na ito ang tanong mo:"],
+  [/^I found these help articles.*$/, "May nakita akong mga help article na maaaring makatulong:"],
+  [/^Glad that helped!.*$/, "Mabuti at nakatulong! 🎉 Gusto mo bang hilingin ko sa admin na isara ang ticket na ito? Puwede mo rin itong iwanang bukas."],
   [/^Hi (.+)! What can I help you with\?$/, "Hi $1! Ano ang maitutulong ko?"],
   [/^I'm not sure I understood that.*$/, "Hindi ko sigurado kung naintindihan ko iyon, pero naipadala na ang mensahe mo sa team. Habang naghihintay, ito ang magagawa ko:"],
   [/^The team is offline right now and will reply when they're back\.$/, "Offline ang team ngayon at sasagot sila pagbalik nila."],
@@ -931,7 +1006,7 @@ export function createBot(deps) {
     await insertMessage(
       ticketPk,
       botId,
-      `Hi ${firstName}! 👋 I'm the HelpDesk Assistant.\nYour request ${code} (${subject}) is in the queue and the team has been notified.\n${availabilityLine(availability)}\nWhile you wait, I can check on it, suggest quick ${category && category !== "Others" ? `${category} ` : ""}fixes, or get you to an agent. What would you like to do?`,
+      `Hi ${firstName}! 👋 I'm the HelpDesk Assistant.\nYour request ${code} (${subject}) is in the queue and the team has been notified.\n${availabilityLine(availability)}\nTip: you can add a photo of the problem with the 📎 button below.\nWhile you wait, I can check on it, suggest quick ${category && category !== "Others" ? `${category} ` : ""}fixes, or get you to an agent. What would you like to do?`,
       "bot",
       mainMenu(ctx),
     );
@@ -957,11 +1032,20 @@ export function createBot(deps) {
     const result = await handle(choice, ctx, {
       fileCancellationRequest: deps.fileCancellationRequest,
       reopenTicketFor: deps.reopenTicketFor,
+      searchArticles,
+      getArticle: getPublishedArticle,
+      articleFeedback: recordFeedback,
       saveRating: async ({ ticket, rating }) => {
         await query(
           "UPDATE tickets SET csat_rating = ?, csat_at = NOW() WHERE ticket_pk = ? AND status = 'Resolved' AND csat_rating IS NULL",
           [rating, ticket.ticket_pk],
         );
+        await logEvent({
+          ticketPk: ticket.ticket_pk,
+          actor: { userId: user.user_pk, name: user.name, roleName: user.role_name },
+          action: "rating",
+          detail: `${rating} out of 5`,
+        });
       },
     });
 
@@ -1029,6 +1113,14 @@ export function createBot(deps) {
       const id = await insertMessage(ticket.ticket_pk, botId, say("You're welcome! 😊 Anything else I can help with?"), "bot", tl ? toTagalogOptions(mainMenu(ctx)) : mainMenu(ctx));
       return [id];
     }
+    if (!choice) {
+      const articles = await searchArticles(String(text), { category: ticket.category, limit: 3 });
+      if (articles.length > 0) {
+        const message = say("I found these help articles that may answer your question:");
+        const options = [...articles.map((article) => opt(`kb:${article.id}`, `📄 ${article.title}`.slice(0, 58))), opt("menu", "🏠 Back to the menu")];
+        return [await insertMessage(ticket.ticket_pk, botId, message, "bot", tl ? toTagalogOptions(options) : options)];
+      }
+    }
     if (choice === "hello" || !choice || (choice === "fixedit" && ticket.status === "Resolved")) {
       const fallback = choice === "hello"
         ? `Hi ${ctx.firstName}! What can I help you with?`
@@ -1061,7 +1153,7 @@ ${ctx.availability.anyOnline ? availabilityLine(ctx.availability) : "The team is
       if (!isOwner) {
         return res.status(403).json({ error: "Only the person who submitted the ticket can use the assistant." });
       }
-      const choice = String(req.body?.choice ?? "");
+      const choice = typeof req.body?.choice === "string" ? req.body.choice : "";
       if (!choice) return res.status(400).json({ error: "choice is required." });
 
       const ctx = await loadContext(base.code, user);
@@ -1072,6 +1164,7 @@ ${ctx.availability.anyOnline ? availabilityLine(ctx.availability) : "The team is
       }
 
       const ids = await execute(choice, ctx, user, picked.label);
+      await deps.publishTicket?.(base);
       res.status(201).json({ messages: await loadMessages(ids, { staff: false }) });
     }));
   }

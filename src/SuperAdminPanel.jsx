@@ -1,5 +1,6 @@
 import AdminTable from "./AdminTable";
 import ArchivePanel from "./ArchivePanel";
+import BackupPanel from "./BackupPanel";
 import useAdminManagement from "./hooks/useAdminManagement";
 import useArchive from "./hooks/useArchive";
 
@@ -12,6 +13,7 @@ export default function SuperAdminPanel({ showMessage }) {
   return (
     <>
       <ArchivePanel archive={archive} />
+      <BackupPanel showMessage={showMessage} />
       <AdminTable management={management} />
     </>
   );

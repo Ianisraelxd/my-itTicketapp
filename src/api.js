@@ -42,7 +42,10 @@ async function request(path, options = {}) {
     onUnauthorized?.();
   }
   if (!response.ok) {
-    throw new Error(data.error || `Request failed (${response.status})`);
+    const error = new Error(data.error || `Request failed (${response.status})`);
+    error.status = response.status;
+    error.data = data; // extra fields such as cooldownSeconds / retryAfter
+    throw error;
   }
   return data;
 }
@@ -109,6 +112,40 @@ export const api = {
   },
 
   getLocations: () => request("/locations"),
+
+  // live updates
+  eventTicket: () => request("/events/ticket", { method: "POST" }),
+
+  // ticket history and photos
+  getTicketHistory: (ticketId, userId) =>
+    request(`/tickets/${encodeURIComponent(ticketId)}/history?userId=${encodeURIComponent(userId)}`),
+  uploadAttachment: (ticketId, payload) =>
+    request(`/tickets/${encodeURIComponent(ticketId)}/attachments`, { method: "POST", body: JSON.stringify(payload) }),
+  getAttachmentBlob: async (id, userId) => {
+    const response = await fetch(`/api/attachments/${id}?userId=${encodeURIComponent(userId)}`, { headers: authHeaders() });
+    if (!response.ok) throw new Error(`Photo failed (${response.status})`);
+    return response.blob();
+  },
+
+  // help articles
+  getArticles: ({ q = "", category = "" } = {}) =>
+    request(`/kb?q=${encodeURIComponent(q)}&category=${encodeURIComponent(category)}`),
+  createArticle: (article) => request("/kb", { method: "POST", body: JSON.stringify(article) }),
+  updateArticle: (id, article) => request(`/kb/${id}`, { method: "PUT", body: JSON.stringify(article) }),
+  deleteArticle: (id) => request(`/kb/${id}`, { method: "DELETE" }),
+  articleFeedback: (id, helpful) => request(`/kb/${id}/feedback`, { method: "POST", body: JSON.stringify({ helpful }) }),
+
+  // backups (super admin) and alert settings (everyone)
+  getBackups: () => request("/superadmin/backups"),
+  createBackup: () => request("/superadmin/backups", { method: "POST" }),
+  downloadBackup: (name) => download(`/superadmin/backups/${encodeURIComponent(name)}/download`, name),
+  getAlerts: () => request("/me/alerts"),
+  saveAlerts: (settings) => request("/me/alerts", { method: "PATCH", body: JSON.stringify(settings) }),
+
+  forgotPassword: (email) =>
+    request("/forgot-password", { method: "POST", body: JSON.stringify({ email }) }),
+
+  getAgentWorkload: (userId) => request(`/agents/workload?userId=${encodeURIComponent(userId)}`),
 
   cancelTicket: (ticketId, payload) =>
     request(`/tickets/${encodeURIComponent(ticketId)}/cancel`, {

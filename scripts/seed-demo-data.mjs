@@ -7,7 +7,7 @@
 //   3. node scripts/seed-demo-data.mjs http://localhost:3002
 //
 // DB_NAME must be the demo database for step 3 as well (it back-dates created_at).
-import "dotenv/config";
+import "../server/env.js";
 import mysql from "mysql2/promise";
 
 const API = (process.argv[2] || "http://localhost:3002").replace(/\/$/, "") + "/api";

@@ -111,13 +111,19 @@ export function registerSuperAdminRoutes(app, { wrap, notify }) {
       const tickets = [];
       const messages = [];
       const requests = [];
+      const events = [];
+      const attachments = [];
       for (const group of chunks(pks)) {
         const [t] = await conn.execute(`SELECT * FROM tickets WHERE ticket_pk IN (${marks(group)})`, group);
         const [m] = await conn.execute(`SELECT * FROM ticket_messages WHERE ticket_pk IN (${marks(group)})`, group);
         const [r] = await conn.execute(`SELECT * FROM cancellation_requests WHERE ticket_pk IN (${marks(group)})`, group);
+        const [ev] = await conn.execute(`SELECT * FROM ticket_events WHERE ticket_pk IN (${marks(group)})`, group);
+        const [at] = await conn.execute(`SELECT * FROM ticket_attachments WHERE ticket_pk IN (${marks(group)})`, group);
         tickets.push(...t);
         messages.push(...m);
         requests.push(...r);
+        events.push(...ev);
+        attachments.push(...at);
       }
 
       // 2. Write the downloadable backups first: if this fails nothing is deleted.
@@ -131,10 +137,18 @@ export function registerSuperAdminRoutes(app, { wrap, notify }) {
             exportedAt: new Date().toISOString(),
             exportedBy: req.user.name,
             retentionCutoff: before,
-            counts: { tickets: tickets.length, ticket_messages: messages.length, cancellation_requests: requests.length },
+            counts: {
+              tickets: tickets.length,
+              ticket_messages: messages.length,
+              cancellation_requests: requests.length,
+              ticket_events: events.length,
+              ticket_attachments: attachments.length,
+            },
             tickets,
             ticket_messages: messages,
             cancellation_requests: requests,
+            ticket_events: events,
+            ticket_attachments: attachments, // the photo files stay in server/uploads
           },
           null,
           2,
@@ -146,6 +160,8 @@ export function registerSuperAdminRoutes(app, { wrap, notify }) {
       let copiedTickets = 0;
       let copiedMessages = 0;
       let copiedRequests = 0;
+      let copiedEvents = 0;
+      let copiedAttachments = 0;
       for (const group of chunks(pks)) {
         const [a] = await conn.execute(
           `INSERT INTO tickets_archive SELECT * FROM tickets WHERE ticket_pk IN (${marks(group)})`,
@@ -159,11 +175,27 @@ export function registerSuperAdminRoutes(app, { wrap, notify }) {
           `INSERT INTO cancellation_requests_archive SELECT * FROM cancellation_requests WHERE ticket_pk IN (${marks(group)})`,
           group,
         );
+        const [d] = await conn.execute(
+          `INSERT INTO ticket_events_archive SELECT * FROM ticket_events WHERE ticket_pk IN (${marks(group)})`,
+          group,
+        );
+        const [e] = await conn.execute(
+          `INSERT INTO ticket_attachments_archive SELECT * FROM ticket_attachments WHERE ticket_pk IN (${marks(group)})`,
+          group,
+        );
+        copiedEvents += d.affectedRows;
+        copiedAttachments += e.affectedRows;
         copiedTickets += a.affectedRows;
         copiedMessages += b.affectedRows;
         copiedRequests += c.affectedRows;
       }
-      if (copiedTickets !== pks.length || copiedMessages !== messages.length || copiedRequests !== requests.length) {
+      if (
+        copiedTickets !== pks.length ||
+        copiedMessages !== messages.length ||
+        copiedRequests !== requests.length ||
+        copiedEvents !== events.length ||
+        copiedAttachments !== attachments.length
+      ) {
         throw new Error("Archive copy did not match what was read; nothing was deleted.");
       }
 
@@ -221,6 +253,9 @@ export function registerSuperAdminRoutes(app, { wrap, notify }) {
   }));
 
   app.get("/api/superadmin/archive/runs/:id/download", verifySuperAdmin, wrap(async (req, res) => {
+    if (req.query.format !== undefined && !["json", "csv"].includes(req.query.format)) {
+      return res.status(400).json({ error: "format must be json or csv." });
+    }
     const format = req.query.format === "csv" ? "csv" : "json";
     const rows = await query("SELECT json_file, csv_file FROM archive_runs WHERE run_pk = ?", [req.params.id]);
     if (!rows[0]) return res.status(404).json({ error: "Archive run not found." });
@@ -229,7 +264,10 @@ export function registerSuperAdminRoutes(app, { wrap, notify }) {
     if (!fs.existsSync(file)) return res.status(404).json({ error: "The export file is no longer on the server." });
     res.setHeader("Content-Type", format === "csv" ? "text/csv; charset=utf-8" : "application/json");
     res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
-    fs.createReadStream(file).pipe(res);
+    const stream = fs.createReadStream(file);
+    // A file that disappears while it is being sent must not take the server down.
+    stream.on("error", () => (res.headersSent ? res.destroy() : res.status(500).json({ error: "Could not read the export file." })));
+    stream.pipe(res);
   }));
 
   // ---- Privileged account management -----------------------------------------------

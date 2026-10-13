@@ -2,7 +2,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "./api";
 import ChatInput from "./ChatInput";
+import { prepareImage, PHOTO_TYPES } from "./imageTools";
+import PhotoMessage from "./PhotoMessage";
+import { realtimeConnected, subscribeRealtime } from "./realtime";
 import { playSound } from "./sounds";
+import TicketHistory from "./TicketHistory";
 
 const CLOSED_STATUSES = ["Resolved", "Done", "Closed", "Cancelled"];
 const MAX_REOPENS = 3;
@@ -46,21 +50,23 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
   const isOwner = ticket.created_by === me.userId;
   const closed = CLOSED_STATUSES.includes(ticket.status);
   const reopensLeft = MAX_REOPENS - Number(ticket.reopenCount || 0);
-  const canReopen = isOwner && ticket.status === "Resolved";
+  const canReopen = isOwner && ticket.status === "Resolved" && !ticket.closedAt;
   const pending = requests.find((request) => request.status === "Pending");
   const lastDeclined = !pending && requests[0]?.status === "Rejected" ? requests[0] : null;
 
+  // New messages are checked every few seconds; who is in the chat, who is online and the
+  // cancellation requests change rarely, so they are only refreshed on "full" loads.
   const load = useCallback(
-    () =>
+    (full = true) =>
       Promise.all([
         api.getTicketMessages(ticket.id, me.userId),
-        api.getTicketCancellations(ticket.id, me.userId),
-        api.getTicketParticipants(ticket.id, me.userId),
-        isOwner ? api.getTicketAvailability(ticket.id, me.userId) : Promise.resolve(null),
+        full ? api.getTicketCancellations(ticket.id, me.userId) : Promise.resolve(null),
+        full ? api.getTicketParticipants(ticket.id, me.userId) : Promise.resolve(null),
+        full && isOwner ? api.getTicketAvailability(ticket.id, me.userId) : Promise.resolve(null),
       ])
         .then(([rows, cancellations, people, presence]) => {
-          setParticipants(people);
-          setAvailability(presence);
+          if (people) setParticipants(people);
+          if (full && isOwner) setAvailability(presence);
           const newest = rows.at(-1);
           if (
             lastSeenId.current !== null &&
@@ -74,21 +80,50 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
           setMessages((prev) =>
             prev.length === rows.length && prev.at(-1)?.id === rows.at(-1)?.id ? prev : rows,
           );
-          setRequests(cancellations);
+          if (cancellations) setRequests(cancellations);
         })
         .catch(() => {}),
     [ticket.id, me.userId, isOwner],
   );
 
   useEffect(() => {
-    load();
-    const timer = setInterval(load, 3000);
-    return () => clearInterval(timer);
-  }, [load]);
+    load(true);
+    let ticks = 0;
+    const timer = setInterval(() => {
+      if (document.hidden) return; // nobody is looking: save the server the work
+      ticks += 1;
+      if (realtimeConnected() && ticks % 5 !== 0) return; // live updates deliver new messages at once
+      load(ticks % 5 === 0);
+    }, 3000);
+    const unsubscribe = subscribeRealtime((event) => {
+      if (event.type === "message" && event.code === ticket.id) load(false);
+    });
+    return () => {
+      clearInterval(timer);
+      unsubscribe();
+    };
+  }, [load, ticket.id]);
 
   useEffect(() => {
     if (scroller.current) scroller.current.scrollTop = scroller.current.scrollHeight;
   }, [messages.length, botBusy]);
+
+  async function attachPhoto(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || closed) return;
+    setSending(true);
+    try {
+      const photo = await prepareImage(file);
+      await api.uploadAttachment(ticket.id, { userId: me.userId, ...photo });
+      playSound("sent");
+      await load();
+    } catch (error) {
+      showMessage("Could not add the photo", error.message || "Please try again.");
+    } finally {
+      setSending(false);
+    }
+  }
 
   // The requester taps one of the assistant's choices; show it at once, then a short
   // "typing" pause so the reply feels like a conversation.
@@ -257,6 +292,20 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
               </div>
             );
           }
+          if (message.kind === "attachment" && message.attachment) {
+            const mine = message.senderId === me.userId;
+            return (
+              <div className={`chat-msg ${mine ? "mine" : "theirs"} photo`} key={message.id}>
+                <span className="chat-meta">
+                  <b>{mine ? "You" : message.senderName}</b> · {message.senderRole}
+                </span>
+                <span className="chat-bubble">
+                  <PhotoMessage id={message.attachment.id} name={message.text} userId={me.userId} />
+                  <time>{formatTime(message.createdAt)}</time>
+                </span>
+              </div>
+            );
+          }
           if (message.kind === "bot_note") {
             return (
               <div className="chat-botnote" key={message.id}>
@@ -344,6 +393,10 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
         </p>
       ) : (
         <form className="chat-compose" onSubmit={send}>
+          <label className="attach-button" title="Add a photo" aria-label="Add a photo">
+            📎
+            <input type="file" accept={PHOTO_TYPES.join(",")} onChange={attachPhoto} disabled={sending} />
+          </label>
           <ChatInput
             value={draft}
             onChange={setDraft}
@@ -521,6 +574,11 @@ export function TicketDetailsModal({ ticket, me, onClose, onChanged, showMessage
     ["Submitted", submitted || "—"],
   ];
   // Auto-assign: unresolved tickets move to another agent with the same specialty after 30 minutes.
+  if (ticket.closedAt) {
+    facts.push(["Closed", `For good on ${formatTime(ticket.closedAt)}. Submit a new request if it returns.`]);
+  } else if (ticket.closesAt) {
+    facts.push(["Reopen until", `${formatTime(ticket.closesAt)}, then it closes for good`]);
+  }
   if (Number(ticket.assignedManually) === 1 && ["Open", "In Progress"].includes(ticket.status)) {
     facts.push(["Assignment", "Set by an admin (stays with this agent)"]);
   } else if (ticket.autoAssignAt) {
@@ -573,6 +631,7 @@ export function TicketDetailsModal({ ticket, me, onClose, onChanged, showMessage
               </div>
             ))}
           </dl>
+          <TicketHistory ticketId={ticket.id} me={me} />
           <div className="ticket-description">
             <span className="eyebrow">DESCRIPTION</span>
             <p>{ticket.description || "No description was provided."}</p>
