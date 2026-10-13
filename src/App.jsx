@@ -18,6 +18,8 @@ import { APP_VERSION, motionAllowed } from "./settings";
 import { playSound } from "./sounds";
 import { IntakeQuestions, LocationSelector } from "./SmartIntake";
 import AlertSettings from "./AlertSettings";
+import Icon from "./icons";
+import { BusyLabel, TableSkeleton } from "./Loading";
 import HelpArticles from "./HelpArticles";
 import { prepareImage } from "./imageTools";
 import PhotoPicker from "./PhotoPicker";
@@ -36,37 +38,37 @@ const SuperAdminPanel = lazy(() => import("./SuperAdminPanel"));
 
 const navFor = {
   user: [
-    ["userDashboard", "◈", "Dashboard"],
+    ["userDashboard", "dashboard", "Dashboard"],
     ["requestPage", "+", "Submit Request"],
-    ["myRequestsPage", "▤", "My Requests"],
-    ["helpPage", "📚", "Help Articles"],
-    ["notificationsPage", "🔔", "Notifications"],
+    ["myRequestsPage", "list", "My Requests"],
+    ["helpPage", "book", "Help Articles"],
+    ["notificationsPage", "bell", "Notifications"],
   ],
   agent: [
-    ["agentDashboard", "◈", "Dashboard"],
-    ["agentRequestsPage", "▤", "Assigned Requests"],
-    ["helpPage", "📚", "Help Articles"],
-    ["notificationsPage", "🔔", "Notifications"],
+    ["agentDashboard", "dashboard", "Dashboard"],
+    ["agentRequestsPage", "list", "Assigned Requests"],
+    ["helpPage", "book", "Help Articles"],
+    ["notificationsPage", "bell", "Notifications"],
   ],
   admin: [
-    ["adminDashboard", "◈", "Dashboard"],
-    ["manageRequestsPage", "▤", "Manage Requests"],
-    ["passwordRequestsPage", "🔑", "Password Requests"],
-    ["usersPage", "♙", "Users"],
-    ["helpPage", "📚", "Help Articles"],
-    ["notificationsPage", "🔔", "Notifications"],
+    ["adminDashboard", "dashboard", "Dashboard"],
+    ["manageRequestsPage", "list", "Manage Requests"],
+    ["passwordRequestsPage", "key", "Password Requests"],
+    ["usersPage", "users", "Users"],
+    ["helpPage", "book", "Help Articles"],
+    ["notificationsPage", "bell", "Notifications"],
   ],
   superadmin: [
-    ["superAdminDashboard", "◈", "Dashboard"],
-    ["reportManagerPage", "▥", "Report Manager"],
-    ["activityLogPage", "◷", "Activity Log Reports"],
-    ["superAdminPanel", "🛡", "Super Admin Panel"],
+    ["superAdminDashboard", "dashboard", "Dashboard"],
+    ["reportManagerPage", "chart", "Report Manager"],
+    ["activityLogPage", "clock", "Activity Log Reports"],
+    ["superAdminPanel", "shield", "Super Admin Panel"],
   ],
   // Read-only: the same dashboards and reports as the super admin, nothing that changes data.
   report_viewer: [
-    ["superAdminDashboard", "◈", "Dashboard"],
-    ["reportManagerPage", "▥", "Report Manager"],
-    ["activityLogPage", "◷", "Activity Log Reports"],
+    ["superAdminDashboard", "dashboard", "Dashboard"],
+    ["reportManagerPage", "chart", "Report Manager"],
+    ["activityLogPage", "clock", "Activity Log Reports"],
   ],
 };
 
@@ -77,6 +79,14 @@ function landingFor(role) {
   if (role === "admin") return "adminDashboard";
   if (role === "agent") return "agentDashboard";
   return "userDashboard";
+}
+
+// One random token per filled-in request form (see submitRequest).
+function makeToken() {
+  const random = () => Math.random().toString(36).slice(2);
+  return globalThis.crypto?.randomUUID
+    ? crypto.randomUUID().replace(/-/g, "")
+    : `${random()}${random()}${Date.now().toString(36)}`.slice(0, 40).padEnd(12, "0");
 }
 
 const PAGE_KEY = "helpdesk-page";
@@ -148,6 +158,11 @@ function App() {
   });
   const [forgotEmail, setForgotEmail] = useState("");
   const loginGuard = useLoginGuard();
+  const [submitting, setSubmitting] = useState(false);
+  const submitLock = useRef(false); // set at once, so a second click cannot slip in before the page re-renders
+  const submitToken = useRef(null); // one random token per filled-in form: the server creates the request only once
+  const [loggingIn, setLoggingIn] = useState(false);
+  const [ticketsLoading, setTicketsLoading] = useState(true);
   const [tickets, setTickets] = useState([]);
   const [allTickets, setAllTickets] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
@@ -309,10 +324,12 @@ function App() {
         setAllTickets(ticketRows);
         if (userRows) setAllUsers(userRows);
         setActivities(activityRows);
+        setTicketsLoading(false);
       })
-      .catch((error) =>
-        showMessage("Could not load data", error.message || "Please try again."),
-      );
+      .catch((error) => {
+        if (active) setTicketsLoading(false);
+        showMessage("Could not load data", error.message || "Please try again.");
+      });
     return () => {
       active = false;
     };
@@ -380,11 +397,13 @@ function App() {
 
   async function login(event) {
     event.preventDefault();
-    if (loginGuard.secondsLeft > 0) return; // the warning countdown is still running
+    if (loginGuard.secondsLeft > 0 || loggingIn) return; // countdown running, or already signing in
+    setLoggingIn(true);
     let result;
     try {
       result = await api.login(credentials);
     } catch (error) {
+      setLoggingIn(false);
       if (error.status === 429) loginGuard.recordWait(error.data?.retryAfter);
       else if (error.status === 401) loginGuard.recordFailure(error.data?.cooldownSeconds);
       showMessage(
@@ -394,6 +413,7 @@ function App() {
       return;
     }
     loginGuard.reset();
+    setLoggingIn(false);
     if (result.mfaRequired) {
       setMfaChallenge({ token: result.mfaToken });
       setMfaCode("");
@@ -435,9 +455,15 @@ function App() {
       showMessage("Two quick questions", "Tell us who is affected and when you need this fixed.");
       return;
     }
+    if (submitLock.current) return; // already sending: a second click does nothing
+    submitLock.current = true;
+    setSubmitting(true);
+    submitToken.current ||= makeToken();
+    try {
     let created;
     try {
       created = await api.createTicket({
+        clientToken: submitToken.current,
         subject: request.subject,
         category: request.category,
         locationId: Number(request.locationId),
@@ -466,7 +492,8 @@ function App() {
       }
       if (failed > 0) photoNote = ` ${failed} photo${failed === 1 ? " was" : "s were"} not added: open the request and try again.`;
     }
-    setTickets((items) => [created, ...items]);
+    submitToken.current = null; // done: the next form gets a new token
+    setTickets((items) => (items.some((item) => item.id === created.id) ? items : [created, ...items]));
     refreshData();
     addActivity(`Submitted ${created.id}: ${created.subject}`);
     setRequest((previous) => ({
@@ -483,6 +510,10 @@ function App() {
       "Request submitted",
       `${created.id} was created with priority ${created.priorityTier}${created.escalated ? " (raised because it affects exams or lectures)" : ""}.${photoNote}`,
     );
+    } finally {
+      submitLock.current = false;
+      setSubmitting(false);
+    }
   }
 
   function openProfile() {
@@ -597,6 +628,7 @@ function App() {
         setSignupForm={setSignupForm}
         forgotEmail={forgotEmail}
         loginGuard={loginGuard}
+        loggingIn={loggingIn}
         setForgotEmail={setForgotEmail}
         login={login}
         showMessage={showMessage}
@@ -641,7 +673,7 @@ function App() {
               key={id}
               onClick={() => setPage(id)}
             >
-              <span>{icon}</span>
+              <span><Icon name={icon} size={19} /></span>
               {label}
               {id === "notificationsPage" && notifications.unread > 0 && (
                 <b className="nav-badge">{notifications.unread}</b>
@@ -650,10 +682,10 @@ function App() {
           ))}
         </nav>
         <button className="logout-button settings-button" onClick={() => setSettingsOpen(true)}>
-          <span>⚙</span>Settings
+          <span><Icon name="gear" size={18} /></span>Settings
         </button>
         <button className="logout-button" onClick={logout}>
-          <span>↪</span>Log out
+          <span><Icon name="logout" size={18} /></span>Log out
         </button>
         <div className="sidebar-footer">
           HELPDESK {APP_VERSION}
@@ -673,7 +705,7 @@ function App() {
             aria-label="Settings"
             onClick={() => setSettingsOpen(true)}
           >
-            ⚙
+            <Icon name="gear" size={20} />
           </button>
           <button className="mobile-logout" onClick={logout}>Log out</button>
         </header>
@@ -692,10 +724,12 @@ function App() {
             request={request}
             setRequest={setRequest}
             submitRequest={submitRequest}
+            submitting={submitting}
           />
         )}
         {page === "myRequestsPage" && (
           <MyRequests
+            loading={ticketsLoading}
             tickets={tickets}
             ticketAssignments={ticketAssignments}
             setPage={setPage}
@@ -798,7 +832,7 @@ function App() {
             key={id}
             onClick={() => setPage(id)}
           >
-            <span>{icon}</span>
+            <span><Icon name={icon} size={19} /></span>
             <small>{label}</small>
             {id === "notificationsPage" && notifications.unread > 0 && (
               <b className="nav-badge">{notifications.unread}</b>
@@ -863,11 +897,13 @@ function AuthScreen({
   forgotEmail,
   setForgotEmail,
   loginGuard,
+  loggingIn = false,
   login,
   showMessage,
   modal,
   setModal,
 }) {
+  const [signingUp, setSigningUp] = useState(false);
   const isSignup = page === "signup";
   const isForgot = page === "forgot";
   return (
@@ -879,7 +915,7 @@ function AuthScreen({
         title="Settings"
         onClick={onOpenSettings}
       >
-        ⚙
+        <Icon name="gear" size={20} />
       </button>
       <div className="auth-visual">
         <div className="visual-grid"></div>
@@ -895,8 +931,8 @@ function AuthScreen({
             across campus.
           </p>
           <div className="visual-meta">
-            <span>◉ &nbsp; 24 / 7 SUPPORT</span>
-            <span>⌁ &nbsp; CAMPUS-WIDE</span>
+            <span><Icon name="headset" size={16} /> &nbsp; 24 / 7 SUPPORT</span>
+            <span><Icon name="globe" size={16} /> &nbsp; CAMPUS-WIDE</span>
           </div>
         </div>
       </div>
@@ -988,7 +1024,7 @@ function AuthScreen({
                 </label>
                 {loginGuard.secondsLeft > 0 && (
                   <div className="login-warning" role="alert">
-                    <strong>⚠ Too many wrong attempts</strong>
+                    <strong><Icon name="alert" size={16} /> Too many wrong attempts</strong>
                     <span>Please wait {loginGuard.secondsLeft} second{loginGuard.secondsLeft === 1 ? "" : "s"} before trying again.</span>
                     <i style={{ "--cooldown": `${COOLDOWN_SECONDS}s` }} key={loginGuard.failures} aria-hidden="true" />
                   </div>
@@ -1004,9 +1040,15 @@ function AuthScreen({
                 <button
                   className="button button-primary full-width"
                   type="submit"
-                  disabled={loginGuard.secondsLeft > 0}
+                  disabled={loginGuard.secondsLeft > 0 || loggingIn}
                 >
-                  {loginGuard.secondsLeft > 0 ? `Try again in ${loginGuard.secondsLeft}s` : <>Sign in <span>→</span></>}
+                  {loginGuard.secondsLeft > 0 ? (
+                    `Try again in ${loginGuard.secondsLeft}s`
+                  ) : (
+                    <BusyLabel busy={loggingIn} busyText="Signing in…">
+                      Sign in <span>→</span>
+                    </BusyLabel>
+                  )}
                 </button>
               </form>
               <AuthLinks
@@ -1025,10 +1067,12 @@ function AuthScreen({
               <form
                 onSubmit={async (event) => {
                   event.preventDefault();
+                  if (signingUp) return;
                   if (!signupForm.fullName.trim() || !signupForm.id.trim() || !signupForm.email.trim() || !signupForm.password.trim()) {
                     showMessage("Incomplete form", "Please fill in all signup fields before continuing.");
                     return;
                   }
+                  setSigningUp(true);
                   try {
                     await api.signup({
                       fullName: signupForm.fullName,
@@ -1055,6 +1099,8 @@ function AuthScreen({
                       "Could not create account",
                       error.message || "Please try again.",
                     );
+                  } finally {
+                    setSigningUp(false);
                   }
                 }}
               >
@@ -1110,8 +1156,11 @@ function AuthScreen({
                 <button
                   className="button button-primary full-width"
                   type="submit"
+                  disabled={signingUp}
                 >
-                  Create account <span>→</span>
+                  <BusyLabel busy={signingUp} busyText="Creating your account…">
+                    Create account <span>→</span>
+                  </BusyLabel>
                 </button>
               </form>
               <button className="text-button" onClick={() => setPage("login")}>
@@ -1284,7 +1333,7 @@ function ChangePasswordForm({ pwForm, setPwForm, submitting, onSubmitRequest, on
       <button type="button" className="text-button profile-back" onClick={onBack}>
         ← Back to profile
       </button>
-      <div className="modal-icon">🔑</div>
+      <div className="modal-icon"><Icon name="key" size={26} /></div>
       <h3>Change password</h3>
       <p>
         File a password change request. The admin will review it before your
@@ -1556,7 +1605,7 @@ function UserDashboard({ setPage, tickets, ticketAssignments = {}, userName }) {
               className="link-button"
               onClick={() => setPage("myRequestsPage")}
             >
-              View all ↗
+              View all <Icon name="arrowUpRight" size={14} />
             </button>
           </div>
           <TicketTable
@@ -1585,7 +1634,8 @@ function UserDashboard({ setPage, tickets, ticketAssignments = {}, userName }) {
     </>
   );
 }
-function TicketTable({ tickets, showAssignmentMeta = false, onOpen }) {
+function TicketTable({ tickets, showAssignmentMeta = false, onOpen, loading = false }) {
+  if (loading) return <TableSkeleton columns={6} />;
   const hasMeta = showAssignmentMeta || tickets.some((ticket) => ticket.assignedAgent || ticket.progress);
 
   if (!tickets || tickets.length === 0) {
@@ -1656,7 +1706,7 @@ function Status({ value }) {
     </span>
   );
 }
-function RequestPage({ request, setRequest, submitRequest }) {
+function RequestPage({ request, setRequest, submitRequest, submitting = false }) {
   return (
     <>
       <PageHeader
@@ -1664,7 +1714,7 @@ function RequestPage({ request, setRequest, submitRequest }) {
         title="Submit a request"
         description="Tell us what’s going on. The more detail, the faster we can help."
       />
-      <form className="panel request-form" onSubmit={submitRequest}>
+      <form className={`panel request-form ${submitting ? "is-submitting" : ""}`} onSubmit={submitRequest} aria-busy={submitting}>
         <div className="form-intro">
           <span className="form-number">01</span>
           <div>
@@ -1712,8 +1762,10 @@ function RequestPage({ request, setRequest, submitRequest }) {
         <PhotoPicker files={request.photos} onChange={(photos) => setRequest({ ...request, photos })} />
         <div className="form-footer">
           <span>We’ll use these details to route your request.</span>
-          <button className="button button-primary" type="submit">
-            Submit request <span>→</span>
+          <button className="button button-primary" type="submit" disabled={submitting}>
+            <BusyLabel busy={submitting} busyText="Submitting…">
+              Submit request <span>→</span>
+            </BusyLabel>
           </button>
         </div>
       </form>
@@ -1741,7 +1793,7 @@ function SelectField({ label, value, options, onChange, placeholder }) {
     </label>
   );
 }
-function MyRequests({ tickets, ticketAssignments = {}, setPage, me, refreshData, showMessage }) {
+function MyRequests({ tickets, ticketAssignments = {}, setPage, me, refreshData, showMessage, loading = false }) {
   const [openId, setOpenId] = useState(null);
   const openTicket = tickets.find((ticket) => ticket.id === openId);
   return (
@@ -1768,6 +1820,7 @@ function MyRequests({ tickets, ticketAssignments = {}, setPage, me, refreshData,
           <span className="table-count">{tickets.length} total</span>
         </div>
         <TicketTable
+          loading={loading}
           tickets={tickets.map((ticket) => ({
             ...ticket,
             ...ticketTracking(ticket, ticketAssignments[ticket.id]),
@@ -1820,22 +1873,22 @@ function AdminDashboard({ setPage, tickets = [], users = [] }) {
         </div>
         <div className="admin-actions">
           <button type="button" onClick={() => setPage("manageRequestsPage")}>
-            <span>▤</span>
+            <span><Icon name="list" size={22} /></span>
             <strong>Manage requests</strong>
             <small>Review and assign tickets</small>
-            <span className="action-arrow" aria-label="Open requests">↗</span>
+            <span className="action-arrow" aria-label="Open requests"><Icon name="arrowUpRight" size={16} /></span>
           </button>
           <button type="button" onClick={() => setPage("usersPage")}>
-            <span>♙</span>
+            <span><Icon name="users" size={22} /></span>
             <strong>Manage users</strong>
             <small>View registered users</small>
-            <span className="action-arrow" aria-label="Open users">↗</span>
+            <span className="action-arrow" aria-label="Open users"><Icon name="arrowUpRight" size={16} /></span>
           </button>
           <button type="button" onClick={() => setPage("passwordRequestsPage")}>
-            <span>🔑</span>
+            <span><Icon name="key" size={22} /></span>
             <strong>Password requests</strong>
             <small>Accept or decline change requests</small>
-            <span className="action-arrow" aria-label="Open password requests">↗</span>
+            <span className="action-arrow" aria-label="Open password requests"><Icon name="arrowUpRight" size={16} /></span>
           </button>
         </div>
       </section>
@@ -1864,7 +1917,7 @@ function AgentDashboard({ setPage, tickets = [], me }) {
         <StatCard label="Completed by you" value={resolved} tone="green" />
       </div>
       <section className="panel empty-action">
-        <div className="empty-icon">✓</div>
+        <div className="empty-icon"><Icon name="check" size={30} /></div>
         <h2>Ready when you are.</h2>
         <p>
           {waiting === 0
@@ -2031,8 +2084,8 @@ function AgentRequests({
                     <td>{ticket.subject}</td>
                     <td>{ticket.category}</td>
                     <td>
-                      {fit === "match" && <span className="fit-badge fit-badge-match">★ Recommended</span>}
-                      {fit === "mismatch" && <span className="fit-badge fit-badge-mismatch">⚠ Outside your skills</span>}
+                      {fit === "match" && <span className="fit-badge fit-badge-match"><Icon name="star" size={12} /> Recommended</span>}
+                      {fit === "mismatch" && <span className="fit-badge fit-badge-mismatch"><Icon name="alert" size={12} /> Outside your skills</span>}
                       {fit === "neutral" && <span className="fit-badge">—</span>}
                     </td>
                     <td>
@@ -2256,7 +2309,7 @@ function ManageRequests({
       {assignDialog && (
         <div className="modal-backdrop" onClick={() => setAssignDialog(null)}>
           <div className="modal-box assignment-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-icon">✓</div>
+            <div className="modal-icon"><Icon name="check" size={26} /></div>
             <h3>Available agents</h3>
             <p>
               Assign support for <strong>{assignDialog.subject}</strong>.
@@ -2284,13 +2337,19 @@ function ManageRequests({
                     >
                       <span className="assignment-name">
                         {agent.name}
-                        {fit === "match" && <span className="fit-badge fit-badge-match">★ Skill match</span>}
+                        {fit === "match" && <span className="fit-badge fit-badge-match"><Icon name="star" size={12} /> Skill match</span>}
                       </span>
                       <SkillChips skills={agent.skills} />
                       <span className="assignment-slot">
-                        {stats
-                          ? `${stats.online ? "● Online now" : "○ Offline"} · ${stats.activeTickets} active ticket${Number(stats.activeTickets) === 1 ? "" : "s"}`
-                          : "Checking workload…"}
+                        {stats ? (
+                          <>
+                            <span className={`presence-dot ${stats.online ? "on" : ""}`} />
+                            {stats.online ? "Online now" : "Offline"} · {stats.activeTickets} active ticket
+                            {Number(stats.activeTickets) === 1 ? "" : "s"}
+                          </>
+                        ) : (
+                          "Checking workload…"
+                        )}
                       </span>
                     </button>
                   );
@@ -2454,7 +2513,7 @@ function PasswordRequestsPage({ requests = [], currentUser, showMessage, refresh
             className="modal-box"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="modal-icon">{action.mode === "approve" ? "✓" : "!"}</div>
+            <div className="modal-icon"><Icon name={action.mode === "approve" ? "check" : "alert"} size={26} /></div>
             <h3>{action.mode === "approve" ? "Accept request?" : "Decline request?"}</h3>
             <p>
               {action.mode === "approve"
@@ -2514,7 +2573,7 @@ function SkillEditor({ agent, onToggle, busy }) {
             disabled={busy}
             onClick={() => onToggle(agent, skill)}
           >
-            {on ? "✓ " : "+ "}
+            {on ? <Icon name="check" size={13} /> : <Icon name="plus" size={13} />}{" "}
             {skill}
           </button>
         );
@@ -2835,7 +2894,7 @@ function ChatWindow({ me, contact, onClose }) {
               autoFocus
             />
             <button type="submit" disabled={!draft.trim() || sending} aria-label="Send">
-              ➤
+              <Icon name="send" size={18} />
             </button>
           </form>
         </>
@@ -2957,27 +3016,27 @@ function ChatDock({ me }) {
   );
 }
 const NOTIFICATION_STYLES = {
-  resolved: ["✓", "good"],
-  assigned: ["➜", "info"],
-  reassigned: ["⟲", "warn"],
-  urgent_ticket: ["🚨", "warn"],
-  bot_urgent: ["🚨", "warn"],
-  bot_handoff: ["👤", "info"],
-  auto_assigned: ["⚙", "info"],
-  auto_unassigned: ["!", "warn"],
-  in_progress: ["◔", "info"],
-  status: ["•", "info"],
-  message: ["✉", "info"],
-  new_ticket: ["+", "warn"],
-  cancellation_requested: ["!", "warn"],
-  cancellation_approved: ["✕", "muted"],
-  cancellation_rejected: ["↺", "info"],
-  password_request: ["🔑", "warn"],
-  password_approved: ["🔑", "good"],
-  password_rejected: ["🔑", "muted"],
-  skills: ["★", "good"],
-  reopened: ["↻", "warn"],
-  role: ["⇄", "info"],
+  resolved: ["checkCircle", "good"],
+  assigned: ["user", "info"],
+  reassigned: ["refresh", "warn"],
+  urgent_ticket: ["siren", "warn"],
+  bot_urgent: ["siren", "warn"],
+  bot_handoff: ["user", "info"],
+  auto_assigned: ["gear", "info"],
+  auto_unassigned: ["alert", "warn"],
+  in_progress: ["clock", "info"],
+  status: ["info", "info"],
+  message: ["mail", "info"],
+  new_ticket: ["plus", "warn"],
+  cancellation_requested: ["alert", "warn"],
+  cancellation_approved: ["x", "muted"],
+  cancellation_rejected: ["undo", "info"],
+  password_request: ["key", "warn"],
+  password_approved: ["key", "good"],
+  password_rejected: ["key", "muted"],
+  skills: ["star", "good"],
+  reopened: ["refresh", "warn"],
+  role: ["repeat", "info"],
 };
 
 function timeAgo(value) {
@@ -2992,8 +3051,12 @@ function timeAgo(value) {
 }
 
 function NotificationIcon({ type }) {
-  const [symbol, tone] = NOTIFICATION_STYLES[type] || ["•", "info"];
-  return <span className={`notif-icon notif-${tone}`}>{symbol}</span>;
+  const [symbol, tone] = NOTIFICATION_STYLES[type] || ["bell", "info"];
+  return (
+    <span className={`notif-icon notif-${tone}`}>
+      <Icon name={symbol} size={17} />
+    </span>
+  );
 }
 
 function NotificationsPage({ data, onRead, onOpen }) {
@@ -3040,7 +3103,7 @@ function NotificationsPage({ data, onRead, onOpen }) {
         </div>
         {items.length === 0 ? (
           <div className="notif-empty">
-            <span className="empty-icon">🔔</span>
+            <span className="empty-icon"><Icon name="bell" size={30} /></span>
             <strong>{filter === "unread" ? "You are all caught up." : "No notifications yet."}</strong>
             <p>Updates about your requests will show up here.</p>
           </div>
@@ -3219,7 +3282,7 @@ function CancellationQueue({ me, showMessage, refreshData }) {
             onClick={(event) => event.stopPropagation()}
             onSubmit={submitReview}
           >
-            <div className="modal-icon">{review.status === "Approved" ? "✓" : "✕"}</div>
+            <div className="modal-icon"><Icon name={review.status === "Approved" ? "check" : "x"} size={26} /></div>
             <h3>{review.status === "Approved" ? "Accept cancellation?" : "Reject cancellation?"}</h3>
             <p>
               {review.status === "Approved"

@@ -91,9 +91,11 @@ CREATE TABLE tickets (
   assignment_started_at TIMESTAMP NULL,      -- start of the current assignment (auto-assign expires it after 30 min)
   assigned_manually TINYINT(1) NOT NULL DEFAULT 0,  -- 1 = an admin assigned it, so it is never moved automatically
   auto_assign_count INT NOT NULL DEFAULT 0,  -- how many times the engine assigned or reassigned it
+  client_token VARCHAR(64) NULL,            -- stops a double click or a retry from creating the request twice
   closed_at TIMESTAMP NULL,                  -- a resolved ticket is closed for good (no reopening) a few days later
   created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   KEY idx_ticket_tier (priority_tier),
+  UNIQUE KEY uq_ticket_token (client_token),
   KEY idx_ticket_status (status, ticket_pk),
   KEY idx_ticket_created (created_at),
   KEY idx_ticket_assigned (assigned_to, status),

@@ -1,7 +1,7 @@
 // A small in-memory rate limiter (per client address). It slows down password guessing across many
 // accounts and sign-up floods; the per-account lockout still protects a single account.
 // For several API processes behind a load balancer use a shared store (for example Redis) instead.
-export function rateLimit({ windowMs = 60000, max = 60, message = "Too many attempts. Please wait a minute and try again." } = {}) {
+export function rateLimit({ windowMs = 60000, max = 60, message = "Too many attempts. Please wait a minute and try again.", key: keyOf = (req) => req.ip } = {}) {
   const hits = new Map();
   const timer = setInterval(() => {
     const now = Date.now();
@@ -10,7 +10,7 @@ export function rateLimit({ windowMs = 60000, max = 60, message = "Too many atte
   timer.unref?.();
 
   return (req, res, next) => {
-    const key = req.ip || "unknown";
+    const key = String(keyOf(req) ?? "unknown");
     const now = Date.now();
     let entry = hits.get(key);
     if (!entry || entry.resetAt <= now) {

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { api } from "./api";
+import Icon from "./icons";
 
 /** A photo in the conversation. The picture needs the sign-in token, so it is fetched and shown from memory. */
 export default function PhotoMessage({ id, name, userId }) {
@@ -22,7 +23,7 @@ export default function PhotoMessage({ id, name, userId }) {
     };
   }, [id, userId]);
 
-  if (state.failed) return <span className="photo-missing">📷 {name} (the photo is no longer available)</span>;
+  if (state.failed) return <span className="photo-missing"><Icon name="camera" size={14} /> {name} (the photo is no longer available)</span>;
   if (!state.url) return <span className="photo-loading" aria-busy="true" />;
   return (
     <a href={state.url} target="_blank" rel="noreferrer" className="photo-link" title="Open the full picture">

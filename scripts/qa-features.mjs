@@ -347,6 +347,32 @@ section("Satisfaction (CSAT) KPI");
   check(trend.status === 200, "trend still works");
 }
 
+// ---------------------------------------------------------------------------------------
+section("One click, one request (double clicks and slow connections)");
+{
+  const body = (extra = {}) => ({ subject: "Double click test", category: "Hardware", locationId: room, impactLevel: "Individual", urgencyLevel: "Medium", description: "x", ...extra });
+  const count = async (subject) => Number((await query("SELECT COUNT(*) AS n FROM tickets WHERE subject = ?", [subject]))[0].n);
+
+  const first = await raw("POST", "/tickets", { token: tok("student"), body: body({ subject: "Token A", clientToken: "tokenA-1234567890" }) });
+  const again = await raw("POST", "/tickets", { token: tok("student"), body: body({ subject: "Token A", clientToken: "tokenA-1234567890" }) });
+  check(first.status === 201 && again.status === 200 && again.json.id === first.json.id && again.json.duplicate === true, "the same token returns the first ticket, not a second one", `${first.json?.id} / ${again.json?.id} ${again.status}`);
+  check((await count("Token A")) === 1, "only one ticket exists after a repeat");
+
+  const parallel = await Promise.all(Array.from({ length: 8 }, () => raw("POST", "/tickets", { token: tok("student"), body: body({ subject: "Token B", clientToken: "tokenB-abcdefghij" }) })));
+  check(new Set(parallel.map((r) => r.json?.id)).size === 1 && (await count("Token B")) === 1, "8 simultaneous clicks with one token make one ticket", parallel.map((r) => r.status).join());
+
+  const other = await login("staff", "123456employee");
+  const mine = await raw("POST", "/tickets", { token: other.token, body: body({ subject: "Token B", clientToken: "tokenB-abcdefghij" }) });
+  check(mine.status === 201 && mine.json.id !== parallel[0].json.id, "another person using the same token still gets their own ticket");
+
+  const fresh = await raw("POST", "/tickets", { token: tok("student"), body: body({ subject: "Token C", clientToken: "tokenC-different1" }) });
+  check(fresh.status === 201 && fresh.json.id !== first.json.id, "a different token makes a new ticket");
+  const junk = await raw("POST", "/tickets", { token: tok("student"), body: body({ subject: "Token D", clientToken: "x" }) });
+  check(junk.status === 201, "a malformed token is ignored, not an error", String(junk.status));
+  const objectToken = await raw("POST", "/tickets", { token: tok("student"), body: body({ subject: "Token E", clientToken: { $ne: 1 } }) });
+  check(objectToken.status === 201, "a non-text token is ignored", String(objectToken.status));
+}
+
 await pool.end();
 console.log(`\n${passed} passed, ${failures.length} failed`);
 for (const line of failures) console.log(" -", line);

@@ -3,6 +3,7 @@
 // Run on a DEMO database that the API is using (the script edits ticket dates in it):
 //   DB_NAME=helpdesk_demo API=http://localhost:3002/api node scripts/qa-deep.mjs
 import crypto from "node:crypto";
+import fs from "node:fs";
 
 import { pool, query } from "../server/db.js";
 
@@ -93,6 +94,17 @@ section("Archive pipeline keeps reports and ticket numbers intact");
   check(JSON.stringify(before.totals ?? before) === JSON.stringify(after.totals ?? after), "report numbers unchanged by archiving");
   const next = await newTicket();
   check(!ids.includes(next) && Number(next.replace("#HD", "")) > Math.max(...ids.map((x) => Number(x.replace("#HD", "")))), "new ticket numbers do not reuse archived ones", next);
+  // the spreadsheet is tidy: readable headers, names instead of ID numbers, formatted dates
+  const csvFile = new URL(`../backups/archives/${run.json.files.csv}`, import.meta.url);
+  const csvBytes = fs.readFileSync(csvFile);
+  const csvText = csvBytes.toString("utf8");
+  const csvLines = csvText.split("\r\n");
+  check(csvBytes[0] === 0xef && csvBytes[1] === 0xbb && csvBytes[2] === 0xbf, "the CSV starts with a byte-order mark (opens correctly in Excel)");
+  check(csvLines[0].startsWith('\uFEFF"Ticket","Subject","Category"') && /"Assigned agent"/.test(csvLines[0]) && !/ticket_pk|created_by|assigned_to/.test(csvLines[0]), "readable column names", csvLines[0].slice(0, 80));
+  const csvRow = csvLines[1] ?? "";
+  check(/"#HD\d{3}"/.test(csvRow) && /"Agent User"/.test(csvRow) && /"Student User"/.test(csvRow), "names instead of ID numbers", csvRow.slice(0, 160));
+  check(/"2025-03-01 10:00"/.test(csvRow) && /"2025-03-01 12:00"/.test(csvRow) && !/T\d\d:\d\d:\d\d\.\d{3}Z/.test(csvRow), "dates formatted as year-month-day hour:minute");
+  check(csvLines.length >= 5 && csvLines.filter((line) => line.length > 0).length === 5, "one line per archived ticket plus the header", String(csvLines.length));
   const runs = await raw("GET", "/superadmin/archive/runs", { token: tok("superadmin") });
   check(runs.status === 200 && runs.json.length > 0, "archive history listed");
   const file = await fetch(`${API}/superadmin/archive/runs/${runs.json[0].id ?? runs.json[0].run_pk}/download?format=json`, { headers: { Authorization: `Bearer ${tok("superadmin")}` } });

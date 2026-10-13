@@ -309,21 +309,21 @@ function mainMenu(ctx) {
   const { status } = ctx.ticket;
   if (status === "Resolved") {
     return [
-      ...(ctx.ticket.csat_rating ? [] : [opt("rate:ask", "⭐ Rate the support")]),
-      ...(ctx.ticket.closed_at ? [] : [opt("reopen:ask", "↩ The problem is not fixed")]),
-      opt("more", "💡 More help"),
+      ...(ctx.ticket.csat_rating ? [] : [opt("rate:ask", "Rate the support")]),
+      ...(ctx.ticket.closed_at ? [] : [opt("reopen:ask", "The problem is not fixed")]),
+      opt("more", "More help"),
     ];
   }
   if (status === "Cancelled") {
-    return [opt("more", "💡 More help")];
+    return [opt("more", "More help")];
   }
   return [
-    opt("status", "📍 Where is my ticket?"),
-    opt("fix", "🛠 Try a quick fix"),
-    opt("time", "⏱ How long will it take?"),
-    opt("urgent:ask", "🚨 It's urgent"),
-    opt("human", "👤 Talk to an agent"),
-    opt("more", "💡 More help"),
+    opt("status", "Where is my ticket?"),
+    opt("fix", "Try a quick fix"),
+    opt("time", "How long will it take?"),
+    opt("urgent:ask", "It's urgent"),
+    opt("human", "Talk to an agent"),
+    opt("more", "More help"),
   ];
 }
 
@@ -390,9 +390,9 @@ async function handle(choice, ctx, deps) {
             {
               text: `${problem.label}\nTry these steps in order:\n${numbered(problem.steps)}`,
               options: [
-                opt(`fixed:${problem.key}`, "✅ That fixed it"),
-                opt(`notfixed:${problem.key}`, "❌ Still not working"),
-                opt("fix", "🔁 Show a different fix"),
+                opt(`fixed:${problem.key}`, "That fixed it"),
+                opt(`notfixed:${problem.key}`, "Still not working"),
+                opt("fix", "Show a different fix"),
               ],
             },
           ],
@@ -417,7 +417,7 @@ async function handle(choice, ctx, deps) {
       return {
         replies: [
           {
-            text: "Wonderful, glad that worked! 🎉\nSince it's working again, would you like me to ask an admin to close this ticket? You can also keep it open just in case.",
+            text: "Wonderful, glad that worked! \nSince it's working again, would you like me to ask an admin to close this ticket? You can also keep it open just in case.",
             options: [
               opt(`cancel:go:fixed-${problem?.key || "self"}`, "Yes, ask to close it"),
               opt("menu", "Keep it open for now"),
@@ -435,8 +435,8 @@ async function handle(choice, ctx, deps) {
             text: "Sorry that didn't solve it. I've passed on what you tried, so the agent won't ask you to repeat it.",
             options: [
               opt("fix", "Try another fix"),
-              opt("human", "👤 Talk to an agent"),
-              opt("menu", "🏠 Back to the menu"),
+              opt("human", "Talk to an agent"),
+              opt("menu", "Back to the menu"),
             ],
           },
         ],
@@ -509,8 +509,8 @@ async function handle(choice, ctx, deps) {
               opt("faq:details", "How do I add more details?"),
               opt("faq:reopen", "What if it comes back after being fixed?"),
               opt("faq:roles", "Who is working on my ticket?"),
-              opt("kbsearch", "📚 Help articles"),
-              opt("menu", "🏠 Back to the menu"),
+              opt("kbsearch", "Help articles"),
+              opt("menu", "Back to the menu"),
             ],
           },
         ],
@@ -530,9 +530,9 @@ async function handle(choice, ctx, deps) {
             : "No agent is assigned yet. An admin assigns tickets based on skills, and you'll be notified when it happens.",
       };
       const options = [
-        ...(part === "cancel" && !["Resolved", "Cancelled"].includes(ticket.status) ? [opt("cancel:ask", "❌ Cancel my request")] : []),
-        opt("more", "💡 More help"),
-        opt("menu", "🏠 Back to the menu"),
+        ...(part === "cancel" && !["Resolved", "Cancelled"].includes(ticket.status) ? [opt("cancel:ask", "Cancel my request")] : []),
+        opt("more", "More help"),
+        opt("menu", "Back to the menu"),
       ];
       return { replies: [{ text: answers[part] || "I'm not sure about that one.", options }] };
     }
@@ -591,7 +591,7 @@ async function handle(choice, ctx, deps) {
         replies: [
           {
             text: "These help articles may answer your question:",
-            options: [...found.map((article) => opt(`kb:${article.id}`, `📄 ${article.title}`.slice(0, 58))), opt("menu", "🏠 Back to the menu")],
+            options: [...found.map((article) => opt(`kb:${article.id}`, `${article.title}`.slice(0, 58))), opt("menu", "Back to the menu")],
           },
         ],
       };
@@ -604,8 +604,8 @@ async function handle(choice, ctx, deps) {
       return {
         replies: [
           {
-            text: `📄 ${article.title}\n${body}`.slice(0, 990),
-            options: [opt(`kbyes:${article.id}`, "✅ That helped"), opt(`kbno:${article.id}`, "❌ It did not help"), opt("kbsearch", "📚 Other articles")],
+            text: `${article.title}\n${body}`.slice(0, 990),
+            options: [opt(`kbyes:${article.id}`, "That helped"), opt(`kbno:${article.id}`, "It did not help"), opt("kbsearch", "Other articles")],
           },
         ],
       };
@@ -616,7 +616,7 @@ async function handle(choice, ctx, deps) {
       return {
         replies: [
           {
-            text: "Glad that helped! 🎉 Since it is sorted, would you like me to ask an admin to close this ticket? You can also keep it open just in case.",
+            text: "Glad that helped! Since it is sorted, would you like me to ask an admin to close this ticket? You can also keep it open just in case.",
             options: [opt("cancel:go:self", "Yes, ask to close it"), opt("menu", "Keep it open for now")],
           },
         ],
@@ -629,7 +629,7 @@ async function handle(choice, ctx, deps) {
         replies: [
           {
             text: "Sorry that did not solve it. Do you want to try a quick fix or talk to an agent?",
-            options: [opt("fix", "🛠 Try a quick fix"), opt("human", "👤 Talk to an agent"), opt("menu", "🏠 Back to the menu")],
+            options: [opt("fix", "Try a quick fix"), opt("human", "Talk to an agent"), opt("menu", "Back to the menu")],
           },
         ],
       };
@@ -672,12 +672,12 @@ async function handle(choice, ctx, deps) {
       const reason = reasons[extra || ""];
       if (!reason) return { replies: [{ text: "I didn't catch that.", options: mainMenu(ctx) }] };
       const result = await deps.reopenTicketFor({ ticket, user: ctx.user, reason });
-      if (result.error) return { replies: [{ text: result.error, options: [opt("menu", "🏠 Back to the menu")] }] };
+      if (result.error) return { replies: [{ text: result.error, options: [opt("menu", "Back to the menu")] }] };
       return {
         replies: [
           {
             text: `I've reopened ${ticket.code} and told the agent and the admins. Add any extra detail in the box below.`,
-            options: [opt("menu", "🏠 Back to the menu")],
+            options: [opt("menu", "Back to the menu")],
           },
         ],
       };
@@ -696,11 +696,11 @@ async function handle(choice, ctx, deps) {
             {
               text: "How would you rate the support you got?",
               options: [
-                opt("rate:5", "⭐⭐⭐⭐⭐ Excellent"),
-                opt("rate:4", "⭐⭐⭐⭐ Good"),
-                opt("rate:3", "⭐⭐⭐ Okay"),
-                opt("rate:2", "⭐⭐ Poor"),
-                opt("rate:1", "⭐ Very poor"),
+                opt("rate:5", "Excellent"),
+                opt("rate:4", "Good"),
+                opt("rate:3", "Okay"),
+                opt("rate:2", "Poor"),
+                opt("rate:1", "Very poor"),
                 opt("bye", "Skip"),
               ],
             },
@@ -715,7 +715,7 @@ async function handle(choice, ctx, deps) {
           replies: [
             {
               text: "Thank you for being honest, and I'm sorry we fell short. I've let the admins know. Would you like me to reopen the ticket?",
-              options: [opt("reopen:ask", "↩ Reopen the ticket"), opt("human", "👤 Talk to an agent"), opt("bye", "No, thanks")],
+              options: [opt("reopen:ask", "Reopen the ticket"), opt("human", "Talk to an agent"), opt("bye", "No, thanks")],
             },
           ],
           note: {
@@ -727,8 +727,8 @@ async function handle(choice, ctx, deps) {
       return {
         replies: [
           {
-            text: `Thank you! ${rating >= 4 ? "Happy to hear it. 😊" : "We'll keep working to do better."} Your rating helps us improve.`,
-            options: [opt("more", "💡 More help")],
+            text: `Thank you! ${rating >= 4 ? "Happy to hear it. " : "We'll keep working to do better."} Your rating helps us improve.`,
+            options: [opt("more", "More help")],
           },
         ],
       };
@@ -903,19 +903,19 @@ const TL_PROBLEM_WORDS = {
 };
 
 const TL_LABELS = {
-  "📍 Where is my ticket?": "📍 Nasaan na ang ticket ko?",
-  "🛠 Try a quick fix": "🛠 Subukan ang mabilisang ayos",
-  "⏱ How long will it take?": "⏱ Gaano katagal ito?",
-  "🚨 It's urgent": "🚨 Urgent ito",
-  "👤 Talk to an agent": "👤 Kausapin ang agent",
-  "💡 More help": "💡 Iba pang tulong",
-  "📚 Help articles": "📚 Mga help article",
-  "✅ That helped": "✅ Nakatulong ito",
-  "❌ It did not help": "❌ Hindi nakatulong",
-  "🏠 Back to the menu": "🏠 Bumalik sa menu",
-  "✅ That fixed it": "✅ Naayos nito",
-  "❌ Still not working": "❌ Hindi pa rin gumagana",
-  "🔁 Show a different fix": "🔁 Ibang ayos naman",
+  "Where is my ticket?": "Nasaan na ang ticket ko?",
+  "Try a quick fix": "Subukan ang mabilisang ayos",
+  "How long will it take?": "Gaano katagal ito?",
+  "It's urgent": "Urgent ito",
+  "Talk to an agent": "Kausapin ang agent",
+  "More help": "Iba pang tulong",
+  "Help articles": "Mga help article",
+  "That helped": "Nakatulong ito",
+  "It did not help": "Hindi nakatulong",
+  "Back to the menu": "Bumalik sa menu",
+  "That fixed it": "Naayos nito",
+  "Still not working": "Hindi pa rin gumagana",
+  "Show a different fix": "Ibang ayos naman",
   "None of these": "Wala sa mga ito",
   "Never mind": "Huwag na",
   "I have a class, exam or deadline soon": "May klase, exam o deadline ako malapit na",
@@ -949,16 +949,16 @@ const TL_LINES = [
   [/^I've let them know you'd like to talk\..*$/, "Naipaalam ko na sa kanila na gusto mo silang makausap. I-type ang mensahe mo sa baba at doon sila sasagot."],
   [/^Our agents and admins are offline right now.*$/, "Offline ang mgan agent at admin ngayon, kaya ako muna ang tutulong. Makikita nila ang lahat dito pagbalik nila."],
   [/^I've notified them, so leave your message.*$/, "Naabisuhan ko na sila, kaya iwan ang mensahe mo sa baba nang may detalye. Sasagot sila rito pagbalik nila. Habang naghihintay, makakatulong pa rin ako sa mga mabilisang ayos."],
-  [/^You're welcome! .*$/, "Walang anuman! 😊 May iba pa ba akong maitutulong?"],
+  [/^You're welcome! .*$/, "Walang anuman! May iba pa ba akong maitutulong?"],
   [/^These help articles may answer your question:$/, "Baka masagot ng mga help article na ito ang tanong mo:"],
   [/^I found these help articles.*$/, "May nakita akong mga help article na maaaring makatulong:"],
-  [/^Glad that helped!.*$/, "Mabuti at nakatulong! 🎉 Gusto mo bang hilingin ko sa admin na isara ang ticket na ito? Puwede mo rin itong iwanang bukas."],
+  [/^Glad that helped!.*$/, "Mabuti at nakatulong! Gusto mo bang hilingin ko sa admin na isara ang ticket na ito? Puwede mo rin itong iwanang bukas."],
   [/^Hi (.+)! What can I help you with\?$/, "Hi $1! Ano ang maitutulong ko?"],
   [/^I'm not sure I understood that.*$/, "Hindi ko sigurado kung naintindihan ko iyon, pero naipadala na ang mensahe mo sa team. Habang naghihintay, ito ang magagawa ko:"],
   [/^The team is offline right now and will reply when they're back\.$/, "Offline ang team ngayon at sasagot sila pagbalik nila."],
   [/^Try these steps in order:$/, "Subukan ang mga hakbang na ito nang may ayos (nasa English):"],
   [/^These are the most common .*problems I can help with\..*$/, "Ito ang mga pinakakaraniwang problema na matutulungan ko. Alin ang kahawig ng sa iyo?"],
-  [/^Wonderful, glad that worked!.*$/, "Mabuti at gumana! 🎉"],
+  [/^Wonderful, glad that worked!.*$/, "Mabuti at gumana! "],
   [/^Since it's working again.*$/, "Dahil gumagana na ulit, gusto mo bang hilingin ko sa admin na isara ang ticket na ito? Puwede mo rin itong iwanang bukas."],
   [/^Sorry that didn't solve it\..*$/, "Pasensya na at hindi ito nakatulong. Naipasa ko na ang mga sinubukan mo kaya hindi na kailangang ulitin ng agent."],
   [/^I can send a cancellation request.*$/, "Maipapadala ko ang cancellation request sa mga admin (sila ang magpapasya). Bakit mo gustong kanselahin?"],
@@ -1006,7 +1006,7 @@ export function createBot(deps) {
     await insertMessage(
       ticketPk,
       botId,
-      `Hi ${firstName}! 👋 I'm the HelpDesk Assistant.\nYour request ${code} (${subject}) is in the queue and the team has been notified.\n${availabilityLine(availability)}\nTip: you can add a photo of the problem with the 📎 button below.\nWhile you wait, I can check on it, suggest quick ${category && category !== "Others" ? `${category} ` : ""}fixes, or get you to an agent. What would you like to do?`,
+      `Hi ${firstName}! I'm the HelpDesk Assistant.\nYour request ${code} (${subject}) is in the queue and the team has been notified.\n${availabilityLine(availability)}\nTip: you can add a photo of the problem with the button below.\nWhile you wait, I can check on it, suggest quick ${category && category !== "Others" ? `${category} ` : ""}fixes, or get you to an agent. What would you like to do?`,
       "bot",
       mainMenu(ctx),
     );
@@ -1019,9 +1019,9 @@ export function createBot(deps) {
     await insertMessage(
       ticketPk,
       botId,
-      `Good news, ${firstName}: ${code} was marked as resolved${techName ? ` by ${techName}` : ""}. 🎉\nIs everything working now? Your feedback helps us improve.`,
+      `Good news, ${firstName}: ${code} was marked as resolved${techName ? ` by ${techName}` : ""}. \nIs everything working now? Your feedback helps us improve.`,
       "bot",
-      [opt("rate:ask", "⭐ Yes, rate the support"), opt("reopen:ask", "↩ No, it's still broken"), opt("bye", "Skip")],
+      [opt("rate:ask", "Yes, rate the support"), opt("reopen:ask", "No, it's still broken"), opt("bye", "Skip")],
     );
   }
 
@@ -1110,14 +1110,14 @@ export function createBot(deps) {
     const choice = detectChoice(String(text), ticket.category);
     const botId = await getBotId();
     if (choice === "thanks") {
-      const id = await insertMessage(ticket.ticket_pk, botId, say("You're welcome! 😊 Anything else I can help with?"), "bot", tl ? toTagalogOptions(mainMenu(ctx)) : mainMenu(ctx));
+      const id = await insertMessage(ticket.ticket_pk, botId, say("You're welcome! Anything else I can help with?"), "bot", tl ? toTagalogOptions(mainMenu(ctx)) : mainMenu(ctx));
       return [id];
     }
     if (!choice) {
       const articles = await searchArticles(String(text), { category: ticket.category, limit: 3 });
       if (articles.length > 0) {
         const message = say("I found these help articles that may answer your question:");
-        const options = [...articles.map((article) => opt(`kb:${article.id}`, `📄 ${article.title}`.slice(0, 58))), opt("menu", "🏠 Back to the menu")];
+        const options = [...articles.map((article) => opt(`kb:${article.id}`, `${article.title}`.slice(0, 58))), opt("menu", "Back to the menu")];
         return [await insertMessage(ticket.ticket_pk, botId, message, "bot", tl ? toTagalogOptions(options) : options)];
       }
     }

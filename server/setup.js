@@ -44,6 +44,7 @@ export const MIGRATIONS = [
   { file: "2026-10-autoassign.sql", done: (c) => columnExists(c, "tickets", "assignment_started_at") },
   { file: "2026-10-performance.sql", done: (c) => indexExists(c, "tickets", "idx_ticket_status") },
   { file: "2026-10-features.sql", done: (c) => tableExists(c, "kb_articles") },
+  { file: "2026-10-idempotency.sql", done: (c) => columnExists(c, "tickets", "client_token") },
 ];
 
 export async function ensureSchema({ log = console.log } = {}) {
