@@ -1061,7 +1061,7 @@ ${ctx.availability.anyOnline ? availabilityLine(ctx.availability) : "The team is
       if (!isOwner) {
         return res.status(403).json({ error: "Only the person who submitted the ticket can use the assistant." });
       }
-      const choice = String(req.body?.choice ?? "");
+      const choice = typeof req.body?.choice === "string" ? req.body.choice : "";
       if (!choice) return res.status(400).json({ error: "choice is required." });
 
       const ctx = await loadContext(base.code, user);

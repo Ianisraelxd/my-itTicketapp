@@ -58,6 +58,37 @@ async function nextCode(conn, table, prefix, archiveTable = null) {
   return `${prefix}${String(rows[0].n).padStart(3, "0")}`;
 }
 
+// Creates a row that needs a generated code (#HD001, #CR001, #PW001). Requests are queued one at a
+// time (the "max + 1" lookup would otherwise hand two parallel requests the same code), and a
+// duplicate-code error from a second API process is retried.
+let codeQueue = Promise.resolve();
+function createWithCode({ table, prefix, archiveTable = null, work }) {
+  const run = codeQueue.then(async () => {
+    for (let attempt = 0; ; attempt += 1) {
+      const conn = await pool.getConnection();
+      try {
+        await conn.beginTransaction();
+        const code = await nextCode(conn, table, prefix, archiveTable);
+        const result = await work(conn, code);
+        await conn.commit();
+        return { code, result };
+      } catch (err) {
+        await conn.rollback();
+        if (err.code === "ER_DUP_ENTRY" && attempt < 4) continue;
+        throw err;
+      } finally {
+        conn.release();
+      }
+    }
+  });
+  codeQueue = run.catch(() => {});
+  return run;
+}
+
+// Plain-text input helpers: a non-string (array, object, number) is treated as missing.
+const asText = (value, max = 1000) => (typeof value === "string" ? value.trim().slice(0, max) : "");
+const isText = (value, max) => typeof value === "string" && value.trim().length > 0 && value.trim().length <= max;
+
 // Notifications never break the action that triggered them.
 async function notify(userIds, { type, title, body, ticketCode = null }) {
   const targets = [...new Set((userIds || []).filter(Boolean))];
@@ -89,16 +120,24 @@ app.get("/api/health", wrap(async (_req, res) => {
 // store bcrypt hashes and compare with bcrypt.compare() instead.
 app.post("/api/signup", wrap(async (req, res) => {
   const { fullName, id, email, userType, password } = req.body ?? {};
-  const trimmedName = fullName?.trim();
-  const trimmedId = id?.trim();
-  const trimmedEmail = email?.trim();
-  const selectedRole = String(userType || "Student").toLowerCase();
+  const trimmedName = asText(fullName, 500);
+  const trimmedId = asText(id, 500);
+  const trimmedEmail = asText(email, 500);
+  const selectedRole = String(typeof userType === "string" ? userType : "Student").toLowerCase();
 
-  if (!trimmedName || !trimmedId || !trimmedEmail || !password) {
+  if (!trimmedName || !trimmedId || !trimmedEmail || typeof password !== "string" || !password) {
     return res.status(400).json({
       error: "full name, ID, email, user type, and password are required.",
     });
   }
+  if (trimmedName.length > 120) return res.status(400).json({ error: "Full name must be 120 characters or fewer." });
+  if (!/^[A-Za-z0-9._-]{3,32}$/.test(trimmedId)) {
+    return res.status(400).json({ error: "ID must be 3 to 32 letters, numbers, dots, dashes or underscores." });
+  }
+  if (trimmedEmail.length > 160 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+    return res.status(400).json({ error: "Please enter a valid email address." });
+  }
+  if (password.length > 128) return res.status(400).json({ error: "Password must be 128 characters or fewer." });
 
   const role = ["staff", "university staff"].includes(selectedRole) ? "staff" : "student";
   const roleName = role === "staff" ? "University Staff" : "Student";
@@ -378,10 +417,27 @@ app.get("/api/locations", wrap(async (_req, res) => {
 
 // The priority tier is calculated on the server (server/priority.js) from the two intake answers;
 // any priority sent by the client is ignored.
+const TICKET_CATEGORIES = ["Hardware", "Software", "Network / Internet", "Account / Login", "Printer", "Others"];
+
 app.post("/api/tickets", calculatePriority, wrap(async (req, res) => {
-  const { subject, category, locationId, description, createdBy } = req.body ?? {};
-  if (!subject?.trim() || !category?.trim()) {
+  if (!["student", "staff"].includes(req.user.role)) {
+    return res.status(403).json({ error: "Only students and university staff can submit requests." });
+  }
+  const { createdBy } = req.body ?? {};
+  const locationId = req.body?.locationId;
+  const subject = asText(req.body?.subject, 1000);
+  const category = asText(req.body?.category, 100);
+  const description = asText(req.body?.description, 100000);
+  if (!subject || !category) {
     return res.status(400).json({ error: "subject and category are required." });
+  }
+  if (subject.length > 200) return res.status(400).json({ error: "The subject must be 200 characters or fewer." });
+  if (description.length > 5000) return res.status(400).json({ error: "The description must be 5000 characters or fewer." });
+  if (!TICKET_CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: `Category must be one of: ${TICKET_CATEGORIES.join(", ")}.` });
+  }
+  if (!/^\d{1,9}$/.test(String(locationId ?? ""))) {
+    return res.status(400).json({ error: "Please choose a campus zone, building and room." });
   }
   const rooms = await query(
     "SELECT location_id, building_name, room_name FROM locations WHERE location_id = ? LIMIT 1",
@@ -393,45 +449,40 @@ app.post("/api/tickets", calculatePriority, wrap(async (req, res) => {
   // Readable snapshot of the room, kept for reports and the location heat map.
   const locationText = `${room.room_name}, ${room.building_name}`;
 
-  const conn = await pool.getConnection();
+  const { code } = await createWithCode({
+    table: "tickets",
+    prefix: "#HD",
+    archiveTable: "tickets_archive",
+    work: (conn, newCode) =>
+      conn.execute(
+        "INSERT INTO tickets (code, subject, category, priority, status, location, location_id, impact_level, urgency_level, priority_tier, description, created_by) VALUES (?, ?, ?, ?, 'Open', ?, ?, ?, ?, ?, ?, ?)",
+        [
+          newCode, subject, category, priority, locationText, room.location_id,
+          req.body.impactLevel, req.body.urgencyLevel, tier, description || null, createdBy ?? null,
+        ],
+      ),
+  });
+  const submitters = await query("SELECT name FROM users WHERE user_pk = ?", [createdBy ?? 0]);
+  await notify(await adminIds(), {
+    type: "new_ticket",
+    title: "New request submitted",
+    body: `${submitters[0]?.name || "A user"} filed ${code} (${category}): ${subject}`,
+    ticketCode: code,
+  });
   try {
-    await conn.beginTransaction();
-    const code = await nextCode(conn, "tickets", "#HD", "tickets_archive");
-    await conn.execute(
-      "INSERT INTO tickets (code, subject, category, priority, status, location, location_id, impact_level, urgency_level, priority_tier, description, created_by) VALUES (?, ?, ?, ?, 'Open', ?, ?, ?, ?, ?, ?, ?)",
-      [
-        code, subject, category, priority, locationText, room.location_id,
-        req.body.impactLevel, req.body.urgencyLevel, tier, description ?? null, createdBy ?? null,
-      ],
-    );
-    await conn.commit();
-    const submitters = await query("SELECT name FROM users WHERE user_pk = ?", [createdBy ?? 0]);
-    await notify(await adminIds(), {
-      type: "new_ticket",
-      title: "New request submitted",
-      body: `${submitters[0]?.name || "A user"} filed ${code} (${category}): ${subject}`,
-      ticketCode: code,
-    });
-    try {
-      const [created] = await query("SELECT ticket_pk FROM tickets WHERE code = ?", [code]);
-      if (created && createdBy) {
-        await bot.postGreeting({
-          ticketPk: created.ticket_pk, code, subject, category, requesterName: submitters[0]?.name,
-        });
-      }
-    } catch (err) {
-      console.error("assistant greeting failed", err.message);
+    const [created] = await query("SELECT ticket_pk FROM tickets WHERE code = ?", [code]);
+    if (created && createdBy) {
+      await bot.postGreeting({
+        ticketPk: created.ticket_pk, code, subject, category, requesterName: submitters[0]?.name,
+      });
     }
-    res.status(201).json({
-      id: code, subject, category, priority, priorityTier: tier, escalated: req.priority.escalated,
-      location: locationText, status: "Open",
-    });
   } catch (err) {
-    await conn.rollback();
-    throw err;
-  } finally {
-    conn.release();
+    console.error("assistant greeting failed", err.message);
   }
+  res.status(201).json({
+    id: code, subject, category, priority, priorityTier: tier, escalated: req.priority.escalated,
+    location: locationText, status: "Open",
+  });
 }));
 
 // Queue-safe cancellation by an admin. The row is never deleted: the status guard in the UPDATE
@@ -623,7 +674,7 @@ app.post("/api/tickets/:id/messages", wrap(async (req, res) => {
   const access = await ticketAccess(req.params.id, req.body?.userId);
   if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
   const { ticket, user, isOwner } = access;
-  const body = String(req.body?.text ?? "").trim().slice(0, 1000);
+  const body = asText(req.body?.text, 1000);
   if (!body) return res.status(400).json({ error: "Message cannot be empty." });
   if (CLOSED_STATUSES.includes(ticket.status)) {
     return res.status(409).json({ error: `This ticket is ${ticket.status}; the chat is closed.` });
@@ -673,26 +724,20 @@ async function fileCancellationRequest({ ticket, user, reason }) {
     return { error: [409, `A cancellation request (${pending[0].code}) is already waiting for an admin.`] };
   }
 
-  const conn = await pool.getConnection();
-  let code;
-  try {
-    await conn.beginTransaction();
-    code = await nextCode(conn, "cancellation_requests", "#CR");
-    await conn.execute(
-      "INSERT INTO cancellation_requests (code, ticket_pk, requested_by, reason) VALUES (?, ?, ?, ?)",
-      [code, ticket.ticket_pk, user.user_pk, reason],
-    );
-    await conn.execute(
-      "INSERT INTO ticket_messages (ticket_pk, sender_pk, message_text, kind) VALUES (?, ?, ?, 'cancellation_request')",
-      [ticket.ticket_pk, user.user_pk, `Cancellation Requested: ${reason}`],
-    );
-    await conn.commit();
-  } catch (err) {
-    await conn.rollback();
-    throw err;
-  } finally {
-    conn.release();
-  }
+  const { code } = await createWithCode({
+    table: "cancellation_requests",
+    prefix: "#CR",
+    work: async (conn, newCode) => {
+      await conn.execute(
+        "INSERT INTO cancellation_requests (code, ticket_pk, requested_by, reason) VALUES (?, ?, ?, ?)",
+        [newCode, ticket.ticket_pk, user.user_pk, reason],
+      );
+      await conn.execute(
+        "INSERT INTO ticket_messages (ticket_pk, sender_pk, message_text, kind) VALUES (?, ?, ?, 'cancellation_request')",
+        [ticket.ticket_pk, user.user_pk, `Cancellation Requested: ${reason}`],
+      );
+    },
+  });
 
   await notify(await adminIds(), {
     type: "cancellation_requested",
@@ -1254,12 +1299,13 @@ app.get("/api/password-requests", wrap(async (req, res) => {
 }));
 
 app.post("/api/password-requests", wrap(async (req, res) => {
-  const { userId, newPassword, reason } = req.body ?? {};
-  if (!userId || !newPassword) {
+  const { userId, newPassword } = req.body ?? {};
+  const reason = asText(req.body?.reason, 500);
+  if (!userId || typeof newPassword !== "string" || !newPassword) {
     return res.status(400).json({ error: "userId and newPassword are required." });
   }
-  if (String(newPassword).length < 6) {
-    return res.status(400).json({ error: "New password must be at least 6 characters." });
+  if (newPassword.length < 6 || newPassword.length > 128) {
+    return res.status(400).json({ error: "New password must be 6 to 128 characters." });
   }
 
   const accounts = await query(
@@ -1280,31 +1326,42 @@ app.post("/api/password-requests", wrap(async (req, res) => {
     });
   }
 
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    const code = await nextCode(conn, "password_requests", "#PW");
-    await conn.execute(
-      "INSERT INTO password_requests (code, user_pk, new_password, reason) VALUES (?, ?, ?, ?)",
-      [code, userId, await hashPassword(newPassword), reason?.trim() || null],
-    );
-    await conn.commit();
-    await notify(await adminIds(), {
-      type: "password_request",
-      title: "Password change request",
-      body: `${accounts[0].name} asked to change their password (${code}).`,
+  // One pending request per person, checked again inside the queue so parallel clicks cannot slip two in.
+  const hashed = await hashPassword(newPassword);
+  let duplicate = null;
+  const { code } = await createWithCode({
+    table: "password_requests",
+    prefix: "#PW",
+    work: async (conn, newCode) => {
+      const [again] = await conn.execute(
+        "SELECT code FROM password_requests WHERE user_pk = ? AND status = 'Pending' LIMIT 1",
+        [userId],
+      );
+      if (again.length > 0) {
+        duplicate = again[0].code;
+        return;
+      }
+      await conn.execute(
+        "INSERT INTO password_requests (code, user_pk, new_password, reason) VALUES (?, ?, ?, ?)",
+        [newCode, userId, hashed, reason || null],
+      );
+    },
+  });
+  if (duplicate) {
+    return res.status(409).json({
+      error: `You already have a pending request (${duplicate}). Wait for the admin to review it first.`,
     });
-    res.status(201).json({
-      id: code,
-      status: "Pending",
-      message: "Password change request sent to the admin for review.",
-    });
-  } catch (err) {
-    await conn.rollback();
-    throw err;
-  } finally {
-    conn.release();
   }
+  await notify(await adminIds(), {
+    type: "password_request",
+    title: "Password change request",
+    body: `${accounts[0].name} asked to change their password (${code}).`,
+  });
+  res.status(201).json({
+    id: code,
+    status: "Pending",
+    message: "Password change request sent to the admin for review.",
+  });
 }));
 
 app.patch("/api/password-requests/:id/status", wrap(async (req, res) => {
@@ -1373,8 +1430,14 @@ app.patch("/api/password-requests/:id/status", wrap(async (req, res) => {
 registerKpiRoutes(app, wrap);
 registerSuperAdminRoutes(app, { wrap, notify });
 
-// --- Error handler ----------------------------------------------------------
+// --- Unknown API routes and errors ----------------------------------------------------
+app.use("/api", (_req, res) => res.status(404).json({ error: "Not found." }));
+
 app.use((err, _req, res, _next) => {
+  // Bad JSON or an oversized body are the client's mistake, not a server failure.
+  if (err.type === "entity.parse.failed") return res.status(400).json({ error: "The request body is not valid JSON." });
+  if (err.type === "entity.too.large") return res.status(413).json({ error: "The request is too large." });
+  if (err.status >= 400 && err.status < 500) return res.status(err.status).json({ error: "Bad request." });
   console.error(err);
   res.status(500).json({ error: "Internal server error." });
 });

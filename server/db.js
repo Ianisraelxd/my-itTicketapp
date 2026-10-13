@@ -14,6 +14,11 @@ export const pool = mysql.createPool({
   queueLimit: 0,
 });
 
+// Strict mode makes MySQL refuse values that do not fit a column instead of silently cutting them.
+pool.pool.on("connection", (connection) => {
+  connection.query("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION'");
+});
+
 // Small helper so routes can run a query and get rows back directly.
 export async function query(sql, params = []) {
   const [rows] = await pool.execute(sql, params);
