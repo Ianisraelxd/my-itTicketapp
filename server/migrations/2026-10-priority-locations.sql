@@ -38,20 +38,18 @@ INSERT IGNORE INTO locations (campus_zone, building_name, room_name, room_type) 
 -- 2. Tickets: structured location, intake answers and the calculated tier.
 --    The old free-text `location` column stays as a read-only snapshot of the chosen
 --    room's name (reports and the heat map group by it, and old tickets keep their text).
-ALTER TABLE tickets
-  ADD COLUMN location_id    INT NULL,
-  ADD COLUMN impact_level   ENUM('Organization', 'Department', 'Individual') NULL,
-  ADD COLUMN urgency_level  ENUM('High', 'Medium', 'Low') NULL,
-  ADD COLUMN priority_tier  ENUM('P1', 'P2', 'P3', 'P4') NULL,
-  ADD KEY idx_ticket_tier (priority_tier),
-  ADD CONSTRAINT fk_ticket_location FOREIGN KEY (location_id) REFERENCES locations(location_id) ON DELETE SET NULL;
+ALTER TABLE tickets ADD COLUMN location_id    INT NULL;
+ALTER TABLE tickets ADD COLUMN impact_level   ENUM('Organization', 'Department', 'Individual') NULL;
+ALTER TABLE tickets ADD COLUMN urgency_level  ENUM('High', 'Medium', 'Low') NULL;
+ALTER TABLE tickets ADD COLUMN priority_tier  ENUM('P1', 'P2', 'P3', 'P4') NULL;
+ALTER TABLE tickets ADD KEY idx_ticket_tier (priority_tier);
+ALTER TABLE tickets ADD CONSTRAINT fk_ticket_location FOREIGN KEY (location_id) REFERENCES locations(location_id) ON DELETE SET NULL;
 
 -- The archive table must have the same columns in the same order (no foreign key needed).
-ALTER TABLE tickets_archive
-  ADD COLUMN location_id    INT NULL,
-  ADD COLUMN impact_level   ENUM('Organization', 'Department', 'Individual') NULL,
-  ADD COLUMN urgency_level  ENUM('High', 'Medium', 'Low') NULL,
-  ADD COLUMN priority_tier  ENUM('P1', 'P2', 'P3', 'P4') NULL;
+ALTER TABLE tickets_archive ADD COLUMN location_id    INT NULL;
+ALTER TABLE tickets_archive ADD COLUMN impact_level   ENUM('Organization', 'Department', 'Individual') NULL;
+ALTER TABLE tickets_archive ADD COLUMN urgency_level  ENUM('High', 'Medium', 'Low') NULL;
+ALTER TABLE tickets_archive ADD COLUMN priority_tier  ENUM('P1', 'P2', 'P3', 'P4') NULL;
 
 -- tickets_all selects *, so re-create it to pick up the new columns.
 CREATE OR REPLACE VIEW tickets_all AS
