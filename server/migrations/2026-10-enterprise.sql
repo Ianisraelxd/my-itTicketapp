@@ -37,12 +37,11 @@ CREATE OR REPLACE VIEW tickets_all AS
 -- 2. Role segregation + account security ---------------------------------------------
 -- users.role is a VARCHAR(32), not an ENUM, so the new 'report_viewer' role needs no
 -- ALTER: it is simply a new value. Read-only is enforced by the API (verifyReportViewer).
-ALTER TABLE users
-  ADD COLUMN failed_logins  INT NOT NULL DEFAULT 0,
-  ADD COLUMN locked_until   DATETIME NULL,
-  ADD COLUMN mfa_enabled    TINYINT(1) NOT NULL DEFAULT 0,
-  ADD COLUMN mfa_secret     VARCHAR(64) NULL,
-  ADD COLUMN last_login_at  TIMESTAMP NULL;
+ALTER TABLE users ADD COLUMN failed_logins  INT NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN locked_until   DATETIME NULL;
+ALTER TABLE users ADD COLUMN mfa_enabled    TINYINT(1) NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN mfa_secret     VARCHAR(64) NULL;
+ALTER TABLE users ADD COLUMN last_login_at  TIMESTAMP NULL;
 
 -- 3. Demo Report Viewer account (ID 2404154, password 123456viewer) -------------------
 INSERT INTO users (id_number, password, name, role, role_name, email) VALUES

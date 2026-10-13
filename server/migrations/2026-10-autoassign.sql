@@ -1,14 +1,12 @@
 -- Auto-assignment with a 30-minute expiry. Run once on an existing database.
 
-ALTER TABLE tickets
-  ADD COLUMN assignment_started_at TIMESTAMP NULL,
-  ADD COLUMN assigned_manually TINYINT(1) NOT NULL DEFAULT 0,
-  ADD COLUMN auto_assign_count INT NOT NULL DEFAULT 0;
+ALTER TABLE tickets ADD COLUMN assignment_started_at TIMESTAMP NULL;
+ALTER TABLE tickets ADD COLUMN assigned_manually TINYINT(1) NOT NULL DEFAULT 0;
+ALTER TABLE tickets ADD COLUMN auto_assign_count INT NOT NULL DEFAULT 0;
 
-ALTER TABLE tickets_archive
-  ADD COLUMN assignment_started_at TIMESTAMP NULL,
-  ADD COLUMN assigned_manually TINYINT(1) NOT NULL DEFAULT 0,
-  ADD COLUMN auto_assign_count INT NOT NULL DEFAULT 0;
+ALTER TABLE tickets_archive ADD COLUMN assignment_started_at TIMESTAMP NULL;
+ALTER TABLE tickets_archive ADD COLUMN assigned_manually TINYINT(1) NOT NULL DEFAULT 0;
+ALTER TABLE tickets_archive ADD COLUMN auto_assign_count INT NOT NULL DEFAULT 0;
 
 -- Tickets an admin already assigned stay with that agent (they are "pinned").
 UPDATE tickets SET assigned_manually = 1, assignment_started_at = COALESCE(assigned_at, created_at)

@@ -6,7 +6,8 @@
 ALTER TABLE tickets ADD COLUMN closed_at TIMESTAMP NULL;
 ALTER TABLE tickets_archive ADD COLUMN closed_at TIMESTAMP NULL;
 
-ALTER TABLE users ADD COLUMN phone VARCHAR(32) NULL, ADD COLUMN email_alerts TINYINT(1) NOT NULL DEFAULT 1;
+ALTER TABLE users ADD COLUMN phone VARCHAR(32) NULL;
+ALTER TABLE users ADD COLUMN email_alerts TINYINT(1) NOT NULL DEFAULT 1;
 
 -- Email alerts: a switch and an optional phone number per person, and a log of what was sent.
 CREATE TABLE IF NOT EXISTS email_log (
