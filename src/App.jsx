@@ -17,6 +17,7 @@ import { SettingsModal } from "./SettingsModal";
 import { APP_VERSION, motionAllowed } from "./settings";
 import { playSound } from "./sounds";
 import { IntakeQuestions, LocationSelector } from "./SmartIntake";
+import useLoginGuard, { COOLDOWN_SECONDS } from "./useLoginGuard";
 import { TicketDetailsModal } from "./TicketChat";
 
 // Charts and the super admin screens are only needed by a few roles, so they load on demand
@@ -138,6 +139,7 @@ function App() {
     password: "",
   });
   const [forgotEmail, setForgotEmail] = useState("");
+  const loginGuard = useLoginGuard();
   const [tickets, setTickets] = useState([]);
   const [allTickets, setAllTickets] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
@@ -353,16 +355,20 @@ function App() {
 
   async function login(event) {
     event.preventDefault();
+    if (loginGuard.secondsLeft > 0) return; // the warning countdown is still running
     let result;
     try {
       result = await api.login(credentials);
     } catch (error) {
+      if (error.status === 429) loginGuard.recordWait(error.data?.retryAfter);
+      else if (error.status === 401) loginGuard.recordFailure(error.data?.cooldownSeconds);
       showMessage(
         "Login failed",
         error.message || "Incorrect ID, password, or selected role.",
       );
       return;
     }
+    loginGuard.reset();
     if (result.mfaRequired) {
       setMfaChallenge({ token: result.mfaToken });
       setMfaCode("");
@@ -374,7 +380,9 @@ function App() {
   async function submitMfa(event) {
     event.preventDefault();
     try {
-      completeLogin(await api.loginMfa({ mfaToken: mfaChallenge.token, code: mfaCode }));
+      const account = await api.loginMfa({ mfaToken: mfaChallenge.token, code: mfaCode });
+      loginGuard.reset();
+      completeLogin(account);
     } catch (error) {
       showMessage("Could not verify the code", error.message || "Please try again.");
       if (/expired|start/i.test(error.message || "")) setMfaChallenge(null);
@@ -549,6 +557,7 @@ function App() {
         signupForm={signupForm}
         setSignupForm={setSignupForm}
         forgotEmail={forgotEmail}
+        loginGuard={loginGuard}
         setForgotEmail={setForgotEmail}
         login={login}
         showMessage={showMessage}
@@ -813,6 +822,7 @@ function AuthScreen({
   setSignupForm,
   forgotEmail,
   setForgotEmail,
+  loginGuard,
   login,
   showMessage,
   modal,
@@ -936,14 +946,31 @@ function AuthScreen({
                     <option value="report_viewer">Report Viewer (read-only)</option>
                   </select>
                 </label>
+                {loginGuard.secondsLeft > 0 && (
+                  <div className="login-warning" role="alert">
+                    <strong>⚠ Too many wrong attempts</strong>
+                    <span>Please wait {loginGuard.secondsLeft} second{loginGuard.secondsLeft === 1 ? "" : "s"} before trying again.</span>
+                    <i style={{ "--cooldown": `${COOLDOWN_SECONDS}s` }} key={loginGuard.failures} aria-hidden="true" />
+                  </div>
+                )}
+                {loginGuard.showForgot && loginGuard.secondsLeft === 0 && (
+                  <div className="login-warning login-hint" role="status">
+                    <strong>Still cannot sign in?</strong>
+                    <button type="button" className="link-button" onClick={() => setPage("forgot")}>
+                      Forgot password?
+                    </button>
+                  </div>
+                )}
                 <button
                   className="button button-primary full-width"
                   type="submit"
+                  disabled={loginGuard.secondsLeft > 0}
                 >
-                  Sign in <span>→</span>
+                  {loginGuard.secondsLeft > 0 ? `Try again in ${loginGuard.secondsLeft}s` : <>Sign in <span>→</span></>}
                 </button>
               </form>
               <AuthLinks
+                showForgot={loginGuard.showForgot}
                 onForgot={() => setPage("forgot")}
                 onSignup={() => setPage("signup")}
               />
@@ -1056,16 +1083,18 @@ function AuthScreen({
             <>
               <AuthHeading
                 title="Reset password"
-                detail="Enter your registered email to receive a reset request."
+                detail="Enter your email address."
               />
               <form
-                onSubmit={(event) => {
+                onSubmit={async (event) => {
                   event.preventDefault();
-                  showMessage(
-                    "Reset request sent",
-                    "A password reset request has been simulated successfully.",
-                  );
-                  setForgotEmail("");
+                  try {
+                    const result = await api.forgotPassword(forgotEmail);
+                    showMessage("Coming in the next version", result.message);
+                    setForgotEmail("");
+                  } catch (error) {
+                    showMessage("Check the email address", error.message || "Please try again.");
+                  }
                 }}
               >
                 <Field
@@ -1104,11 +1133,15 @@ function AuthHeading({ title, detail }) {
     </div>
   );
 }
-function AuthLinks({ onForgot, onSignup }) {
+function AuthLinks({ showForgot, onForgot, onSignup }) {
   return (
     <div className="auth-links">
-      <button onClick={onForgot}>Forgot password?</button>
-      <span>·</span>
+      {showForgot && (
+        <>
+          <button onClick={onForgot}>Forgot password?</button>
+          <span>·</span>
+        </>
+      )}
       <button onClick={onSignup}>Create account</button>
     </div>
   );

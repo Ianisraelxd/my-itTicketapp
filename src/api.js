@@ -42,7 +42,10 @@ async function request(path, options = {}) {
     onUnauthorized?.();
   }
   if (!response.ok) {
-    throw new Error(data.error || `Request failed (${response.status})`);
+    const error = new Error(data.error || `Request failed (${response.status})`);
+    error.status = response.status;
+    error.data = data; // extra fields such as cooldownSeconds / retryAfter
+    throw error;
   }
   return data;
 }
@@ -109,6 +112,9 @@ export const api = {
   },
 
   getLocations: () => request("/locations"),
+
+  forgotPassword: (email) =>
+    request("/forgot-password", { method: "POST", body: JSON.stringify({ email }) }),
 
   getAgentWorkload: (userId) => request(`/agents/workload?userId=${encodeURIComponent(userId)}`),
 

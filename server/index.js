@@ -44,7 +44,7 @@ app.use("/api", (_req, res, next) => {
 });
 
 const authLimit = rateLimit({ max: Number(process.env.RATE_LIMIT_AUTH) || 100 });
-app.use(["/api/login", "/api/login/mfa", "/api/signup"], authLimit);
+app.use(["/api/login", "/api/login/mfa", "/api/signup", "/api/forgot-password"], authLimit);
 
 // Everything under /api needs a signed-in user except login, signup and the health check.
 app.use("/api", authenticate);
@@ -177,7 +177,11 @@ app.post("/api/signup", wrap(async (req, res) => {
   });
 }));
 
-const MAX_FAILED_LOGINS = 5;
+// Wrong passwords in a row: the 5th starts a short cooldown (the sign-in page warns for 10 seconds
+// and then offers "Forgot password?"), and the 10th locks the account for 15 minutes.
+const COOLDOWN_AFTER = 5;
+const COOLDOWN_SECONDS = 10;
+const MAX_FAILED_LOGINS = 10;
 const LOCK_MINUTES = 15;
 
 // Everything a client needs after signing in.
@@ -201,9 +205,16 @@ async function sessionFor(account) {
   };
 }
 
-// Counts a wrong password / code and locks the account after too many.
+// Counts a wrong password / code. Returns "lock" (15 minutes), "cooldown" (10 seconds) or false.
 async function recordFailure(account) {
   const failed = Number(account.failed_logins) + 1;
+  if (failed === COOLDOWN_AFTER) {
+    await query(
+      "UPDATE users SET failed_logins = ?, locked_until = DATE_ADD(NOW(), INTERVAL ? SECOND) WHERE user_pk = ?",
+      [failed, COOLDOWN_SECONDS, account.user_pk],
+    );
+    return "cooldown";
+  }
   if (failed >= MAX_FAILED_LOGINS) {
     await query(
       "UPDATE users SET failed_logins = 0, locked_until = DATE_ADD(NOW(), INTERVAL ? MINUTE) WHERE user_pk = ?",
@@ -213,11 +224,22 @@ async function recordFailure(account) {
       "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
       [account.name, account.role_name, `Account locked for ${LOCK_MINUTES} minutes after ${MAX_FAILED_LOGINS} failed sign-ins`],
     );
-    return true;
+    return "lock";
   }
   await query("UPDATE users SET failed_logins = ? WHERE user_pk = ?", [failed, account.user_pk]);
   return false;
 }
+
+const lockSeconds = (account) => Math.max(1, Math.ceil((new Date(account.locked_until) - new Date()) / 1000));
+
+// A lock this short is the cooldown, not the 15-minute lock.
+const isCooldown = (account) => lockSeconds(account) <= COOLDOWN_SECONDS + 5;
+
+const cooldownReply = (res, account) =>
+  res.status(429).json({
+    error: `Too many attempts. Please wait ${lockSeconds(account)} seconds before trying again.`,
+    retryAfter: lockSeconds(account),
+  });
 
 const lockMessage = (account) => {
   const minutes = Math.max(1, Math.ceil((new Date(account.locked_until) - new Date()) / 60000));
@@ -225,6 +247,20 @@ const lockMessage = (account) => {
 };
 
 const isLocked = (account) => Boolean(account.locked_until && new Date(account.locked_until) > new Date());
+
+// "Forgot password" is announced for the next version: the request is accepted and nothing is changed.
+// It never says whether the email belongs to an account.
+app.post("/api/forgot-password", wrap(async (req, res) => {
+  const email = asText(req.body?.email, 500);
+  if (!email || email.length > 160 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: "Please enter a valid email address." });
+  }
+  res.json({
+    ok: true,
+    available: false,
+    message: "Password reset by email is a feature for the next version. Your request was received, but nothing has been changed. For now, ask an admin to review a password change request, or contact IT Support Services.",
+  });
+}));
 
 const ACCOUNT_COLUMNS =
   "user_pk, id_number, password, name, role, role_name, failed_logins, locked_until, mfa_enabled, mfa_secret";
@@ -240,13 +276,17 @@ app.post("/api/login", wrap(async (req, res) => {
   );
   const account = rows[0];
   if (account && isLocked(account)) {
-    return res.status(423).json({ error: lockMessage(account) });
+    return isCooldown(account) ? cooldownReply(res, account) : res.status(423).json({ error: lockMessage(account) });
   }
   if (!account || !(await verifyPassword(password, account.password))) {
-    if (account && (await recordFailure(account))) {
+    const outcome = account ? await recordFailure(account) : false;
+    if (outcome === "lock") {
       return res.status(423).json({ error: `Too many failed attempts. The account is locked for ${LOCK_MINUTES} minutes.` });
     }
-    return res.status(401).json({ error: "Incorrect ID, password, or selected role." });
+    return res.status(401).json({
+      error: "Incorrect ID, password, or selected role.",
+      ...(outcome === "cooldown" ? { cooldownSeconds: COOLDOWN_SECONDS } : {}),
+    });
   }
 
   // Upgrade an old plaintext password to a hash the first time it is used.
@@ -268,13 +308,19 @@ app.post("/api/login/mfa", wrap(async (req, res) => {
   const rows = await query(`SELECT ${ACCOUNT_COLUMNS} FROM users WHERE user_pk = ? LIMIT 1`, [payload.sub]);
   const account = rows[0];
   if (!account || !account.mfa_enabled) return res.status(401).json({ error: "Start the sign-in again." });
-  if (isLocked(account)) return res.status(423).json({ error: lockMessage(account) });
+  if (isLocked(account)) {
+    return isCooldown(account) ? cooldownReply(res, account) : res.status(423).json({ error: lockMessage(account) });
+  }
 
   if (!verifyTotp(account.mfa_secret, code)) {
-    if (await recordFailure(account)) {
+    const outcome = await recordFailure(account);
+    if (outcome === "lock") {
       return res.status(423).json({ error: `Too many failed attempts. The account is locked for ${LOCK_MINUTES} minutes.` });
     }
-    return res.status(401).json({ error: "That code is not correct. Check the app and try again." });
+    return res.status(401).json({
+      error: "That code is not correct. Check the app and try again.",
+      ...(outcome === "cooldown" ? { cooldownSeconds: COOLDOWN_SECONDS } : {}),
+    });
   }
   res.json(await sessionFor(account));
 }));

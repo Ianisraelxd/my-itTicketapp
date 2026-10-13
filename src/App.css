@@ -4287,3 +4287,32 @@ html[data-theme="dark"] .button-dark {
 @media (max-width: 640px) {
     .location-grid { grid-template-columns: minmax(0, 1fr) }
 }
+
+/* --- Sign-in safety: cooldown warning and the revealed "Forgot password?" --- */
+.login-warning {
+    position: relative;
+    display: grid;
+    gap: 4px;
+    margin: 4px 0 14px;
+    padding: 12px 14px;
+    overflow: hidden;
+    border: 1px solid var(--warn-line);
+    border-radius: 12px;
+    background: var(--warn-bg);
+    color: var(--warn-ink);
+    font-size: 13px;
+    animation: rise .3s var(--ease) both
+}
+.login-warning i {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 3px;
+    width: 100%;
+    background: currentColor;
+    transform-origin: left;
+    animation: login-countdown var(--cooldown, 10s) linear forwards
+}
+@keyframes login-countdown { from { transform: scaleX(1) } to { transform: scaleX(0) } }
+.login-hint { grid-auto-flow: column; align-items: center; justify-content: space-between; background: var(--info-bg); color: var(--ink); border-color: var(--line) }
+.button:disabled { opacity: .6; cursor: not-allowed }
