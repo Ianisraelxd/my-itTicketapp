@@ -1,0 +1,33 @@
+# Render "Blueprint": lets you deploy with one click (New > Blueprint). The values marked
+# sync: false are asked for on the Render page; see docs/DEPLOYMENT.md for what to type.
+services:
+  - type: web
+    name: campus-helpdesk
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: node server/index.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: TRUST_PROXY
+        value: "1"
+      - key: FORCE_HTTPS
+        value: "true"
+      - key: DB_SSL
+        value: "true"
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        value: "4000"
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_NAME
+        value: helpdesk
+      - key: JWT_SECRET
+        generateValue: true
+      - key: APP_URL
+        sync: false
