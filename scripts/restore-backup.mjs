@@ -8,6 +8,7 @@ import zlib from "node:zlib";
 import mysql from "mysql2/promise";
 
 import "../server/env.js";
+import { dbSsl } from "../server/db.js";
 
 const file = process.argv[2];
 if (!file || !fs.existsSync(file)) {
@@ -30,6 +31,7 @@ const connection = await mysql.createConnection({
   password: process.env.DB_PASSWORD || "",
   multipleStatements: true,
   charset: "utf8mb4",
+  ssl: dbSsl,
 });
 await connection.query(`CREATE DATABASE IF NOT EXISTS \`${name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
 await connection.query(`USE \`${name}\``);

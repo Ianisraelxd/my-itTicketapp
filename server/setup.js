@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 
 import mysql from "mysql2/promise";
 
+import { dbSsl } from "./db.js";
+
 const DB_NAME = process.env.DB_NAME || "helpdesk";
 const here = (file) => fileURLToPath(new URL(file, import.meta.url));
 
@@ -19,6 +21,7 @@ function connect(database) {
     database,
     multipleStatements: true,
     charset: "utf8mb4",
+    ssl: dbSsl,
   });
 }
 

@@ -3,7 +3,11 @@ import mysql from "mysql2/promise";
 
 // A shared connection pool. mysql2's promise API lets us use async/await
 // and its placeholder syntax (?) guards against SQL injection.
+// Cloud databases (TiDB Cloud, Aiven, PlanetScale-style hosts) only accept encrypted connections: DB_SSL=true.
+export const dbSsl = process.env.DB_SSL === "true" ? { minVersion: "TLSv1.2", rejectUnauthorized: true } : undefined;
+
 export const pool = mysql.createPool({
+  ssl: dbSsl,
   host: process.env.DB_HOST || "localhost",
   port: Number(process.env.DB_PORT) || 3306,
   user: process.env.DB_USER || "root",
