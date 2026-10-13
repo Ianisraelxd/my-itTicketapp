@@ -1,3 +1,4 @@
+import Icon from "./icons";
 import { useState } from "react";
 import { Area, AreaChart, ResponsiveContainer } from "recharts";
 
@@ -125,7 +126,7 @@ function KpiCard({ card, previousLabel, trend }) {
           <span className="kpi-delta">Same as {previousLabel}</span>
         ) : (
           <span className={`kpi-delta ${delta.better === null ? "" : delta.better ? "better" : "worse"}`}>
-            {delta.change > 0 ? "▲" : "▼"} {formatKpiDelta(Math.abs(delta.change), metric.unit)} vs {previousLabel}
+            <Icon name={delta.change > 0 ? "arrowUp" : "arrowDown"} size={12} /> {formatKpiDelta(Math.abs(delta.change), metric.unit)} vs {previousLabel}
           </span>
         )}
       </div>

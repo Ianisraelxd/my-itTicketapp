@@ -6,7 +6,7 @@ import { SETTINGS_STORAGE_KEY, loadSettings } from "./settings";
 // the supplied clips differ a lot in loudness (the message sounds peak at
 // roughly a sixth of full scale), so every clip is scaled to the same peak.
 const FILES = {
-  login: "/sounds/login.mp3",
+  login: "/sounds/login.wav",
   signup: "/sounds/sign-up.mp3",
   sent: "/sounds/message-sent.mp3",
   received: "/sounds/message-received.mp3",

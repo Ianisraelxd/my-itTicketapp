@@ -518,7 +518,21 @@ app.get("/api/locations", wrap(async (_req, res) => {
 // any priority sent by the client is ignored.
 const TICKET_CATEGORIES = ["Hardware", "Software", "Network / Internet", "Account / Login", "Printer", "Others"];
 
-app.post("/api/tickets", calculatePriority, wrap(async (req, res) => {
+// Per signed-in person (not per address, since a whole campus can share one): a burst of requests is a double click
+// or a runaway script, not a real person.
+const perUser = (req) => req.user?.userId ?? req.ip;
+const ticketLimit = rateLimit({ max: Number(process.env.RATE_LIMIT_TICKETS) || 10, key: perUser, message: "You are sending requests too quickly. Please wait a moment." });
+const messageLimit = rateLimit({ max: Number(process.env.RATE_LIMIT_MESSAGES) || 60, key: perUser, message: "You are sending messages too quickly. Please wait a moment." });
+
+const ticketSummary = async (code) => {
+  const [row] = await query(
+    "SELECT code AS id, subject, category, priority, priority_tier AS priorityTier, location, status FROM tickets WHERE code = ? LIMIT 1",
+    [code],
+  );
+  return row ? { ...row, escalated: false, duplicate: true } : null;
+};
+
+app.post("/api/tickets", ticketLimit, calculatePriority, wrap(async (req, res) => {
   if (!["student", "staff"].includes(req.user.role)) {
     return res.status(403).json({ error: "Only students and university staff can submit requests." });
   }
@@ -545,22 +559,40 @@ app.post("/api/tickets", calculatePriority, wrap(async (req, res) => {
   const room = rooms[0];
   if (!room) return res.status(400).json({ error: "Please choose a campus zone, building and room." });
   const { tier, label: priority } = req.priority;
+  // The page sends one random token per filled-in form. If this exact request already went through (a double
+  // click, or a retry after a slow connection lost the answer) the original ticket is returned, not a copy.
+  const rawToken = typeof req.body?.clientToken === "string" ? req.body.clientToken : "";
+  const clientToken = /^[A-Za-z0-9_-]{8,40}$/.test(rawToken) ? `${req.user.userId}-${rawToken}` : null;
+  if (clientToken) {
+    const [seen] = await query("SELECT code FROM tickets WHERE client_token = ? LIMIT 1", [clientToken]);
+    if (seen) return res.status(200).json(await ticketSummary(seen.code));
+  }
   // Readable snapshot of the room, kept for reports and the location heat map.
   const locationText = `${room.room_name}, ${room.building_name}`;
 
+  let duplicateOf = null;
   const { code } = await createWithCode({
     table: "tickets",
     prefix: "#HD",
     archiveTable: "tickets_archive",
-    work: (conn, newCode) =>
-      conn.execute(
-        "INSERT INTO tickets (code, subject, category, priority, status, location, location_id, impact_level, urgency_level, priority_tier, description, created_by) VALUES (?, ?, ?, ?, 'Open', ?, ?, ?, ?, ?, ?, ?)",
+    work: async (conn, newCode) => {
+      if (clientToken) {
+        const [again] = await conn.execute("SELECT code FROM tickets WHERE client_token = ? LIMIT 1", [clientToken]);
+        if (again.length > 0) {
+          duplicateOf = again[0].code;
+          return;
+        }
+      }
+      await conn.execute(
+        "INSERT INTO tickets (code, subject, category, priority, status, location, location_id, impact_level, urgency_level, priority_tier, description, created_by, client_token) VALUES (?, ?, ?, ?, 'Open', ?, ?, ?, ?, ?, ?, ?, ?)",
         [
           newCode, subject, category, priority, locationText, room.location_id,
-          req.body.impactLevel, req.body.urgencyLevel, tier, description || null, createdBy ?? null,
+          req.body.impactLevel, req.body.urgencyLevel, tier, description || null, createdBy ?? null, clientToken,
         ],
-      ),
+      );
+    },
   });
+  if (duplicateOf) return res.status(200).json(await ticketSummary(duplicateOf));
   const submitters = await query("SELECT name FROM users WHERE user_pk = ?", [createdBy ?? 0]);
   await notify(await adminIds(), {
     type: "new_ticket",
@@ -805,7 +837,7 @@ app.get("/api/tickets/:id/messages", wrap(async (req, res) => {
   res.json(rows.map(shapeMessage));
 }));
 
-app.post("/api/tickets/:id/messages", wrap(async (req, res) => {
+app.post("/api/tickets/:id/messages", messageLimit, wrap(async (req, res) => {
   const access = await ticketAccess(req.params.id, req.body?.userId);
   if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
   const { ticket, user, isOwner } = access;

@@ -32,11 +32,63 @@ function authHeaders(extra = {}) {
   return { ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}), ...extra };
 }
 
-async function request(path, options = {}) {
-  const response = await fetch(`/api${path}`, {
-    ...options,
-    headers: authHeaders({ "Content-Type": "application/json", ...(options.headers || {}) }),
-  });
+// --- Busy tracking ----------------------------------------------------------
+// Every request that changes something counts as "working" at once; a read counts only if it is slow
+// (over 0.7 s, e.g. on a weak connection). <BusyIndicator /> shows the progress bar and the
+// "Saving..." note from these numbers.
+let busy = { pending: 0, writing: 0 };
+const busyListeners = new Set();
+const changeBusy = (pending, writing) => {
+  busy = { pending: busy.pending + pending, writing: busy.writing + writing };
+  busyListeners.forEach((listener) => listener());
+};
+export const subscribeBusy = (listener) => {
+  busyListeners.add(listener);
+  return () => busyListeners.delete(listener);
+};
+export const getBusy = () => busy;
+
+async function track(isWrite, work) {
+  let counted = isWrite;
+  let timer = null;
+  if (isWrite) changeBusy(1, 1);
+  else {
+    timer = setTimeout(() => {
+      counted = true;
+      changeBusy(1, 0);
+    }, 700);
+  }
+  try {
+    return await work();
+  } finally {
+    clearTimeout(timer);
+    if (counted) changeBusy(-1, isWrite ? -1 : 0);
+  }
+}
+
+// The same change sent twice while the first is still on its way (a double click, a nervous tap on a slow
+// connection) is sent once: both callers get the same answer.
+const inflight = new Map();
+const REQUEST_TIMEOUT_MS = 30000;
+
+async function perform(path, options) {
+  let response;
+  try {
+    response = await fetch(`/api${path}`, {
+      ...options,
+      headers: authHeaders({ "Content-Type": "application/json", ...(options.headers || {}) }),
+      signal: AbortSignal.timeout(options.timeout ?? REQUEST_TIMEOUT_MS),
+    });
+  } catch (cause) {
+    const timedOut = cause?.name === "TimeoutError" || cause?.name === "AbortError";
+    const error = new Error(
+      timedOut
+        ? "The connection is too slow and the request timed out. Check your internet and try again."
+        : "Cannot reach the server. Check your internet connection and try again.",
+    );
+    error.status = 0;
+    throw error;
+  }
   const data = await response.json().catch(() => ({}));
   if (response.status === 401 && authToken && !path.startsWith("/login")) {
     onUnauthorized?.();
@@ -50,9 +102,25 @@ async function request(path, options = {}) {
   return data;
 }
 
+function request(path, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  const isWrite = method !== "GET";
+  if (!isWrite) return track(false, () => perform(path, options));
+
+  const key = `${method} ${path} ${options.body ?? ""}`;
+  if (inflight.has(key)) return inflight.get(key);
+  const promise = track(true, () => perform(path, options));
+  inflight.set(key, promise);
+  promise.then(
+    () => inflight.delete(key),
+    () => inflight.delete(key),
+  );
+  return promise;
+}
+
 // Downloads a protected file (the browser cannot attach the token to a plain link).
 async function download(path, fallbackName) {
-  const response = await fetch(`/api${path}`, { headers: authHeaders() });
+  const response = await track(true, () => fetch(`/api${path}`, { headers: authHeaders() }));
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.error || `Download failed (${response.status})`);
@@ -120,7 +188,7 @@ export const api = {
   getTicketHistory: (ticketId, userId) =>
     request(`/tickets/${encodeURIComponent(ticketId)}/history?userId=${encodeURIComponent(userId)}`),
   uploadAttachment: (ticketId, payload) =>
-    request(`/tickets/${encodeURIComponent(ticketId)}/attachments`, { method: "POST", body: JSON.stringify(payload) }),
+    request(`/tickets/${encodeURIComponent(ticketId)}/attachments`, { method: "POST", body: JSON.stringify(payload), timeout: 90000 }),
   getAttachmentBlob: async (id, userId) => {
     const response = await fetch(`/api/attachments/${id}?userId=${encodeURIComponent(userId)}`, { headers: authHeaders() });
     if (!response.ok) throw new Error(`Photo failed (${response.status})`);

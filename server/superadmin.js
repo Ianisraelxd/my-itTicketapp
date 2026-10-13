@@ -2,6 +2,7 @@
 // Everything here is Super Admin only (verifySuperAdmin) and the audit trail
 // goes to the activity log.
 import fs from "node:fs";
+import { ticketsToCsv } from "./csvExport.js";
 import path from "node:path";
 
 import { verifySuperAdmin } from "./auth.js";
@@ -20,22 +21,6 @@ function chunks(list, size = CHUNK) {
   return out;
 }
 const marks = (list) => list.map(() => "?").join(", ");
-
-// --- CSV for the downloadable backup (tickets) ---------------------------------
-const FORMULA_START = /^[=+\-@\t\r]/;
-function csvCell(value) {
-  if (value === null || value === undefined) return "";
-  let text = value instanceof Date ? value.toISOString() : String(value);
-  if (typeof value === "string" && FORMULA_START.test(text)) text = `'${text}`;
-  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
-function toCsv(rows) {
-  if (rows.length === 0) return "";
-  const columns = Object.keys(rows[0]);
-  const lines = [columns.join(",")];
-  for (const row of rows) lines.push(columns.map((column) => csvCell(row[column])).join(","));
-  return lines.join("\r\n");
-}
 
 // What can be archived: finished tickets whose last activity is before the cut-off.
 const ELIGIBLE = `status IN (${marks(FINISHED_STATUSES)}) AND COALESCE(resolved_at, created_at) < ?`;
@@ -154,7 +139,12 @@ export function registerSuperAdminRoutes(app, { wrap, notify }) {
           2,
         ),
       );
-      fs.writeFileSync(path.join(ARCHIVE_DIR, files.csv), `﻿${toCsv(tickets)}`);
+      // A tidy, readable spreadsheet (names instead of ID numbers, dates formatted); the JSON keeps every raw column.
+      const [peopleRows] = await conn.execute("SELECT user_pk, name, role_name FROM users");
+      const people = new Map(peopleRows.map((row) => [row.user_pk, { name: row.name, roleName: row.role_name }]));
+      const messageCounts = new Map();
+      for (const message of messages) messageCounts.set(message.ticket_pk, (messageCounts.get(message.ticket_pk) ?? 0) + 1);
+      fs.writeFileSync(path.join(ARCHIVE_DIR, files.csv), ticketsToCsv(tickets, { people, messageCounts }));
 
       // 3. Copy into the archive tables, then remove from the live ones.
       let copiedTickets = 0;

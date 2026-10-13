@@ -70,3 +70,34 @@ test("the rate limiter answers 429 after the limit and resets with the window", 
   await new Promise((resolve) => setTimeout(resolve, 70));
   assert.equal(run(), 200);
 });
+
+test("the archive spreadsheet is tidy and safe", async () => {
+  const { csvCell, formatDateTime, ticketsToCsv } = await import("./csvExport.js");
+  assert.equal(csvCell('He said "hi"'), '"He said ""hi"""');
+  assert.equal(csvCell("=HYPERLINK(\"http://evil\")"), `"'=HYPERLINK(""http://evil"")"`);
+  assert.equal(csvCell("-5"), '"-5"');
+  assert.equal(csvCell("line one\nline two"), '"line one line two"');
+  assert.equal(csvCell(null), '""');
+  assert.equal(formatDateTime(new Date(2026, 9, 13, 14, 5)), "2026-10-13 14:05");
+  assert.equal(formatDateTime(null), "");
+
+  const csv = ticketsToCsv(
+    [{ ticket_pk: 7, code: "#HD007", subject: "Wi-Fi, again", category: "Network / Internet", priority_tier: "P2", priority: "High", status: "Resolved", created_by: 1, assigned_to: 2, created_at: new Date(2026, 9, 13, 8, 0), resolved_at: new Date(2026, 9, 13, 9, 30), reopen_count: 0, csat_rating: 5, description: "+1 laptop" }],
+    { people: new Map([[1, { name: "Ana", roleName: "Student" }], [2, { name: "Ben", roleName: "Agent" }]]), messageCounts: new Map([[7, 4]]) },
+  );
+  assert.ok(csv.startsWith("﻿\"Ticket\",\"Subject\""), "byte-order mark then readable headers");
+  assert.ok(csv.includes("\r\n"));
+  const row = csv.split("\r\n")[1];
+  assert.ok(row.includes('"#HD007"') && row.includes('"Wi-Fi, again"') && row.includes('"Ana"') && row.includes('"Ben"'), row);
+  assert.ok(row.includes('"2026-10-13 08:00"') && row.includes('"90"') && row.includes('"4"') && row.includes(`"'+1 laptop"`), row);
+});
+
+test("the rate limiter can count per person instead of per address", () => {
+  const limit = rateLimit({ max: 1, key: (req) => req.user.id });
+  const hit = (id) => {
+    let status = 200;
+    limit({ ip: "same", user: { id } }, { set() {}, status(code) { status = code; return this; }, json() {} }, () => {});
+    return status;
+  };
+  assert.deepEqual([hit(1), hit(2), hit(1)], [200, 200, 429]);
+});

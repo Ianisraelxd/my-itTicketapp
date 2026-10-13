@@ -4401,3 +4401,39 @@ html[data-theme="dark"] .button-dark {
     .help-head { align-items: flex-start; flex-direction: column }
     .help-tags { flex-wrap: wrap }
 }
+
+/* --- Loading feedback: top bar, "working" note, spinners, list skeletons --- */
+.top-progress { position: fixed; z-index: 3000; top: 0; left: 0; right: 0; height: 3px; overflow: hidden; pointer-events: none; opacity: 0; transition: opacity .25s }
+.top-progress.on { opacity: 1 }
+.top-progress i { position: absolute; top: 0; bottom: 0; left: -40%; width: 40%; border-radius: 3px; background: linear-gradient(90deg, transparent, var(--green), #7fd2b5, transparent); animation: top-progress-run 1.1s ease-in-out infinite }
+@keyframes top-progress-run { to { left: 100% } }
+
+.busy-pill {
+    position: fixed; z-index: 3000; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+    display: flex; align-items: center; gap: 10px; max-width: min(92vw, 460px); padding: 11px 18px;
+    border-radius: 999px; background: var(--ink); color: var(--card); font-size: 13.5px; line-height: 1.35;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, .25); animation: rise .25s var(--ease) backwards
+}
+.busy-pill.slow { border-radius: 18px; background: var(--warn-ink); color: var(--warn-bg) }
+
+.spinner { display: inline-block; flex: none; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; vertical-align: -3px; animation: spin .7s linear infinite }
+@keyframes spin { to { transform: rotate(360deg) } }
+.button .spinner, button .spinner { margin-right: 8px }
+.button[disabled], .button:disabled { cursor: progress }
+.button-primary:disabled { opacity: .75 }
+
+.is-submitting { pointer-events: none }
+.is-submitting > * { opacity: .72; transition: opacity .2s }
+.is-submitting .form-footer { opacity: 1 }
+
+.table-skeleton { display: grid; gap: 14px; padding: 18px 8px }
+.table-skeleton-row { display: grid; gap: 18px }
+.table-skeleton-row i { display: block; height: 14px; border-radius: 7px; background: linear-gradient(90deg, var(--surface-2), var(--surface-1), var(--surface-2)) 0 0 / 200% 100%; animation: location-shimmer 1.2s linear infinite }
+
+.icon { flex: none; vertical-align: -3px }
+.nav-list button > span, .bottom-nav button > span { display: inline-grid; place-items: center }
+.chip-star { display: inline-flex; gap: 1px; margin-right: 6px; color: #d79b1f }
+.presence-dot { display: inline-block; width: 9px; height: 9px; margin-right: 6px; border-radius: 50%; background: var(--muted); vertical-align: 0 }
+.presence-dot.on { background: #2f9e6e; box-shadow: 0 0 0 3px rgba(47, 158, 110, .2) }
+.quick-replies button .icon { margin-right: 6px; vertical-align: -3px }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 1.6s } }

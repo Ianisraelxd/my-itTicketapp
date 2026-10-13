@@ -5,6 +5,8 @@ import ChatInput from "./ChatInput";
 import { prepareImage, PHOTO_TYPES } from "./imageTools";
 import PhotoMessage from "./PhotoMessage";
 import { realtimeConnected, subscribeRealtime } from "./realtime";
+import { chipIcon } from "./chipIcon";
+import Icon from "./icons";
 import { playSound } from "./sounds";
 import TicketHistory from "./TicketHistory";
 
@@ -20,6 +22,22 @@ function formatTime(value) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+// The icon in front of an assistant option (the server sends plain text; rating options show their stars).
+function ChipIcon({ id }) {
+  const stars = /^rate:([1-5])$/.exec(id);
+  if (stars) {
+    return (
+      <span className="chip-star" aria-hidden="true">
+        {Array.from({ length: Number(stars[1]) }, (_, index) => (
+          <Icon name="star" size={12} key={index} />
+        ))}
+      </span>
+    );
+  }
+  const name = chipIcon(id);
+  return name ? <Icon name={name} size={15} /> : null;
 }
 
 /**
@@ -309,7 +327,7 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
           if (message.kind === "bot_note") {
             return (
               <div className="chat-botnote" key={message.id}>
-                <b>🤖 Assistant note · agents and admins only</b>
+                <b><Icon name="bot" size={14} /> Assistant note · agents and admins only</b>
                 {message.text.replace(/^Assistant note:\s*/, "")}
                 <time>{formatTime(message.createdAt)}</time>
               </div>
@@ -320,7 +338,7 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
             return (
               <div className={`chat-msg theirs bot ${isOwner ? "" : "dim"}`} key={message.id}>
                 <span className="chat-meta">
-                  <b>🤖 HelpDesk Assistant</b> · <span className="bot-tag">Bot</span>
+                  <b><Icon name="bot" size={14} /> HelpDesk Assistant</b> · <span className="bot-tag">Bot</span>
                 </span>
                 <span className="chat-bubble">
                   {message.text}
@@ -330,6 +348,7 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
                   <span className="quick-replies" role="group" aria-label="Choose a reply">
                     {chipsFor.map((option) => (
                       <button type="button" key={option.id} onClick={() => chooseOption(option)}>
+                        <ChipIcon id={option.id} />
                         {option.label}
                       </button>
                     ))}
@@ -380,7 +399,7 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
         {isOwner && hasAssistant && !botBusy && !(chipsFor && chipsFor.length) && (
           <div className="quick-replies solo">
             <button type="button" onClick={() => chooseOption({ id: "menu", label: "Show me the menu" })}>
-              🤖 Ask the assistant
+              <Icon name="bot" size={15} /> Ask the assistant
             </button>
           </div>
         )}
@@ -394,7 +413,7 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
       ) : (
         <form className="chat-compose" onSubmit={send}>
           <label className="attach-button" title="Add a photo" aria-label="Add a photo">
-            📎
+            <Icon name="clip" size={19} />
             <input type="file" accept={PHOTO_TYPES.join(",")} onChange={attachPhoto} disabled={sending} />
           </label>
           <ChatInput
@@ -404,7 +423,7 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
             placeholder="Write a message…"
           />
           <button type="submit" disabled={!draft.trim() || sending} aria-label="Send">
-            ➤
+            <Icon name="send" size={18} />
           </button>
         </form>
       )}
@@ -544,7 +563,7 @@ function ProgressTrack({ ticket }) {
             key={label}
             className={index < stage || (index === stage && stage === 2) ? "done" : index === stage ? "current" : ""}
           >
-            <span className="progress-dot">{index < stage || (index === stage && stage === 2) ? "✓" : index + 1}</span>
+            <span className="progress-dot">{index < stage || (index === stage && stage === 2) ? <Icon name="check" size={13} /> : index + 1}</span>
             <b>{label}</b>
             <small>{index === stage ? details[index] : ""}</small>
           </li>
