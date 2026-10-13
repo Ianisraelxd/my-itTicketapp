@@ -17,6 +17,11 @@ import { SettingsModal } from "./SettingsModal";
 import { APP_VERSION, motionAllowed } from "./settings";
 import { playSound } from "./sounds";
 import { IntakeQuestions, LocationSelector } from "./SmartIntake";
+import AlertSettings from "./AlertSettings";
+import HelpArticles from "./HelpArticles";
+import { prepareImage } from "./imageTools";
+import PhotoPicker from "./PhotoPicker";
+import { realtimeConnected, startRealtime, stopRealtime, subscribeRealtime } from "./realtime";
 import useLoginGuard, { COOLDOWN_SECONDS } from "./useLoginGuard";
 import { TicketDetailsModal } from "./TicketChat";
 
@@ -34,11 +39,13 @@ const navFor = {
     ["userDashboard", "◈", "Dashboard"],
     ["requestPage", "+", "Submit Request"],
     ["myRequestsPage", "▤", "My Requests"],
+    ["helpPage", "📚", "Help Articles"],
     ["notificationsPage", "🔔", "Notifications"],
   ],
   agent: [
     ["agentDashboard", "◈", "Dashboard"],
     ["agentRequestsPage", "▤", "Assigned Requests"],
+    ["helpPage", "📚", "Help Articles"],
     ["notificationsPage", "🔔", "Notifications"],
   ],
   admin: [
@@ -46,6 +53,7 @@ const navFor = {
     ["manageRequestsPage", "▤", "Manage Requests"],
     ["passwordRequestsPage", "🔑", "Password Requests"],
     ["usersPage", "♙", "Users"],
+    ["helpPage", "📚", "Help Articles"],
     ["notificationsPage", "🔔", "Notifications"],
   ],
   superadmin: [
@@ -165,6 +173,7 @@ function App() {
     subject: "",
     locationId: "",
     description: "",
+    photos: [],
     resetKey: 0,
   });
 
@@ -257,11 +266,27 @@ function App() {
         })
         .catch(() => {});
     load();
-    const timer = setInterval(load, 8000);
+    let ticks = 0;
+    const timer = setInterval(() => {
+      ticks += 1;
+      if (realtimeConnected() && ticks % 4 !== 0) return; // live updates are on: this is only a safety net
+      load();
+    }, 8000);
+    const unsubscribe = subscribeRealtime((event) => {
+      if (event.type === "notification") load();
+    });
     return () => {
       active = false;
       clearInterval(timer);
+      unsubscribe();
     };
+  }, [user]);
+
+  // One live connection per signed-in session.
+  useEffect(() => {
+    if (!user) return undefined;
+    startRealtime();
+    return stopRealtime;
   }, [user]);
 
   // Load tickets and activities from the database once a user is signed in.
@@ -428,6 +453,19 @@ function App() {
       );
       return;
     }
+    let photoNote = "";
+    if (request.photos.length > 0) {
+      let failed = 0;
+      for (const file of request.photos) {
+        try {
+          const photo = await prepareImage(file);
+          await api.uploadAttachment(created.id, { userId: user.userId, ...photo });
+        } catch {
+          failed += 1;
+        }
+      }
+      if (failed > 0) photoNote = ` ${failed} photo${failed === 1 ? " was" : "s were"} not added: open the request and try again.`;
+    }
     setTickets((items) => [created, ...items]);
     refreshData();
     addActivity(`Submitted ${created.id}: ${created.subject}`);
@@ -438,11 +476,12 @@ function App() {
       subject: "",
       locationId: "",
       description: "",
+      photos: [],
       resetKey: previous.resetKey + 1,
     }));
     showMessage(
       "Request submitted",
-      `${created.id} was created with priority ${created.priorityTier}${created.escalated ? " (raised because it affects exams or lectures)" : ""}.`,
+      `${created.id} was created with priority ${created.priorityTier}${created.escalated ? " (raised because it affects exams or lectures)" : ""}.${photoNote}`,
     );
   }
 
@@ -738,6 +777,7 @@ function App() {
           />
         )}
         {page === "activityLogPage" && <ActivityLog activities={activities} />}
+        {page === "helpPage" && <HelpArticles me={user} showMessage={showMessage} />}
         {page === "notificationsPage" && (
           <NotificationsPage
             data={notifications}
@@ -1349,6 +1389,9 @@ function ProfileModal({
               >
                 {isPending ? "Request pending approval" : "Change password"}
               </button>
+              <button type="button" className="button button-outline full-width" onClick={() => setView("alerts")}>
+                Email and text alerts
+              </button>
               {MFA_ROLES.includes(user.role) && (
                 <button
                   type="button"
@@ -1381,6 +1424,8 @@ function ProfileModal({
               </div>
             )}
           </>
+        ) : view === "alerts" ? (
+          <AlertSettings onBack={() => setView("details")} showMessage={showMessage} />
         ) : view === "mfa" ? (
           <MfaSettings
             enabled={Boolean(profile?.mfaEnabled)}
@@ -1664,6 +1709,7 @@ function RequestPage({ request, setRequest, submitRequest }) {
             required
           />
         </label>
+        <PhotoPicker files={request.photos} onChange={(photos) => setRequest({ ...request, photos })} />
         <div className="form-footer">
           <span>We’ll use these details to route your request.</span>
           <button className="button button-primary" type="submit">
@@ -2914,6 +2960,9 @@ const NOTIFICATION_STYLES = {
   resolved: ["✓", "good"],
   assigned: ["➜", "info"],
   reassigned: ["⟲", "warn"],
+  urgent_ticket: ["🚨", "warn"],
+  bot_urgent: ["🚨", "warn"],
+  bot_handoff: ["👤", "info"],
   auto_assigned: ["⚙", "info"],
   auto_unassigned: ["!", "warn"],
   in_progress: ["◔", "info"],

@@ -28,3 +28,4 @@ dist-ssr
 server/.env
 backups/
 server/.jwt-secret
+server/uploads/

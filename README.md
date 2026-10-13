@@ -243,6 +243,20 @@ Admins can still assign any ticket by hand. When they do not, the system takes o
 - Settings (environment variables): `AUTO_ASSIGN_MINUTES` (default 30), `AUTO_ASSIGN_CHECK_SECONDS` (60), `AUTO_ASSIGN=false` to switch it off. Assignment history is stored in `ticket_assignments`.
 - The ticket details show when the next automatic move will happen. Unit tests: `npm test`. SQL for an existing database: `server/migrations/2026-10-autoassign.sql` (run `2026-10-roles.sql` too if you still have the old Employee / Technician roles).
 
+## Photos, help articles, history, alerts and backups
+
+- **Photo attachments**: add up to 3 pictures when submitting a request, and a 📎 button in the ticket chat (8 per ticket). Pictures are shrunk in the browser, checked by their real content on the server (PNG, JPEG, GIF, WebP only; SVG and web pages are refused), stored under random names and shown only to the people on the ticket.
+- **Help articles**: a page for everyone with search and categories, written and edited by admins (drafts, views, "was this helpful" counts). The HelpDesk Assistant suggests the matching articles when someone types a question and from **More help**.
+- **Ticket history**: the ticket details have a "History: who changed what" list (submitted, assigned by whom, automatic reassignments, status changes, cancellations, reopening, photos, rating, closing).
+- **Auto-close**: a resolved ticket is closed for good after 3 days (`AUTO_CLOSE_DAYS`). It stays "Resolved" in every report, but cannot be reopened any more; the ticket shows "Reopen until ..." beforehand.
+- **Live updates**: new notifications and chat messages appear at once (Server-Sent Events). If the live connection drops, the pages fall back to checking every few seconds.
+- **Email and text alerts**: agents get an email when a ticket is assigned or reassigned, admins when a P1 (urgent) request arrives, requesters when their problem is resolved. Everyone can switch them off (and add a mobile number for urgent texts) under *Profile > Email and text alerts*. Turn emails on with the `SMTP_*` settings in `server/.env` (see `server/.env.example`); texts need a provider's URL in `SMS_WEBHOOK_URL`. `MAIL_MODE=log` prints the emails in the server window for testing.
+- **Backups**: a compressed copy of the whole database is made every day (default 2 AM, the newest 14 kept) in `backups/daily/`, with no extra programs needed. The super admin can see, download and create one in the Super Admin Panel. Restore with `node scripts/restore-backup.mjs backups/daily/<file>.sql.gz`.
+- **Satisfaction (CSAT)** is the 16th KPI: the average star rating requesters give the assistant after a resolution.
+- **Sign-in safety**: after 5 wrong attempts the sign-in page locks for 10 seconds with a countdown; another wrong attempt afterwards shows **Forgot password?**, which for now only explains that email reset is coming in the next version. Ten wrong passwords in a row lock the account for 15 minutes.
+
+Putting it on the internet (HTTPS, hosting, backups): [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). SQL for an existing database: `server/migrations/2026-10-features.sql` (applied automatically at startup).
+
 ## Security and governance
 
 **Sign-in and sessions**
@@ -389,6 +403,13 @@ Base path: `/api` (proxied to `http://localhost:3001` in development).
 | POST | `/api/signup` | Create a student or staff account. |
 | GET | `/api/tickets` | List tickets (newest first); `?mine=1&userId=` limits to one requester. Includes `location` and `createdAt`. |
 | POST | `/api/tickets` | Create a ticket. Body: `{ subject, category, locationId, impactLevel, urgencyLevel, description }`. The server calculates the P1-P4 tier (any `priority` sent is ignored) and returns `priorityTier`. |
+| GET / POST | `/api/tickets/:id/attachments`, GET `/api/attachments/:id` | List / add photos (base64 JSON, 5 MB each) and fetch one. |
+| GET | `/api/tickets/:id/history` | Who changed what on the ticket. |
+| GET / POST / PUT / DELETE | `/api/kb`, `/api/kb/:id`, POST `/api/kb/:id/feedback` | Help articles (writing is admin only). |
+| POST / GET | `/api/events/ticket`, `/api/events` | Live updates: single-use ticket, then the event stream. |
+| GET / PATCH | `/api/me/alerts` | Email and text alert settings of the signed-in user. |
+| GET / POST | `/api/superadmin/backups`, GET `/api/superadmin/backups/:name/download` | List, create and download database backups. |
+| POST | `/api/forgot-password` | Accepts an email, changes nothing (announced for the next version). |
 | GET | `/api/locations` | Rooms for the cascading Campus zone > Building > Room dropdown. |
 | PUT | `/api/tickets/:id/cancel` | Admin only. Queue-safe cancel: `UPDATE ... WHERE status IN ('Open','In Progress')`; the row is kept, a second call gets 409. |
 | GET | `/api/agents/workload` | Admin only. Active (Open / In Progress) tickets per agent. |
