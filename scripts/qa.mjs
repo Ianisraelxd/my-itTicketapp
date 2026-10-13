@@ -2,11 +2,9 @@
 // Run against a database created from server/schema.sql (never your real data):
 //   API=http://localhost:3001/api node scripts/qa.mjs
 // It creates test tickets and accounts, so use a demo or empty database.
-import { execFileSync } from "node:child_process";
 
 const API = (process.env.API || "http://localhost:3001/api").replace(/\/$/, "");
 const results = { pass: 0, fail: [] };
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function check(condition, name, detail = "") {
   if (condition) results.pass += 1;
@@ -354,7 +352,7 @@ section("Reports, KPIs and archive");
 
   const dry = await raw("POST", "/superadmin/archive", { token: sup, body: { before: "2026-10-01", dryRun: true } });
   check(dry.status === 200 || dry.status === 400, "archive dry run", String(dry.status));
-  const recent = await raw("POST", "/superadmin/archive", { token: sup, body: { before: new Date().toISOString().slice(0, 10), confirm: "ARCHIVE" } });
+  const recent = await raw("POST", "/superadmin/archive", { token: sup, body: { before: new Date().toISOString().slice(0, 10), confirm: true } });
   check(recent.status === 400, "archiving the last 30 days is refused", String(recent.status));
   check((await raw("POST", "/superadmin/archive", { token: sup, body: { before: "nonsense" } })).status === 400, "archive bad date -> 400");
   const traversal = await raw("GET", "/superadmin/archive/runs/..%2F..%2Fserver%2F.env/download?format=json", { token: sup });

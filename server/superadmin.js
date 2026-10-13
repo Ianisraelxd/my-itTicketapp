@@ -221,6 +221,9 @@ export function registerSuperAdminRoutes(app, { wrap, notify }) {
   }));
 
   app.get("/api/superadmin/archive/runs/:id/download", verifySuperAdmin, wrap(async (req, res) => {
+    if (req.query.format !== undefined && !["json", "csv"].includes(req.query.format)) {
+      return res.status(400).json({ error: "format must be json or csv." });
+    }
     const format = req.query.format === "csv" ? "csv" : "json";
     const rows = await query("SELECT json_file, csv_file FROM archive_runs WHERE run_pk = ?", [req.params.id]);
     if (!rows[0]) return res.status(404).json({ error: "Archive run not found." });
@@ -229,7 +232,10 @@ export function registerSuperAdminRoutes(app, { wrap, notify }) {
     if (!fs.existsSync(file)) return res.status(404).json({ error: "The export file is no longer on the server." });
     res.setHeader("Content-Type", format === "csv" ? "text/csv; charset=utf-8" : "application/json");
     res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
-    fs.createReadStream(file).pipe(res);
+    const stream = fs.createReadStream(file);
+    // A file that disappears while it is being sent must not take the server down.
+    stream.on("error", () => (res.headersSent ? res.destroy() : res.status(500).json({ error: "Could not read the export file." })));
+    stream.pipe(res);
   }));
 
   // ---- Privileged account management -----------------------------------------------

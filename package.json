@@ -4,6 +4,8 @@
   "version": "1.0.2",
   "type": "module",
   "scripts": {
+    "start": "node scripts/start.mjs",
+    "dev:all": "node scripts/start.mjs --dev",
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
@@ -11,9 +13,12 @@
     "server": "node server/index.js",
     "test": "node --test server/",
     "db:init": "\"C:/xampp/mysql/bin/mysql.exe\" -u root -p < server/schema.sql",
-    "screenshots": "node scripts/capture-screenshots.mjs"
+    "screenshots": "node scripts/capture-screenshots.mjs",
+    "qa": "node scripts/qa.mjs",
+    "qa:ui": "node scripts/qa-ui.mjs"
   },
   "dependencies": {
+    "compression": "^1.8.2",
     "dotenv": "^18.0.0",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",

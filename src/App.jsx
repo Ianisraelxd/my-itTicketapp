@@ -1,19 +1,15 @@
 import "./App.css";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 
 import { api, hasAuthToken, setAuthToken, setUnauthorizedHandler } from "./api";
 import MfaSettings from "./MfaSettings";
-import SuperAdminPanel from "./SuperAdminPanel";
 import ChartSkeleton from "./ChartSkeleton";
 import ChatInput from "./ChatInput";
 import { downloadCsv, reportToCsvRows } from "./csv";
 import { buildKpiCards, formatKpiValue, monthKey, monthLabel } from "./kpiFormat";
-import KpiScorecard, { KpiPicker, KpiScorecardView } from "./KpiScorecard";
-import KpiTrendCard from "./KpiTrendCard";
 import useKpiData from "./useKpiData";
 import useKpiTrend from "./useKpiTrend";
-import ReportChartContainer from "./ReportChartContainer";
 import ReportFilters from "./ReportFilters";
 import { defaultReportFilters } from "./reportDefaults";
 import useReportData from "./useReportData";
@@ -22,6 +18,15 @@ import { APP_VERSION, motionAllowed } from "./settings";
 import { playSound } from "./sounds";
 import { IntakeQuestions, LocationSelector } from "./SmartIntake";
 import { TicketDetailsModal } from "./TicketChat";
+
+// Charts and the super admin screens are only needed by a few roles, so they load on demand
+// instead of making every student download the charting library.
+const KpiScorecard = lazy(() => import("./KpiScorecard"));
+const KpiPicker = lazy(() => import("./KpiScorecard").then((m) => ({ default: m.KpiPicker })));
+const KpiScorecardView = lazy(() => import("./KpiScorecard").then((m) => ({ default: m.KpiScorecardView })));
+const KpiTrendCard = lazy(() => import("./KpiTrendCard"));
+const ReportChartContainer = lazy(() => import("./ReportChartContainer"));
+const SuperAdminPanel = lazy(() => import("./SuperAdminPanel"));
 
 const navFor = {
   user: [
@@ -625,6 +630,7 @@ function App() {
           <button className="mobile-logout" onClick={logout}>Log out</button>
         </header>
         <div className="page" key={page}>
+        <Suspense fallback={<ChartSkeleton height={220} label="Loading" />}>
         {page === "userDashboard" && (
           <UserDashboard
             setPage={setPage}
@@ -730,6 +736,7 @@ function App() {
             onOpen={openNotification}
           />
         )}
+        </Suspense>
         </div>
       </main>
       {(user.role === "admin" || user.role === "agent") && (
@@ -1822,7 +1829,7 @@ function AgentRequests({
 
   // Pick up skill changes an admin makes while this page is open.
   useEffect(() => {
-    const timer = setInterval(refreshData, 30000);
+    const timer = setInterval(() => document.hidden || refreshData(), 30000);
     return () => clearInterval(timer);
   }, [refreshData]);
 
@@ -2661,7 +2668,7 @@ function ChatWindow({ me, contact, onClose }) {
 
   useEffect(() => {
     load();
-    const timer = setInterval(load, 3000);
+    const timer = setInterval(() => document.hidden || load(), 3000);
     return () => clearInterval(timer);
   }, [load]);
 
@@ -2786,7 +2793,7 @@ function ChatDock({ me }) {
         })
         .catch(() => {});
     load();
-    const timer = setInterval(load, 5000);
+    const timer = setInterval(() => document.hidden || load(), 5000);
     return () => {
       active = false;
       clearInterval(timer);
@@ -3023,7 +3030,7 @@ function CancellationQueue({ me, showMessage, refreshData }) {
 
   useEffect(() => {
     load();
-    const timer = setInterval(load, 8000);
+    const timer = setInterval(() => document.hidden || load(), 8000);
     return () => clearInterval(timer);
   }, [load]);
 

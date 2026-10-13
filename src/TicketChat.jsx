@@ -50,17 +50,19 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
   const pending = requests.find((request) => request.status === "Pending");
   const lastDeclined = !pending && requests[0]?.status === "Rejected" ? requests[0] : null;
 
+  // New messages are checked every few seconds; who is in the chat, who is online and the
+  // cancellation requests change rarely, so they are only refreshed on "full" loads.
   const load = useCallback(
-    () =>
+    (full = true) =>
       Promise.all([
         api.getTicketMessages(ticket.id, me.userId),
-        api.getTicketCancellations(ticket.id, me.userId),
-        api.getTicketParticipants(ticket.id, me.userId),
-        isOwner ? api.getTicketAvailability(ticket.id, me.userId) : Promise.resolve(null),
+        full ? api.getTicketCancellations(ticket.id, me.userId) : Promise.resolve(null),
+        full ? api.getTicketParticipants(ticket.id, me.userId) : Promise.resolve(null),
+        full && isOwner ? api.getTicketAvailability(ticket.id, me.userId) : Promise.resolve(null),
       ])
         .then(([rows, cancellations, people, presence]) => {
-          setParticipants(people);
-          setAvailability(presence);
+          if (people) setParticipants(people);
+          if (full && isOwner) setAvailability(presence);
           const newest = rows.at(-1);
           if (
             lastSeenId.current !== null &&
@@ -74,15 +76,20 @@ export default function TicketChat({ ticket, me, onChanged, showMessage }) {
           setMessages((prev) =>
             prev.length === rows.length && prev.at(-1)?.id === rows.at(-1)?.id ? prev : rows,
           );
-          setRequests(cancellations);
+          if (cancellations) setRequests(cancellations);
         })
         .catch(() => {}),
     [ticket.id, me.userId, isOwner],
   );
 
   useEffect(() => {
-    load();
-    const timer = setInterval(load, 3000);
+    load(true);
+    let ticks = 0;
+    const timer = setInterval(() => {
+      if (document.hidden) return; // nobody is looking: save the server the work
+      ticks += 1;
+      load(ticks % 5 === 0);
+    }, 3000);
     return () => clearInterval(timer);
   }, [load]);
 

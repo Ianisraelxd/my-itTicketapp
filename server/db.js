@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./env.js";
 import mysql from "mysql2/promise";
 
 // A shared connection pool. mysql2's promise API lets us use async/await

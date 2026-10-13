@@ -273,8 +273,8 @@ const listNames = (names) =>
 // One friendly sentence about who can chat right now.
 function availabilityLine(a) {
   if (a.assignedOnline) return `${a.assignedOnline}, your agent, is online and can chat with you now.`;
-  if (a.agents.length) return `${listNames(a.agents)} (agent) ${a.agents.length === 1 ? "is" : "are"} online and can chat now.`;
-  if (a.admins.length) return `${listNames(a.admins)} (admin) ${a.admins.length === 1 ? "is" : "are"} online and can chat now.`;
+  if (a.agents.length) return `${listNames(a.agents)} ${a.agents.length === 1 ? "is" : "are"} online and can chat now.`;
+  if (a.admins.length) return `${listNames(a.admins)} ${a.admins.length === 1 ? "is" : "are"} online and can chat now.`;
   return "Our agents and admins are offline right now, so I'll help in the meantime. They'll see everything here when they're back.";
 }
 
@@ -872,8 +872,8 @@ const TL_LINES = [
   [/^Good news: (.+) is online and can chat now\.$/, "Magandang balita: online si $1 at puwede kang makausap ngayon."],
   [/^Good news: (.+), your agent, is online and can chat with you now\.$/, "Magandang balita: online si $1, ang agent mo, at puwede kang makausap ngayon."],
   [/^(.+), your agent, is online and can chat with you now\.$/, "Online si $1, ang agent mo, at puwede kang makausap ngayon."],
-  [/^(.+) \((admin|agent)\) (?:is|are) online and can chat now\.$/, "Online ang $1 ($2) at puwede kang makausap ngayon."],
-  [/^Good news: (.+) \((admin|agent)\) (?:is|are) online and can chat now\.$/, "Magandang balita: online ang $1 ($2) at puwede kang makausap ngayon."],
+  [/^(.+) (?:is|are) online and can chat now\.$/, "Online si $1 at puwede kang makausap ngayon."],
+  [/^Good news: (.+) (?:is|are) online and can chat now\.$/, "Magandang balita: online si $1 at puwede kang makausap ngayon."],
   [/^I've let them know you'd like to talk\..*$/, "Naipaalam ko na sa kanila na gusto mo silang makausap. I-type ang mensahe mo sa baba at doon sila sasagot."],
   [/^Our agents and admins are offline right now.*$/, "Offline ang mgan agent at admin ngayon, kaya ako muna ang tutulong. Makikita nila ang lahat dito pagbalik nila."],
   [/^I've notified them, so leave your message.*$/, "Naabisuhan ko na sila, kaya iwan ang mensahe mo sa baba nang may detalye. Sasagot sila rito pagbalik nila. Habang naghihintay, makakatulong pa rin ako sa mga mabilisang ayos."],

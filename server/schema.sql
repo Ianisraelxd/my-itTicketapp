@@ -85,6 +85,9 @@ CREATE TABLE tickets (
   auto_assign_count INT NOT NULL DEFAULT 0,  -- how many times the engine assigned or reassigned it
   created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   KEY idx_ticket_tier (priority_tier),
+  KEY idx_ticket_status (status, ticket_pk),
+  KEY idx_ticket_created (created_at),
+  KEY idx_ticket_assigned (assigned_to, status),
   CONSTRAINT fk_ticket_user FOREIGN KEY (created_by)
     REFERENCES users(user_pk) ON DELETE SET NULL,
   CONSTRAINT fk_ticket_location FOREIGN KEY (location_id)

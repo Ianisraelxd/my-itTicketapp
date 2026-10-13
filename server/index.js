@@ -1,10 +1,16 @@
-import "dotenv/config";
+import "./env.js";
+import compression from "compression";
 import express from "express";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { authenticate, verifyReportViewer } from "./auth.js";
 import { AUTO_ASSIGN_MINUTES, startAutoAssign } from "./autoassign.js";
 import { createBot, shapeMessage } from "./bot.js";
 import { pool, query } from "./db.js";
 import { calculatePriority } from "./priority.js";
+import { rateLimit } from "./ratelimit.js";
+import { ensureSchema } from "./setup.js";
 import { registerKpiRoutes } from "./kpi.js";
 import {
   hashPassword,
@@ -21,6 +27,9 @@ import { registerSuperAdminRoutes } from "./superadmin.js";
 
 const app = express();
 app.disable("x-powered-by");
+// Behind Render, Railway, Nginx and similar, set TRUST_PROXY=1 so the real visitor address is used.
+if (process.env.TRUST_PROXY) app.set("trust proxy", Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY);
+app.use(compression());
 app.use(express.json({ limit: "100kb" }));
 
 // Basic hardening headers; API responses are never cached.
@@ -33,6 +42,9 @@ app.use("/api", (_req, res, next) => {
   });
   next();
 });
+
+const authLimit = rateLimit({ max: Number(process.env.RATE_LIMIT_AUTH) || 100 });
+app.use(["/api/login", "/api/login/mfa", "/api/signup"], authLimit);
 
 // Everything under /api needs a signed-in user except login, signup and the health check.
 app.use("/api", authenticate);
@@ -87,7 +99,6 @@ function createWithCode({ table, prefix, archiveTable = null, work }) {
 
 // Plain-text input helpers: a non-string (array, object, number) is treated as missing.
 const asText = (value, max = 1000) => (typeof value === "string" ? value.trim().slice(0, max) : "");
-const isText = (value, max) => typeof value === "string" && value.trim().length > 0 && value.trim().length <= max;
 
 // Notifications never break the action that triggered them.
 async function notify(userIds, { type, title, body, ticketCode = null }) {
@@ -323,23 +334,34 @@ app.post("/api/mfa/disable", wrap(async (req, res) => {
 }));
 
 // --- Tickets ----------------------------------------------------------------
+// Columns every ticket list needs (ticket_pk is only used to merge and sort).
+const TICKET_LIST_SQL = `SELECT t.ticket_pk AS pk, t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.location_id AS locationId, t.impact_level AS impactLevel, t.urgency_level AS urgencyLevel, t.priority_tier AS priorityTier, t.assigned_manually AS assignedManually, t.auto_assign_count AS autoAssignCount, CASE WHEN t.assigned_manually = 0 AND t.status IN ('Open', 'In Progress') THEN DATE_ADD(COALESCE(t.assignment_started_at, t.created_at), INTERVAL ${AUTO_ASSIGN_MINUTES} MINUTE) END AS autoAssignAt, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey
+  FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to`;
+const OWN_TICKET_LIMIT = 500; // a requester's newest tickets
+const FINISHED_TICKET_LIMIT = 500; // staff lists: all active tickets plus this many finished ones
+
 app.get("/api/tickets", wrap(async (req, res) => {
   const { mine, userId } = req.query ?? {};
+  const strip = (rows) => rows.map(({ pk: _pk, ...rest }) => rest); // pk was only for sorting
 
   if (mine === "1" && userId) {
     const rows = await query(
-      `SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.location_id AS locationId, t.impact_level AS impactLevel, t.urgency_level AS urgencyLevel, t.priority_tier AS priorityTier, t.assigned_manually AS assignedManually, t.auto_assign_count AS autoAssignCount, CASE WHEN t.assigned_manually = 0 AND t.status IN ('Open', 'In Progress') THEN DATE_ADD(COALESCE(t.assignment_started_at, t.created_at), INTERVAL ${AUTO_ASSIGN_MINUTES} MINUTE) END AS autoAssignAt, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to WHERE t.created_by = ? ORDER BY t.ticket_pk DESC`,
+      `${TICKET_LIST_SQL} WHERE t.created_by = ? ORDER BY t.ticket_pk DESC LIMIT ${OWN_TICKET_LIMIT}`,
       [userId],
     );
-    return res.json(rows);
+    return res.json(strip(rows));
   }
 
-  const rows = await query(
-    `SELECT t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.location_id AS locationId, t.impact_level AS impactLevel, t.urgency_level AS urgencyLevel, t.priority_tier AS priorityTier, t.assigned_manually AS assignedManually, t.auto_assign_count AS autoAssignCount, CASE WHEN t.assigned_manually = 0 AND t.status IN ('Open', 'In Progress') THEN DATE_ADD(COALESCE(t.assignment_started_at, t.created_at), INTERVAL ${AUTO_ASSIGN_MINUTES} MINUTE) END AS autoAssignAt, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to ORDER BY t.ticket_pk DESC`,
-  );
-  res.json(rows);
+  // Everything still being worked on, plus the most recent finished tickets. Without the cap the
+  // list (and every refresh of it) grows with the whole history of the help desk.
+  const [active, finished, total] = await Promise.all([
+    query(`${TICKET_LIST_SQL} WHERE t.status IN ('Open', 'In Progress') ORDER BY t.ticket_pk DESC LIMIT 2000`),
+    query(`${TICKET_LIST_SQL} WHERE t.status NOT IN ('Open', 'In Progress') ORDER BY t.ticket_pk DESC LIMIT ${FINISHED_TICKET_LIMIT}`),
+    query("SELECT COUNT(*) AS n FROM tickets"),
+  ]);
+  res.set("X-Total-Count", String(total[0].n));
+  res.json(strip([...active, ...finished].sort((a, b) => b.pk - a.pk)));
 }));
-
 app.patch("/api/tickets/:id/status", wrap(async (req, res) => {
   const { id } = req.params;
   const { status, actorId } = req.body ?? {};
@@ -477,7 +499,7 @@ app.post("/api/tickets", calculatePriority, wrap(async (req, res) => {
       });
     }
   } catch (err) {
-    console.error("assistant greeting failed", err.message);
+    console.error("assistant greeting failed", err.stack);
   }
   res.status(201).json({
     id: code, subject, category, priority, priorityTier: tier, escalated: req.priority.escalated,
@@ -1067,7 +1089,7 @@ app.post("/api/notifications/read", wrap(async (req, res) => {
 // --- Activities -------------------------------------------------------------
 app.get("/api/activities", wrap(async (_req, res) => {
   const rows = await query(
-    "SELECT actor_name, actor_role, action, created_at FROM activities ORDER BY activity_pk DESC",
+    "SELECT actor_name, actor_role, action, created_at FROM activities ORDER BY activity_pk DESC LIMIT 1000",
   );
   // Shape into the [timestamp, name, role, action] tuple the UI expects.
   res.json(
@@ -1123,7 +1145,11 @@ app.patch("/api/users/:userId/skills", wrap(async (req, res) => {
   if (!targets[0]) {
     return res.status(404).json({ error: "Agent not found." });
   }
-  const clean = [...new Set(skills.map((s) => String(s).trim()).filter(Boolean))];
+  const clean = [...new Set(skills.filter((s) => typeof s === "string").map((s) => s.trim()).filter(Boolean))];
+  const unknown = clean.filter((skill) => !TICKET_CATEGORIES.includes(skill));
+  if (unknown.length > 0) {
+    return res.status(400).json({ error: `Unknown skill: ${unknown.join(", ")}. Choose from ${TICKET_CATEGORIES.join(", ")}.` });
+  }
   await query("UPDATE users SET skills = ? WHERE user_pk = ?", [clean.join(","), targets[0].user_pk]);
   const actorRows = await query("SELECT name, role_name FROM users WHERE user_pk = ?", [actorId]);
   await query(
@@ -1367,6 +1393,10 @@ app.post("/api/password-requests", wrap(async (req, res) => {
 app.patch("/api/password-requests/:id/status", wrap(async (req, res) => {
   const { id } = req.params;
   const { status, note, reviewedBy } = req.body ?? {};
+  // Only an admin may decide: approving swaps the account's password.
+  if (!(await requireAdmin(req.user.userId))) {
+    return res.status(403).json({ error: "Only admins can review password change requests." });
+  }
   if (!["Approved", "Rejected"].includes(status)) {
     return res.status(400).json({ error: "status must be Approved or Rejected." });
   }
@@ -1430,6 +1460,19 @@ app.patch("/api/password-requests/:id/status", wrap(async (req, res) => {
 registerKpiRoutes(app, wrap);
 registerSuperAdminRoutes(app, { wrap, notify });
 
+// --- The website itself (npm run build creates dist/) ---------------------------------------
+const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
+if (fs.existsSync(path.join(DIST, "index.html"))) {
+  // Hashed files under /assets never change, so browsers may keep them; the page itself is never cached.
+  app.use("/assets", express.static(path.join(DIST, "assets"), { maxAge: "365d", immutable: true }));
+  app.use(express.static(DIST, { index: false, maxAge: "1h" }));
+  app.use((req, res, next) => {
+    if (req.method !== "GET" || req.path.startsWith("/api")) return next();
+    res.set("Cache-Control", "no-cache");
+    res.sendFile(path.join(DIST, "index.html"));
+  });
+}
+
 // --- Unknown API routes and errors ----------------------------------------------------
 app.use("/api", (_req, res) => res.status(404).json({ error: "Not found." }));
 
@@ -1444,8 +1487,32 @@ app.use((err, _req, res, _next) => {
 
 // Expires unresolved assignments after AUTO_ASSIGN_MINUTES (30) and passes the ticket to another
 // agent with the same specialty; tickets an admin assigned by hand are left alone.
+try {
+  await ensureSchema();
+} catch (error) {
+  console.error(`\n${error.message}\n`);
+  process.exit(1);
+}
+
+process.on("unhandledRejection", (reason) => console.error("Unhandled rejection:", reason));
+
 startAutoAssign({ query, pool, notify, adminIds, postNotice: (ticketPk, text) => bot.postNotice(ticketPk, text) });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
+  const built = fs.existsSync(path.join(DIST, "index.html"));
   console.log(`HelpDesk API listening on http://localhost:${PORT}`);
+  if (built) console.log(`Website: open http://localhost:${PORT} in your browser.`);
 });
+server.on("error", (error) => {
+  if (error.code === "EADDRINUSE") console.error(`Port ${PORT} is already in use. Close the other copy, or set PORT in server/.env.`);
+  else console.error(error);
+  process.exit(1);
+});
+
+// Close the database cleanly on Ctrl+C or when the host stops the process.
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, () => {
+    server.close(() => pool.end().finally(() => process.exit(0)));
+    setTimeout(() => process.exit(0), 3000).unref();
+  });
+}
