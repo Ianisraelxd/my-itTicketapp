@@ -53,6 +53,8 @@ async function computeMonth(month) {
        SUM(CASE WHEN t.first_response_at IS NOT NULL THEN 1 ELSE 0 END) AS frtSample,
        AVG(CASE WHEN t.assigned_at IS NOT NULL THEN TIMESTAMPDIFF(MINUTE, t.created_at, t.assigned_at) END) AS tta,
        SUM(CASE WHEN t.assigned_at IS NOT NULL THEN 1 ELSE 0 END) AS ttaSample,
+       AVG(t.csat_rating) AS csat,
+       SUM(CASE WHEN t.csat_rating IS NOT NULL THEN 1 ELSE 0 END) AS csatSample,
        SUM(CASE WHEN t.resolved_at IS NOT NULL THEN 1 ELSE 0 END) AS timedResolved,
        SUM(CASE WHEN t.resolved_at IS NOT NULL
                  AND TIMESTAMPDIFF(MINUTE, t.created_at, t.resolved_at) <= ${slaCase} THEN 1 ELSE 0 END) AS withinSla,
@@ -103,6 +105,7 @@ async function computeMonth(month) {
     CAN: { value: ratio(cancelled, total), sample: total },
     BKL: { value: Number(backlog.n), sample: Number(backlog.n) },
     AGE: { value: round(backlog.ageDays), sample: Number(backlog.n) },
+    CSAT: { value: round(cohort.csat, 2), sample: Number(cohort.csatSample) },
     TPT: {
       value: Number(staff.n) > 0 ? round(Number(throughput.n) / Number(staff.n)) : null,
       sample: Number(throughput.n),

@@ -22,6 +22,8 @@ export function formatKpiValue(value, unit) {
       return `${number} d`;
     case "ratio":
       return `${number}`;
+    case "score":
+      return `${number} / 5`;
     default:
       return String(Math.round(number));
   }

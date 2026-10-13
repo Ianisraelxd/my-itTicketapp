@@ -166,6 +166,17 @@ export const KPI_CATALOG = [
     description: "Average output per agent: how many tickets each one closed this month.",
     formula: "Tickets resolved during the month / number of agents.",
   },
+  // ---- Customer feedback -----------------------------------------------------
+  {
+    key: "CSAT",
+    category: "Quality",
+    name: "Customer Satisfaction (CSAT)",
+    unit: "score",
+    direction: "higher",
+    target: 4.2,
+    description: "How requesters rate the support they received, from 1 (very poor) to 5 (excellent).",
+    formula: "Average star rating (given to the HelpDesk Assistant after a ticket is resolved) of the tickets created this month that have a rating.",
+  },
 ];
 
 // Shown until the super admin picks something for a month (and nothing earlier exists).

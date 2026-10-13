@@ -12,7 +12,7 @@
 import { query } from "./db.js";
 import { verifyToken } from "./security.js";
 
-const PUBLIC_ROUTES = new Set(["GET /health", "POST /login", "POST /login/mfa", "POST /signup", "POST /forgot-password"]);
+const PUBLIC_ROUTES = new Set(["GET /health", "POST /login", "POST /login/mfa", "POST /signup", "POST /forgot-password", "GET /events"]);
 const IDENTITY_FIELDS = ["userId", "actorId", "senderId", "createdBy", "reviewedBy"];
 const REVIEWERS = ["admin", "superadmin"];
 const STAFF = ["agent", "admin", "superadmin", "report_viewer"];

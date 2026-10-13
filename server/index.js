@@ -4,8 +4,15 @@ import express from "express";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { authenticate, verifyReportViewer } from "./auth.js";
+import { registerAttachmentRoutes } from "./attachments.js";
+import { authenticate, verifyReportViewer, verifySuperAdmin } from "./auth.js";
+import { startAutoClose, CLOSE_DAYS } from "./autoclose.js";
+import { registerBackupRoutes, startBackupSchedule } from "./backup.js";
+import { connectEvents, issueEventTicket, publish } from "./events.js";
+import { registerKbRoutes } from "./kb.js";
+import { alertUsers, mailMode } from "./mailer.js";
 import { AUTO_ASSIGN_MINUTES, startAutoAssign } from "./autoassign.js";
+import { EVENT_LABELS, logEvent } from "./audit.js";
 import { createBot, shapeMessage } from "./bot.js";
 import { pool, query } from "./db.js";
 import { calculatePriority } from "./priority.js";
@@ -29,7 +36,17 @@ const app = express();
 app.disable("x-powered-by");
 // Behind Render, Railway, Nginx and similar, set TRUST_PROXY=1 so the real visitor address is used.
 if (process.env.TRUST_PROXY) app.set("trust proxy", Number(process.env.TRUST_PROXY) || process.env.TRUST_PROXY);
-app.use(compression());
+// With FORCE_HTTPS=true (behind a proxy that sets X-Forwarded-Proto) plain http is sent to https.
+if (process.env.FORCE_HTTPS === "true") {
+  app.use((req, res, next) => {
+    res.set("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
+    if (req.secure || req.headers["x-forwarded-proto"] === "https" || req.path === "/api/health") return next();
+    res.redirect(301, `https://${req.headers.host}${req.originalUrl}`);
+  });
+}
+app.use(compression({ filter: (req, res) => !String(res.getHeader("Content-Type")).includes("text/event-stream") && compression.filter(req, res) }));
+// Photos arrive as base64 text, so that one route accepts a larger body than the rest of the API.
+app.use("/api/tickets/:id/attachments", express.json({ limit: "8mb" }));
 app.use(express.json({ limit: "100kb" }));
 
 // Basic hardening headers; API responses are never cached.
@@ -113,6 +130,15 @@ async function notify(userIds, { type, title, body, ticketCode = null }) {
       console.error("notify failed", err.message);
     }
   }
+  if (targets.length > 0) {
+    publish(targets, { type: "notification" });
+    alertUsers(targets, { type, title, body, ticketCode }).catch((err) => console.error("alert failed", err.message));
+  }
+}
+
+// Tell everyone on a ticket (requester, assigned agent, admins) that its conversation changed.
+async function publishTicket(ticket) {
+  publish([ticket.created_by, ticket.assigned_to, ...(await adminIds())], { type: "message", code: ticket.code });
 }
 
 async function adminIds() {
@@ -381,7 +407,8 @@ app.post("/api/mfa/disable", wrap(async (req, res) => {
 
 // --- Tickets ----------------------------------------------------------------
 // Columns every ticket list needs (ticket_pk is only used to merge and sort).
-const TICKET_LIST_SQL = `SELECT t.ticket_pk AS pk, t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.location_id AS locationId, t.impact_level AS impactLevel, t.urgency_level AS urgencyLevel, t.priority_tier AS priorityTier, t.assigned_manually AS assignedManually, t.auto_assign_count AS autoAssignCount, CASE WHEN t.assigned_manually = 0 AND t.status IN ('Open', 'In Progress') THEN DATE_ADD(COALESCE(t.assignment_started_at, t.created_at), INTERVAL ${AUTO_ASSIGN_MINUTES} MINUTE) END AS autoAssignAt, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey
+const TICKET_LIST_SQL = `SELECT t.ticket_pk AS pk, t.code AS id, t.subject, t.category, t.priority, t.status, t.location, t.location_id AS locationId, t.impact_level AS impactLevel, t.urgency_level AS urgencyLevel, t.priority_tier AS priorityTier, t.assigned_manually AS assignedManually, t.auto_assign_count AS autoAssignCount, CASE WHEN t.assigned_manually = 0 AND t.status IN ('Open', 'In Progress') THEN DATE_ADD(COALESCE(t.assignment_started_at, t.created_at), INTERVAL ${AUTO_ASSIGN_MINUTES} MINUTE) END AS autoAssignAt, t.closed_at AS closedAt,
+  CASE WHEN ${CLOSE_DAYS > 0 ? 1 : 0} = 1 AND t.status = 'Resolved' AND t.closed_at IS NULL AND t.resolved_at IS NOT NULL THEN DATE_ADD(t.resolved_at, INTERVAL ${Number(CLOSE_DAYS)} DAY) END AS closesAt, t.description, t.created_at AS createdAt, t.created_by, t.assigned_to AS assignedTo, t.reopen_count AS reopenCount, a.name AS assignedName, (SELECT COUNT(*) FROM cancellation_requests c WHERE c.ticket_pk = t.ticket_pk AND c.status = 'Pending') AS cancelPending, u.name AS userName, u.role_name AS userRole, u.role AS userRoleKey
   FROM tickets t LEFT JOIN users u ON u.user_pk = t.created_by LEFT JOIN users a ON a.user_pk = t.assigned_to`;
 const OWN_TICKET_LIMIT = 500; // a requester's newest tickets
 const FINISHED_TICKET_LIMIT = 500; // staff lists: all active tickets plus this many finished ones
@@ -440,6 +467,10 @@ app.patch("/api/tickets/:id/status", wrap(async (req, res) => {
     "UPDATE tickets SET status = ?, resolved_at = IF(? = 'Resolved', COALESCE(resolved_at, NOW()), NULL) WHERE ticket_pk = ?",
     [status, status, ticket.ticket_pk],
   );
+
+  if (ticket.status !== status) {
+    await logEvent({ ticketPk: ticket.ticket_pk, actor: { userId: req.user.userId, name: req.user.name, roleName: req.user.roleName }, action: "status", detail: `${ticket.status} → ${status}` });
+  }
 
   // Keep the requester in the loop.
   if (ticket.status !== status && ticket.created_by !== actorId) {
@@ -537,8 +568,19 @@ app.post("/api/tickets", calculatePriority, wrap(async (req, res) => {
     body: `${submitters[0]?.name || "A user"} filed ${code} (${category}): ${subject}`,
     ticketCode: code,
   });
+  if (tier === "P1") {
+    await notify(await adminIds(), {
+      type: "urgent_ticket",
+      title: `Urgent request ${code}`,
+      body: `${submitters[0]?.name || "A user"} filed a P1 request (${category}) in ${locationText}: ${subject}`,
+      ticketCode: code,
+    });
+  }
   try {
     const [created] = await query("SELECT ticket_pk FROM tickets WHERE code = ?", [code]);
+    if (created) {
+      await logEvent({ ticketPk: created.ticket_pk, actor: { userId: req.user.userId, name: req.user.name, roleName: req.user.roleName }, action: "created", detail: `${tier} (${priority}) · ${locationText}${req.priority.escalated ? " · raised one level for exam or lecture wording" : ""}` });
+    }
     if (created && createdBy) {
       await bot.postGreeting({
         ticketPk: created.ticket_pk, code, subject, category, requesterName: submitters[0]?.name,
@@ -578,6 +620,13 @@ app.put("/api/tickets/:id/cancel", wrap(async (req, res) => {
   if (result.affectedRows === 0) {
     return res.status(409).json({ error: `This ticket is already ${ticket.status.toLowerCase()} and cannot be cancelled.` });
   }
+
+  await logEvent({
+    ticketPk: ticket.ticket_pk,
+    actor: { userId: admin.user_pk, name: admin.name, roleName: admin.role_name },
+    action: "cancelled",
+    detail: reason,
+  });
 
   // A waiting cancellation request is settled by this decision.
   await query(
@@ -685,6 +734,12 @@ app.patch("/api/tickets/:id/assign", wrap(async (req, res) => {
     agent.user_pk,
     admin.user_pk,
   ]);
+  await logEvent({
+    ticketPk: ticket.ticket_pk,
+    actor: { userId: admin.user_pk, name: admin.name, roleName: admin.role_name },
+    action: "assigned",
+    detail: `to ${agent.name}`,
+  });
   await notify([agent.user_pk], {
     type: "assigned",
     title: "New ticket assigned to you",
@@ -723,6 +778,17 @@ app.get("/api/tickets/:id/participants", wrap(async (req, res) => {
     ],
   );
   res.json(rows);
+}));
+
+// Who did what to this ticket, oldest first.
+app.get("/api/tickets/:id/history", wrap(async (req, res) => {
+  const access = await ticketAccess(req.params.id, req.query.userId);
+  if (access.error) return res.status(access.error[0]).json({ error: access.error[1] });
+  const rows = await query(
+    "SELECT event_pk AS id, actor_name AS actorName, actor_role AS actorRole, action, detail, created_at AS createdAt FROM ticket_events WHERE ticket_pk = ? ORDER BY event_pk ASC LIMIT 500",
+    [access.ticket.ticket_pk],
+  );
+  res.json(rows.map((row) => ({ ...row, label: EVENT_LABELS[row.action] || row.action })));
 }));
 
 app.get("/api/tickets/:id/messages", wrap(async (req, res) => {
@@ -776,6 +842,7 @@ app.post("/api/tickets/:id/messages", wrap(async (req, res) => {
       console.error("assistant auto-reply failed", err.message);
     }
   }
+  await publishTicket(ticket);
   res.status(201).json({ ok: true, id: result.insertId });
 }));
 
@@ -824,6 +891,12 @@ async function fileCancellationRequest({ ticket, user, reason }) {
     "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
     [user.name, user.role_name, `Requested cancellation of ticket ${ticket.code}`],
   );
+  await logEvent({
+    ticketPk: ticket.ticket_pk,
+    actor: { userId: user.user_pk, name: user.name, roleName: user.role_name },
+    action: "cancellation_requested",
+    detail: reason,
+  });
   return { code };
 }
 
@@ -859,14 +932,17 @@ const MAX_REOPENS = 3;
 async function reopenTicketFor({ ticket, user, reason }) {
   if (!reason) return { error: [400, "Please explain what is still wrong."] };
 
-  const counts = await query("SELECT reopen_count FROM tickets WHERE ticket_pk = ?", [ticket.ticket_pk]);
+  const counts = await query("SELECT reopen_count, closed_at FROM tickets WHERE ticket_pk = ?", [ticket.ticket_pk]);
+  if (counts[0]?.closed_at) {
+    return { error: [409, "This ticket was closed for good after it was resolved. Please submit a new request instead."] };
+  }
   if (Number(counts[0]?.reopen_count) >= MAX_REOPENS) {
     return { error: [409, `This ticket was already reopened ${MAX_REOPENS} times. Please submit a new request instead.`] };
   }
 
   const nextStatus = ticket.assigned_to ? "In Progress" : "Open";
   const [result] = await pool.execute(
-    "UPDATE tickets SET status = ?, reopen_count = reopen_count + 1, resolved_at = NULL, assignment_started_at = NOW() WHERE ticket_pk = ? AND status = 'Resolved' AND reopen_count < ?",
+    "UPDATE tickets SET status = ?, reopen_count = reopen_count + 1, resolved_at = NULL, assignment_started_at = NOW() WHERE ticket_pk = ? AND status = 'Resolved' AND reopen_count < ? AND closed_at IS NULL",
     [nextStatus, ticket.ticket_pk, MAX_REOPENS],
   );
   if (result.affectedRows === 0) {
@@ -888,6 +964,12 @@ async function reopenTicketFor({ ticket, user, reason }) {
     "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
     [user.name, user.role_name, `Reopened ticket ${ticket.code}`],
   );
+  await logEvent({
+    ticketPk: ticket.ticket_pk,
+    actor: { userId: user.user_pk, name: user.name, roleName: user.role_name },
+    action: "reopened",
+    detail: reason,
+  });
   return { status: nextStatus };
 }
 
@@ -907,6 +989,7 @@ app.post("/api/tickets/:id/reopen", wrap(async (req, res) => {
 // HelpDesk Assistant: guided multiple-choice chatbot in the ticket conversation (server/bot.js).
 const bot = createBot({
   ticketAccess,
+  publishTicket,
   adminIds,
   notify,
   fileCancellationRequest: async (args) => {
@@ -977,6 +1060,12 @@ app.patch("/api/cancellation-requests/:code/status", wrap(async (req, res) => {
     [finalStatus, finalNote, admin.user_pk, request.request_pk],
   );
   const approved = finalStatus === "Approved";
+  await logEvent({
+    ticketPk: request.ticket_pk,
+    actor: { userId: admin.user_pk, name: admin.name, roleName: admin.role_name },
+    action: approved ? "cancellation_approved" : "cancellation_rejected",
+    detail: finalNote,
+  });
   await query(
     "INSERT INTO ticket_messages (ticket_pk, sender_pk, message_text, kind) VALUES (?, ?, ?, 'cancellation_decision')",
     [
@@ -1507,6 +1596,30 @@ app.patch("/api/password-requests/:id/status", wrap(async (req, res) => {
 registerKpiRoutes(app, wrap);
 registerSuperAdminRoutes(app, { wrap, notify });
 
+// --- Live updates, photos, help articles, backups, alert settings ----------------------------
+app.post("/api/events/ticket", (req, res) => res.json({ ticket: issueEventTicket(req.user.userId) }));
+app.get("/api/events", connectEvents);
+
+registerAttachmentRoutes(app, { wrap, ticketAccess, notify, adminIds, publishTicket, closedStatuses: CLOSED_STATUSES });
+registerKbRoutes(app, { wrap });
+registerBackupRoutes(app, { wrap, verifySuperAdmin });
+
+// Each person decides whether they get alert emails / texts (the server owner sets up how they are sent).
+app.get("/api/me/alerts", wrap(async (req, res) => {
+  const [row] = await query("SELECT email, phone, email_alerts AS emailAlerts FROM users WHERE user_pk = ?", [req.user.userId]);
+  res.json({ email: row?.email ?? null, phone: row?.phone ?? "", emailAlerts: Boolean(row?.emailAlerts), emailMode: mailMode(), smsConfigured: Boolean(process.env.SMS_WEBHOOK_URL) });
+}));
+
+app.patch("/api/me/alerts", wrap(async (req, res) => {
+  const phone = asText(req.body?.phone, 40);
+  if (phone && !/^\+?[0-9 ()-]{7,20}$/.test(phone)) {
+    return res.status(400).json({ error: "Enter a phone number with digits only, for example +63 912 345 6789." });
+  }
+  if (typeof req.body?.emailAlerts !== "boolean") return res.status(400).json({ error: "emailAlerts must be true or false." });
+  await query("UPDATE users SET email_alerts = ?, phone = ? WHERE user_pk = ?", [req.body.emailAlerts ? 1 : 0, phone || null, req.user.userId]);
+  res.json({ ok: true });
+}));
+
 // --- The website itself (npm run build creates dist/) ---------------------------------------
 const DIST = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
 if (fs.existsSync(path.join(DIST, "index.html"))) {
@@ -1544,6 +1657,8 @@ try {
 process.on("unhandledRejection", (reason) => console.error("Unhandled rejection:", reason));
 
 startAutoAssign({ query, pool, notify, adminIds, postNotice: (ticketPk, text) => bot.postNotice(ticketPk, text) });
+startAutoClose({ query, notify, postNotice: (ticketPk, text) => bot.postNotice(ticketPk, text) });
+startBackupSchedule();
 
 const server = app.listen(PORT, () => {
   const built = fs.existsSync(path.join(DIST, "index.html"));

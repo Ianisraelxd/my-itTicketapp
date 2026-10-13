@@ -10,6 +10,8 @@
 // pickAgent() and isDue() are pure functions (unit-tested in autoassign.test.js); the rest talks
 // to the database and is started once from index.js with startAutoAssign().
 
+import { logEvent } from "./audit.js";
+
 export const AUTO_ASSIGN_MINUTES = Number(process.env.AUTO_ASSIGN_MINUTES) || 30;
 const CHECK_EVERY_MS = Number(process.env.AUTO_ASSIGN_CHECK_SECONDS || 60) * 1000;
 const ENABLED = process.env.AUTO_ASSIGN !== "false";
@@ -142,6 +144,11 @@ export async function runAutoAssign({ query, pool, notify, adminIds, postNotice 
     ]);
 
     const previous = expired ? agents.find((row) => row.id === ticket.assigned_to) : null;
+    await logEvent({
+      ticketPk: ticket.ticket_pk,
+      action: expired ? "reassigned" : "auto_assigned",
+      detail: expired ? `${previous?.name ?? "previous agent"} → ${agent.name} (${ticket.category})` : `to ${agent.name} (${ticket.category})`,
+    });
     await postNotice(
       ticket.ticket_pk,
       expired

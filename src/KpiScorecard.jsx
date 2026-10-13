@@ -16,7 +16,7 @@ import useKpiData from "./useKpiData";
 import useKpiTrend from "./useKpiTrend";
 
 const CATEGORY_ORDER = ["Speed", "Quality", "Volume & backlog", "Team"];
-const MAX_KPIS = 15;
+const MAX_KPIS = 16;
 const TONE_COLOR = { good: "#3f9d62", warn: "#bd8128", bad: "#d9534f", info: "#39759d", na: "#a7b1ac" };
 
 function unitHint(unit) {
