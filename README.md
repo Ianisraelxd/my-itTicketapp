@@ -318,56 +318,37 @@ my-react-app/
 
 ## Getting started
 
-### Prerequisites
+### The easy way (Windows with XAMPP)
 
-- **Node.js** 18+ and npm
-- **MySQL** server (local install, Docker, XAMPP, etc.)
-- The `mysql` CLI on your PATH (only needed for the `db:init` script — you can use any MySQL client instead)
+1. Install [Node.js](https://nodejs.org) (version 20 or newer) and XAMPP.
+2. Double-click **`start.bat`** (or run `npm start` in a terminal).
 
-### 1. Install dependencies
+That is all. The script installs the packages the first time, starts MySQL from XAMPP if it is not already running, builds the website, creates the `helpdesk` database with the demo accounts on the first run, starts the server and opens your browser at **http://localhost:3001**. Everything runs on one port. Press `Ctrl+C` to stop.
 
-```bash
-npm install
-```
+- **No setup files needed.** The defaults are `root` with no password on `localhost:3306`. Only if your MySQL is different, copy `server/.env.example` to `server/.env` and change the values.
+- **Updating an older database is automatic.** When the server starts it applies any missing files from `server/migrations/` (they are never run twice). Nothing is dropped from a database that already has data.
+- **Developing?** `npm run dev:all` runs the server and the live-reload website together (http://localhost:5173).
+- **Another computer or macOS / Linux?** Install Node.js and any MySQL / MariaDB server, then run `npm start`. If MySQL is not on `localhost:3306`, put its address in `server/.env`.
 
-### 2. Create the database
+### Doing it step by step
 
-Import the schema and seed data:
+| Command | What it does |
+| --- | --- |
+| `npm install` | Installs the packages. |
+| `npm run server` | Starts the API (creates / updates the database first). Also serves the website once `npm run build` has been run. |
+| `npm run dev` | Live-reload website on http://localhost:5173 (needs the API running). |
+| `npm run db:init` | Optional: wipes and recreates the database from `server/schema.sql` (asks for the MySQL password). |
 
-```bash
-npm run db:init
-```
+### Checking that everything works
 
-This runs `mysql -u root -p < server/schema.sql`, which creates the `helpdesk` database, its tables, and seed rows. Enter your MySQL password when prompted. If your MySQL user is not `root`, run `server/schema.sql` manually with your preferred client.
+| Command | What it checks |
+| --- | --- |
+| `npm test` | Unit tests for the priority matrix and the auto-assign rules. |
+| `API=http://localhost:3001/api npm run qa` | About 140 API checks: sign-in, access control, validation, parallel requests, speed. |
+| `DB_NAME=helpdesk_demo API=http://localhost:3002/api node scripts/qa-deep.mjs` | Archiving, two-step verification, password requests, role changes. |
+| `npm run qa:ui -- http://localhost:3001` | Opens every page for every role on desktop and phone sizes and reports errors and overflow. |
 
-### 3. Configure environment
-
-Create `server/.env` (gitignored) with your MySQL credentials:
-
-```
-DB_HOST=localhost
-DB_PORT=3306
-DB_USER=root
-DB_PASSWORD=your_mysql_password
-DB_NAME=helpdesk
-PORT=3001
-```
-
-### 4. Run the app
-
-Start the API in one terminal:
-
-```bash
-npm run server
-```
-
-Start the frontend in another:
-
-```bash
-npm run dev
-```
-
-Open the Vite URL shown in the terminal (default `http://localhost:5173`). API requests to `/api` are proxied to the backend on port `3001`.
+Run the checks on a demo database (they create test tickets and accounts), never on real data.
 
 ---
 

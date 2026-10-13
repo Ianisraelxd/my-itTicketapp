@@ -2046,10 +2046,17 @@ function ManageRequests({
     /agent/i.test(user.role || ""),
   );
 
+  // Real numbers for the assign dialog: who is online and how many open tickets each agent has.
+  const [workload, setWorkload] = useState({});
+
   const handleAssign = async (ticketId) => {
     const ticket = tickets.find((item) => item.id === ticketId);
     if (!ticket) return;
     setAssignDialog({ ticketId, subject: ticket.subject, category: ticket.category });
+    api
+      .getAgentWorkload(me.userId)
+      .then((rows) => setWorkload(Object.fromEntries(rows.map((row) => [row.userId, row]))))
+      .catch(() => setWorkload({}));
   };
 
   const handleView = (ticketId) => {
@@ -2062,7 +2069,7 @@ function ManageRequests({
     });
   };
 
-  const confirmAssign = async (ticketId, agent, slot) => {
+  const confirmAssign = async (ticketId, agent) => {
     try {
       await api.assignTicket(ticketId, { actorId: me.userId, agentId: agent.userId });
       setTicketAssignments((current) => ({
@@ -2071,14 +2078,10 @@ function ManageRequests({
           ...(current[ticketId] || {}),
           assignedAgent: agent.name,
           agentId: agent.id,
-          assignedTime: slot,
           progress: "Agent assigned",
         },
       }));
-      showMessage(
-        "Agent assigned",
-        `${agent.name} is available at ${slot} for ticket ${ticketId}.`,
-      );
+      showMessage("Agent assigned", `${agent.name} was assigned to ${ticketId}. They are told right away.`);
       refreshData();
       setAssignDialog(null);
     } catch (error) {
@@ -2187,23 +2190,29 @@ function ManageRequests({
                   .sort(
                     (a, b) =>
                       Number(skillFit(b.skills, assignDialog.category) === "match") -
-                      Number(skillFit(a.skills, assignDialog.category) === "match"),
+                        Number(skillFit(a.skills, assignDialog.category) === "match") ||
+                      Number(Boolean(workload[b.userId]?.online)) - Number(Boolean(workload[a.userId]?.online)) ||
+                      Number(workload[a.userId]?.activeTickets ?? 0) - Number(workload[b.userId]?.activeTickets ?? 0),
                   )
-                  .map((agent, index) => {
+                  .map((agent) => {
                   const fit = skillFit(agent.skills, assignDialog.category);
-                  const slot = ["9:00 AM - 11:00 AM", "1:00 PM - 3:00 PM", "4:00 PM - 6:00 PM"][index % 3];
+                  const stats = workload[agent.userId];
                   return (
                     <button
                       key={agent.userId}
                       className="assignment-card"
-                      onClick={() => confirmAssign(assignDialog.ticketId, agent, slot)}
+                      onClick={() => confirmAssign(assignDialog.ticketId, agent)}
                     >
                       <span className="assignment-name">
                         {agent.name}
                         {fit === "match" && <span className="fit-badge fit-badge-match">★ Skill match</span>}
                       </span>
                       <SkillChips skills={agent.skills} />
-                      <span className="assignment-slot">Available: {slot}</span>
+                      <span className="assignment-slot">
+                        {stats
+                          ? `${stats.online ? "● Online now" : "○ Offline"} · ${stats.activeTickets} active ticket${Number(stats.activeTickets) === 1 ? "" : "s"}`
+                          : "Checking workload…"}
+                      </span>
                     </button>
                   );
                 })
@@ -2223,7 +2232,6 @@ function ManageRequests({
             <p>{viewDialog.subject}</p>
             <div className="detail-stack">
               <div><strong>Agent:</strong> {viewDialog.tracking.assignedAgent || "Not assigned"}</div>
-              <div><strong>Availability:</strong> {viewDialog.assignment.assignedTime || "Awaiting schedule"}</div>
               <div><strong>Progress:</strong> {viewDialog.tracking.progress}</div>
               <div><strong>Status:</strong> {viewDialog.status}</div>
             </div>

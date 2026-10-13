@@ -17,7 +17,6 @@ const check = (condition, name, detail = "") => {
   }
 };
 const section = (title) => console.log(`\n# ${title}`);
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const enc = encodeURIComponent;
 
 async function raw(method, path, { token, body } = {}) {

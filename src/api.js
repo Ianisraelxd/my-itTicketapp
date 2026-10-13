@@ -110,6 +110,8 @@ export const api = {
 
   getLocations: () => request("/locations"),
 
+  getAgentWorkload: (userId) => request(`/agents/workload?userId=${encodeURIComponent(userId)}`),
+
   cancelTicket: (ticketId, payload) =>
     request(`/tickets/${encodeURIComponent(ticketId)}/cancel`, {
       method: "PUT",

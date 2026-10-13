@@ -568,6 +568,7 @@ app.get("/api/agents/workload", wrap(async (req, res) => {
   const marks = ACTIVE_STATUSES.map(() => "?").join(", ");
   const rows = await query(
     `SELECT u.user_pk AS userId, u.name, u.skills,
+       (u.last_seen_at > DATE_SUB(NOW(), INTERVAL 90 SECOND)) AS online,
        (SELECT COUNT(*) FROM tickets t WHERE t.assigned_to = u.user_pk AND t.status IN (${marks})) AS activeTickets
      FROM users u WHERE u.role = 'agent' ORDER BY activeTickets ASC, u.name`,
     ACTIVE_STATUSES,
