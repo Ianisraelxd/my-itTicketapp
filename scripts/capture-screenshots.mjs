@@ -4,6 +4,7 @@
 //   node scripts/capture-screenshots.mjs http://localhost:5175
 // Set CHROME_PATH if your browser is not Microsoft Edge in the default location.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import puppeteer from "puppeteer-core";
@@ -93,6 +94,50 @@ async function closeTopModal(page) {
   await sleep(500);
 }
 
+// A made-up "photo of the problem" so the screenshots can show an attachment (no real picture is needed).
+async function makeDemoPhoto() {
+  const file = path.join(os.tmpdir(), "helpdesk-demo-photo.png");
+  const page = await browser.newPage();
+  await page.setViewport({ width: 1000, height: 640 });
+  await page.setContent(
+    `<body style="margin:0;height:100vh;display:grid;place-items:center;font-family:Arial,sans-serif;color:#cfe9df;background:#0b1512 repeating-linear-gradient(0deg,rgba(255,255,255,.05) 0 2px,transparent 2px 7px)">
+      <div style="text-align:center"><div style="font-size:72px;font-weight:700;color:#e5484d;letter-spacing:4px">NO SIGNAL</div>
+      <div style="margin-top:14px;font-size:28px">HDMI 1 &middot; Computer Laboratory projector</div></div></body>`,
+  );
+  await page.screenshot({ path: file });
+  await page.close();
+  return file;
+}
+
+async function fillRequestForm(page, { subject, description, photo }) {
+  const choose = async (index, text) => {
+    await page.evaluate(
+      (i, wanted) => {
+        const select = document.querySelectorAll("form.request-form select")[i];
+        const option = [...select.options].find((o) => o.textContent.includes(wanted));
+        select.value = option.value;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      },
+      index,
+      text,
+    );
+    await sleep(150);
+  };
+  await choose(0, "Hardware");
+  await choose(1, "My entire class");
+  await choose(2, "Right now");
+  await page.type("form.request-form input:not([type=hidden]):not([type=file])", subject);
+  await choose(3, "Academic Zone");
+  await choose(4, "IT Building");
+  await choose(5, "Computer Laboratory 2");
+  await page.type("form.request-form textarea", description);
+  if (photo) {
+    const input = await page.$(".photo-add input");
+    await input.uploadFile(photo);
+    await sleep(500);
+  }
+}
+
 async function openTicket(page, subjectPart) {
   await page.evaluate((part) => {
     const row = [...document.querySelectorAll("tbody tr")].find((r) => r.textContent.includes(part));
@@ -124,6 +169,17 @@ async function api(route, body, method = "POST", as = "superadmin") {
   });
 }
 
+const demoPhoto = await makeDemoPhoto();
+
+// Put the demo photo on a seeded ticket, sent by the agent, so the conversation shows an attachment.
+async function addPhotoTo(subjectPart) {
+  if (!tokens.agent) await api("/tickets/none/attachments", {}, "POST", "agent");
+  const list = await (await fetch(`${BASE}/api/tickets`, { headers: { Authorization: `Bearer ${tokens.agent}` } })).json();
+  const ticket = list.find((item) => item.subject.includes(subjectPart));
+  await api(`/tickets/${encodeURIComponent(ticket.id)}/attachments`, { name: "projector-no-signal.png", data: fs.readFileSync(demoPhoto).toString("base64") }, "POST", "agent");
+}
+await addPhotoTo("Projector in Lab 1");
+
 // ------------------------------------------------------------------ login screens
 {
   const { context, page } = await open();
@@ -137,6 +193,34 @@ async function api(route, body, method = "POST", as = "superadmin") {
   await shot(page, "02-login-dark", { wait: 1500 });
   await context.close();
 }
+// Five wrong attempts: the page locks for 10 seconds; the next wrong attempt reveals "Forgot password?".
+// (An ID that does not exist is used, so no real account is touched; the page counts the attempts itself.)
+{
+  const { context, page } = await open();
+  await page.goto(BASE, { waitUntil: "networkidle0" });
+  await page.type("input[type=text]", "9999999");
+  const wrongAttempt = async () => {
+    await page.focus("input[type=password]");
+    await page.keyboard.down("Control");
+    await page.keyboard.press("KeyA");
+    await page.keyboard.up("Control");
+    await page.keyboard.press("Backspace");
+    await page.type("input[type=password]", "wrong-pass");
+    await page.click("button[type=submit]");
+    await sleep(800);
+    await closeTopModal(page);
+  };
+  for (let i = 0; i < 5; i += 1) await wrongAttempt();
+  await shot(page, "33-login-cooldown", { wait: 600 });
+  await sleep(10500);
+  await wrongAttempt();
+  await clickText(page, "button", "Forgot password?");
+  await sleep(500);
+  await page.type("input[type=email]", "student@campus.edu");
+  await page.click("button[type=submit]");
+  await shot(page, "34-forgot-password", { wait: 900 });
+  await context.close();
+}
 
 // ------------------------------------------------------------------ student (light)
 {
@@ -145,17 +229,52 @@ async function api(route, body, method = "POST", as = "superadmin") {
   await shot(page, "03-student-dashboard");
 
   await nav(page, "Submit Request");
-  await page.select(".request-form select", "Hardware");
-  await page.type(".request-form input[placeholder^='Example: Cannot']", "Projector flickers during class");
-  await page.type(".request-form input[placeholder^='Example: Computer']", "Computer Laboratory 2");
-  await page.type(".request-form textarea", "The image flickers and turns off every few minutes. It started this morning.");
-  await shot(page, "04-submit-request");
+  await fillRequestForm(page, {
+    subject: "Projector flickers during class",
+    description: "The image flickers and turns off every few minutes. It started this morning.",
+    photo: demoPhoto,
+  });
+  await page.setViewport({ ...DESKTOP, height: 1500 });
+  await shot(page, "04-submit-request", { wait: 600 });
+  await page.setViewport(DESKTOP);
+
+  // A slow connection: six rapid clicks send one request and the page says it is working.
+  await page.setRequestInterception(true);
+  const hold = (request) => {
+    if (request.method() === "POST" && /\/api\/tickets$/.test(request.url())) setTimeout(() => request.continue(), 7000);
+    else request.continue();
+  };
+  page.on("request", hold);
+  await page.evaluate(() => {
+    const button = document.querySelector("form.request-form button[type=submit]");
+    for (let i = 0; i < 6; i += 1) button.click();
+  });
+  await sleep(5200);
+  await shot(page, "40-slow-connection", { wait: 100 });
+  await sleep(3800);
+  page.off("request", hold);
+  await page.setRequestInterception(false);
+  await clickText(page, ".modal-box button", "Okay");
+  await sleep(400);
+
+  // The assistant on the brand-new ticket
+  await nav(page, "My Requests");
+  await openTicket(page, "Projector flickers during class");
+  await clickText(page, ".quick-replies button", "Try a quick fix");
+  await sleep(1800);
+  await clickText(page, ".quick-replies button", "Screen is blank or flickering");
+  await sleep(1800);
+  await shot(page, "36-assistant-chat");
+  await closeTopModal(page);
 
   await nav(page, "My Requests");
   await shot(page, "05-my-requests");
 
   await openTicket(page, "Projector in Lab 1");
   await shot(page, "06-ticket-details-chat");
+  await clickText(page, ".ticket-history summary", "History");
+  await sleep(1200);
+  await shot(page, "35-ticket-history");
   await closeTopModal(page);
 
   await openTicket(page, "Wi-Fi keeps dropping");
@@ -171,6 +290,22 @@ async function api(route, body, method = "POST", as = "superadmin") {
 
   await nav(page, "Notifications");
   await shot(page, "09-notifications");
+
+  await nav(page, "Help Articles");
+  await page.type(".help-search", "wifi");
+  await sleep(1000);
+  await clickText(page, ".help-head", "Wi-Fi");
+  await sleep(500);
+  await shot(page, "37-help-articles");
+
+  // Profile > Email and text alerts
+  await page.evaluate(() => [...document.querySelectorAll(".sidebar button")].find((b) => b.textContent.includes("Student User")).click());
+  await sleep(600);
+  await clickText(page, ".profile-actions button", "Email and text alerts");
+  await sleep(900);
+  await shot(page, "39-profile-alerts");
+  await page.evaluate(() => document.querySelector("[aria-label='Close profile']")?.click());
+  await sleep(400);
 
   await page.click(".settings-button");
   await sleep(700);
@@ -250,6 +385,15 @@ async function api(route, body, method = "POST", as = "superadmin") {
   await nav(page, "Password Requests");
   await shot(page, "24-password-requests");
 
+  await nav(page, "Help Articles");
+  await clickText(page, "button", "New article");
+  await sleep(500);
+  await page.type(".help-editor input", "How to reset the classroom projector");
+  await page.type(".help-editor textarea", "1. Turn the projector off and unplug it for one minute.\n2. Plug it back in and press the power button.\n3. Choose the HDMI input with the Source button.");
+  await shot(page, "38-help-article-editor");
+  await clickText(page, ".help-editor button", "Cancel");
+  await sleep(400);
+
   // Chat dock: the agent has already written, the admin answers.
   await api(
     "/messages",
@@ -313,7 +457,11 @@ async function api(route, body, method = "POST", as = "superadmin") {
   await page.type(".modal-box input", "ARCHIVE");
   await clickText(page, ".modal-box button", "Export & archive");
   await sleep(2500);
-  await page.setViewport({ ...DESKTOP, height: 1500 });
+  await clickText(page, ".backup-panel button", "Back up now");
+  await sleep(2500);
+  await clickText(page, ".modal-box button", "Okay");
+  await sleep(500);
+  await page.setViewport({ ...DESKTOP, height: 2100 });
   await sleep(800);
   await shot(page, "32-super-admin-panel");
   await page.setViewport(DESKTOP);
