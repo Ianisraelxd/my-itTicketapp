@@ -29,5 +29,3 @@ server/.env
 backups/
 server/.jwt-secret
 server/uploads/
-
-server/initial-credentials.txt
