@@ -8,7 +8,6 @@ import fs from "node:fs";
 import zlib from "node:zlib";
 
 import { pool, query } from "../server/db.js";
-import { DEMO_PASSWORD, idFor } from "./demo-accounts.mjs";
 
 const API = (process.env.API || "http://localhost:3001/api").replace(/\/$/, "");
 const failures = [];
@@ -39,14 +38,14 @@ async function raw(method, path, { token, body } = {}) {
   }
   return { status: response.status, json, text, headers: response.headers };
 }
-const login = async (role, password, id = idFor(role)) => (await raw("POST", "/login", { body: { id, password, role } })).json;
+const login = async (role, password, id = "2404154") => (await raw("POST", "/login", { body: { id, password, role } })).json;
 
 const accounts = {};
 for (const [name, role, password] of [
-  ["student", "student", DEMO_PASSWORD],
-  ["agent", "agent", DEMO_PASSWORD],
-  ["admin", "admin", DEMO_PASSWORD],
-  ["superadmin", "superadmin", DEMO_PASSWORD],
+  ["student", "student", "123456student"],
+  ["agent", "agent", "123456technician"],
+  ["admin", "admin", "123456admin"],
+  ["superadmin", "superadmin", "123456superadmin"],
 ]) accounts[name] = await login(role, password);
 const tok = (name) => accounts[name].token;
 const room = (await raw("GET", "/locations", { token: tok("student") })).json[0].id;
@@ -79,7 +78,7 @@ section("Sign-in cooldown and forgot password");
   await sleep(10500);
   let lastTry;
   for (let i = 0; i < 5; i += 1) lastTry = await attempt();
-  check(lastTry.status === 423, "10 failures in a row lock the account for 5 minutes", String(lastTry.status));
+  check(lastTry.status === 423, "10 failures in a row lock the account for 15 minutes", String(lastTry.status));
   const stillLocked = await attempt("Gx4#lantern-Rt");
   check(stillLocked.status === 423 && !stillLocked.json.token, "even the right password is refused while locked", String(stillLocked.status));
 
@@ -104,7 +103,7 @@ section("Ticket history");
   check(history.json?.every((row) => row.actorName && row.label && row.createdAt), "each entry has who, what and when");
   const status = history.json?.find((row) => row.action === "status");
   check(status?.detail === "In Progress → Resolved" && status?.actorName === accounts.agent.name, "status entry records the change and the agent", JSON.stringify(status));
-  const other = await login("staff", DEMO_PASSWORD);
+  const other = await login("staff", "123456employee");
   check((await raw("GET", url("/history"), { token: other.token })).status === 403, "someone else cannot read the history");
 }
 
@@ -121,7 +120,7 @@ section("Photo attachments");
   const file = await fetch(`${API}/attachments/${ok.json.id}`, { headers: { Authorization: `Bearer ${tok("admin")}` } });
   const bytes = Buffer.from(await file.arrayBuffer());
   check(file.status === 200 && file.headers.get("content-type") === "image/png" && bytes.slice(1, 4).toString() === "PNG", "an admin can view the photo");
-  const outsider = await login("staff", DEMO_PASSWORD);
+  const outsider = await login("staff", "123456employee");
   check((await fetch(`${API}/attachments/${ok.json.id}`, { headers: { Authorization: `Bearer ${outsider.token}` } })).status === 403, "an outsider cannot view it");
   check((await fetch(`${API}/attachments/${ok.json.id}`)).status === 401, "no token, no photo");
   const html = Buffer.from("<html><script>alert(1)</script></html>").toString("base64");
@@ -362,7 +361,7 @@ section("One click, one request (double clicks and slow connections)");
   const parallel = await Promise.all(Array.from({ length: 8 }, () => raw("POST", "/tickets", { token: tok("student"), body: body({ subject: "Token B", clientToken: "tokenB-abcdefghij" }) })));
   check(new Set(parallel.map((r) => r.json?.id)).size === 1 && (await count("Token B")) === 1, "8 simultaneous clicks with one token make one ticket", parallel.map((r) => r.status).join());
 
-  const other = await login("staff", DEMO_PASSWORD);
+  const other = await login("staff", "123456employee");
   const mine = await raw("POST", "/tickets", { token: other.token, body: body({ subject: "Token B", clientToken: "tokenB-abcdefghij" }) });
   check(mine.status === 201 && mine.json.id !== parallel[0].json.id, "another person using the same token still gets their own ticket");
 

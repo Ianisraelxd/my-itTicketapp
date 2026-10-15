@@ -4445,5 +4445,6 @@ html[data-theme="dark"] .button-dark {
 .pw-checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
 .pw-checks li { display: flex; align-items: center; gap: 6px; color: var(--muted); }
 .pw-checks li.pw-ok { color: var(--good-fg, #067647); }
-.pw-toggle { font-size: 0.75rem; width: auto; padding: 0 8px; }
-.form-error { color: var(--bad-fg, #b42318); margin: 0; font-size: 0.9rem; }
+
+.ticket-filters { flex-wrap: wrap; align-items: flex-end }
+.ticket-filters input[type="search"] { min-width: 220px }

@@ -110,24 +110,3 @@ export function passwordProblem(password, who) {
   if (result.ok) return null;
   return `Choose a stronger password: ${result.problems.join("; ")}.`;
 }
-
-/** A random password that always passes the policy (used for the seeded accounts). */
-export function generatePassword(randomInt) {
-  const lower = "abcdefghijkmnpqrstuvwxyz";
-  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
-  const digits = "23456789";
-  const symbols = "!#$%&*?@^+=";
-  const all = lower + upper + digits + symbols;
-  const pick = (set) => set[randomInt(set.length)];
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    const chars = [pick(lower), pick(upper), pick(digits), pick(symbols)];
-    while (chars.length < 16) chars.push(pick(all));
-    for (let i = chars.length - 1; i > 0; i -= 1) {
-      const j = randomInt(i + 1);
-      [chars[i], chars[j]] = [chars[j], chars[i]];
-    }
-    const candidate = chars.join("");
-    if (evaluatePassword(candidate).ok) return candidate;
-  }
-  throw new Error("Could not generate a password");
-}

@@ -9,7 +9,6 @@
 // DB_NAME must be the demo database for step 3 as well (it back-dates created_at).
 import "../server/env.js";
 import mysql from "mysql2/promise";
-import { DEMO_PASSWORD, idFor } from "./demo-accounts.mjs";
 
 const API = (process.argv[2] || "http://localhost:3002").replace(/\/$/, "") + "/api";
 const DB_NAME = process.env.DB_NAME;
@@ -28,12 +27,12 @@ const NETWORK_TECH = 7;
 
 // The API needs a signed-in user for everything, so sign in as each seeded account once.
 const ACCOUNTS = {
-  [STUDENT]: [idFor("student"), "student", DEMO_PASSWORD],
-  [STAFF]: [idFor("staff"), "staff", DEMO_PASSWORD],
-  [HARDWARE_TECH]: [idFor("agent"), "agent", DEMO_PASSWORD],
-  [ADMIN]: [idFor("admin"), "admin", DEMO_PASSWORD],
-  [SOFTWARE_TECH]: [idFor("agent2"), "agent", DEMO_PASSWORD],
-  [NETWORK_TECH]: [idFor("agent3"), "agent", DEMO_PASSWORD],
+  [STUDENT]: ["2404154", "student", "123456student"],
+  [STAFF]: ["2404154", "staff", "123456employee"],
+  [HARDWARE_TECH]: ["2404154", "agent", "123456technician"],
+  [ADMIN]: ["2404154", "admin", "123456admin"],
+  [SOFTWARE_TECH]: ["2404155", "agent", "123456technician"],
+  [NETWORK_TECH]: ["2404156", "agent", "123456technician"],
 };
 const tokens = {};
 for (const [userId, [id, role, password]] of Object.entries(ACCOUNTS)) {

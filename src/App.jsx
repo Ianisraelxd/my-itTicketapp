@@ -4,6 +4,7 @@ import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react"
 
 import { evaluatePassword } from "../shared/passwordPolicy.js";
 import { api, hasAuthToken, setAuthToken, setUnauthorizedHandler } from "./api";
+import { PasswordStrength } from "./PasswordStrength";
 import MfaSettings from "./MfaSettings";
 import ChartSkeleton from "./ChartSkeleton";
 import ChatInput from "./ChatInput";
@@ -14,6 +15,7 @@ import useKpiTrend from "./useKpiTrend";
 import ReportFilters from "./ReportFilters";
 import { defaultReportFilters } from "./reportDefaults";
 import useReportData from "./useReportData";
+import useTicketFilters from "./TicketFilters";
 import { SettingsModal } from "./SettingsModal";
 import { APP_VERSION, motionAllowed } from "./settings";
 import { playSound } from "./sounds";
@@ -27,7 +29,6 @@ import PhotoPicker from "./PhotoPicker";
 import { realtimeConnected, startRealtime, stopRealtime, subscribeRealtime } from "./realtime";
 import useLoginGuard, { COOLDOWN_SECONDS } from "./useLoginGuard";
 import { TicketDetailsModal } from "./TicketChat";
-import { ChangePasswordModal, PasswordStrength } from "./PasswordStrength";
 
 // Charts and the super admin screens are only needed by a few roles, so they load on demand
 // instead of making every student download the charting library.
@@ -181,7 +182,6 @@ function App() {
   const [profile, setProfile] = useState(null);
   const [myPwRequests, setMyPwRequests] = useState([]);
   const [pwRequests, setPwRequests] = useState([]);
-  const [changePwOpen, setChangePwOpen] = useState(false);
   const [pwForm, setPwForm] = useState({ newPassword: "", confirm: "", reason: "" });
   const [pwSubmitting, setPwSubmitting] = useState(false);
   const [request, setRequest] = useState({
@@ -261,7 +261,7 @@ function App() {
   // Poll for notifications. Anything new pops up as a toast and refreshes the
   // ticket data so statuses stay current without a manual reload.
   useEffect(() => {
-    if (!user || user.mustChangePassword || user.role === "superadmin" || user.role === "report_viewer") return;
+    if (!user || user.role === "superadmin" || user.role === "report_viewer") return;
     let active = true;
     seenNotifications.current = null;
     const load = () =>
@@ -302,14 +302,14 @@ function App() {
 
   // One live connection per signed-in session.
   useEffect(() => {
-    if (!user || user.mustChangePassword) return undefined;
+    if (!user) return undefined;
     startRealtime();
     return stopRealtime;
   }, [user]);
 
   // Load tickets and activities from the database once a user is signed in.
   useEffect(() => {
-    if (!user || user.mustChangePassword) return;
+    if (!user) return;
     let active = true;
     const isPrivateUser =
       user.role === "student" || user.role === "staff";
@@ -356,7 +356,7 @@ function App() {
   // Keep password change requests fresh so users see approval/rejection while
   // they wait, and admins see new requests without reloading the page.
   useEffect(() => {
-    if (!user || user.mustChangePassword) return;
+    if (!user) return;
     let active = true;
     const canReview = ["admin", "superadmin"].includes(user.role);
 
@@ -843,19 +843,6 @@ function App() {
           </button>
         ))}
       </nav>
-      {user && (user.mustChangePassword || changePwOpen) && (
-        <ChangePasswordModal
-          user={user}
-          forced={Boolean(user.mustChangePassword)}
-          onClose={() => setChangePwOpen(false)}
-          onDone={() => {
-            setChangePwOpen(false);
-            setUser((current) => ({ ...current, mustChangePassword: false }));
-            refreshData();
-            showMessage("Password changed", "Your new password is active.");
-          }}
-        />
-      )}
       {profileOpen && (
         <ProfileModal
           user={user}
@@ -868,10 +855,6 @@ function App() {
           submitting={pwSubmitting}
           onSubmitRequest={submitPasswordChange}
           onProfileChanged={() => api.getProfile(user.userId).then(setProfile).catch(() => {})}
-          onChangePassword={() => {
-            setProfileOpen(false);
-            setChangePwOpen(true);
-          }}
           showMessage={showMessage}
           onClose={() => setProfileOpen(false)}
           onLogout={logout}
@@ -1009,7 +992,7 @@ function AuthScreen({
                 <Field
                   label="ID number"
                   type="text"
-                  placeholder="e.g. 2024-00417"
+                  placeholder="e.g. 2404154"
                   value={credentials.id}
                   onChange={(value) =>
                     setCredentials({ ...credentials, id: value })
@@ -1407,7 +1390,6 @@ function ProfileModal({
   submitting,
   onSubmitRequest,
   onProfileChanged,
-  onChangePassword,
   showMessage,
   onClose,
   onLogout,
@@ -1462,10 +1444,7 @@ function ProfileModal({
                 onClick={() => setView("changePassword")}
                 disabled={isPending}
               >
-                {isPending ? "Request pending approval" : "Ask an admin to reset it"}
-              </button>
-              <button type="button" className="button button-outline full-width" onClick={onChangePassword}>
-                Change password
+                {isPending ? "Request pending approval" : "Change password"}
               </button>
               <button type="button" className="button button-outline full-width" onClick={() => setView("alerts")}>
                 Email and text alerts
@@ -1663,14 +1642,14 @@ function UserDashboard({ setPage, tickets, ticketAssignments = {}, userName }) {
     </>
   );
 }
-function TicketTable({ tickets, showAssignmentMeta = false, onOpen, loading = false }) {
+function TicketTable({ tickets, showAssignmentMeta = false, onOpen, loading = false, filtering = false }) {
   if (loading) return <TableSkeleton columns={6} />;
   const hasMeta = showAssignmentMeta || tickets.some((ticket) => ticket.assignedAgent || ticket.progress);
 
   if (!tickets || tickets.length === 0) {
     return (
       <div className="table-wrap empty-state">
-        <p>No requests yet. Submit your first support request to get started.</p>
+        <p>{filtering ? "No tickets match these filters." : "No requests yet. Submit your first support request to get started."}</p>
       </div>
     );
   }
@@ -1825,6 +1804,7 @@ function SelectField({ label, value, options, onChange, placeholder }) {
 function MyRequests({ tickets, ticketAssignments = {}, setPage, me, refreshData, showMessage, loading = false }) {
   const [openId, setOpenId] = useState(null);
   const openTicket = tickets.find((ticket) => ticket.id === openId);
+  const { visible: shownTickets, controls: filterControls, active: filtering } = useTicketFilters(tickets, CATEGORY_OPTIONS);
   return (
     <>
       <PageHeader
@@ -1840,6 +1820,7 @@ function MyRequests({ tickets, ticketAssignments = {}, setPage, me, refreshData,
           </button>
         }
       />
+      {filterControls}
       <section className="panel">
         <div className="panel-heading">
           <div>
@@ -1850,7 +1831,8 @@ function MyRequests({ tickets, ticketAssignments = {}, setPage, me, refreshData,
         </div>
         <TicketTable
           loading={loading}
-          tickets={tickets.map((ticket) => ({
+          filtering={filtering}
+          tickets={shownTickets.map((ticket) => ({
             ...ticket,
             ...ticketTracking(ticket, ticketAssignments[ticket.id]),
           }))}
@@ -2028,10 +2010,11 @@ function AgentRequests({
   const recommendedCount = tickets.filter(
     (ticket) => skillFit(mySkills, ticket.category) === "match" && !finished(ticket),
   ).length;
+  const { visible: filtered, controls: filterControls } = useTicketFilters(sorted, CATEGORY_OPTIONS);
   const visible =
     view === "recommended"
-      ? sorted.filter((ticket) => skillFit(mySkills, ticket.category) === "match")
-      : sorted;
+      ? filtered.filter((ticket) => skillFit(mySkills, ticket.category) === "match")
+      : filtered;
 
   return (
     <>
@@ -2067,6 +2050,7 @@ function AgentRequests({
           </button>
         </div>
       </section>
+      {filterControls}
       <section className="panel">
         <div className="panel-heading">
           <div>
@@ -2203,6 +2187,7 @@ function ManageRequests({
   const [viewDialog, setViewDialog] = useState(null);
   const [chatId, setChatId] = useState(null);
   const chatTicket = tickets.find((ticket) => ticket.id === chatId);
+  const { visible: shownTickets, controls: filterControls } = useTicketFilters(tickets, CATEGORY_OPTIONS);
   const agents = users.filter((user) =>
     /agent/i.test(user.role || ""),
   );
@@ -2258,6 +2243,7 @@ function ManageRequests({
         description="Review, assign, and monitor submitted tickets."
       />
       <CancellationQueue me={me} showMessage={showMessage} refreshData={refreshData} />
+      {filterControls}
       <section className="panel">
         <div className="table-wrap">
           <table>
@@ -2279,7 +2265,12 @@ function ManageRequests({
                   <td colSpan="8">No tickets have been created yet.</td>
                 </tr>
               )}
-              {tickets.map((ticket) => {
+              {tickets.length > 0 && shownTickets.length === 0 && (
+                <tr>
+                  <td colSpan="8">No tickets match these filters.</td>
+                </tr>
+              )}
+              {shownTickets.map((ticket) => {
                 const assignment = ticketAssignments[ticket.id] || {};
                 const tracking = ticketTracking(ticket, assignment);
                 return (

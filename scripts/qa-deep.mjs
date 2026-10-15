@@ -6,7 +6,6 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 
 import { pool, query } from "../server/db.js";
-import { DEMO_PASSWORD, idFor } from "./demo-accounts.mjs";
 
 const API = (process.env.API || "http://localhost:3001/api").replace(/\/$/, "");
 const failures = [];
@@ -36,7 +35,7 @@ async function raw(method, path, { token, body } = {}) {
   }
   return { status: response.status, json, text };
 }
-const login = async (role, password, id = idFor(role)) => (await raw("POST", "/login", { body: { id, password, role } })).json;
+const login = async (role, password, id = "2404154") => (await raw("POST", "/login", { body: { id, password, role } })).json;
 
 // RFC 6238 code generator (same algorithm as the authenticator apps)
 function totp(secret, offset = 0) {
@@ -53,10 +52,10 @@ function totp(secret, offset = 0) {
 
 const accounts = {};
 for (const [name, role, password] of [
-  ["student", "student", DEMO_PASSWORD],
-  ["agent", "agent", DEMO_PASSWORD],
-  ["admin", "admin", DEMO_PASSWORD],
-  ["superadmin", "superadmin", DEMO_PASSWORD],
+  ["student", "student", "123456student"],
+  ["agent", "agent", "123456technician"],
+  ["admin", "admin", "123456admin"],
+  ["superadmin", "superadmin", "123456superadmin"],
 ]) accounts[name] = await login(role, password);
 const tok = (name) => accounts[name].token;
 const room = (await raw("GET", "/locations", { token: tok("student") })).json[0].id;
@@ -103,7 +102,7 @@ section("Archive pipeline keeps reports and ticket numbers intact");
   check(csvBytes[0] === 0xef && csvBytes[1] === 0xbb && csvBytes[2] === 0xbf, "the CSV starts with a byte-order mark (opens correctly in Excel)");
   check(csvLines[0].startsWith('\uFEFF"Ticket","Subject","Category"') && /"Assigned agent"/.test(csvLines[0]) && !/ticket_pk|created_by|assigned_to/.test(csvLines[0]), "readable column names", csvLines[0].slice(0, 80));
   const csvRow = csvLines[1] ?? "";
-  check(/"#HD\d{3}"/.test(csvRow) && /"Carlo Mendoza"/.test(csvRow) && /"Maria Santos"/.test(csvRow), "names instead of ID numbers", csvRow.slice(0, 160));
+  check(/"#HD\d{3}"/.test(csvRow) && /"Agent User"/.test(csvRow) && /"Student User"/.test(csvRow), "names instead of ID numbers", csvRow.slice(0, 160));
   check(/"2025-03-01 10:00"/.test(csvRow) && /"2025-03-01 12:00"/.test(csvRow) && !/T\d\d:\d\d:\d\d\.\d{3}Z/.test(csvRow), "dates formatted as year-month-day hour:minute");
   check(csvLines.length >= 5 && csvLines.filter((line) => line.length > 0).length === 5, "one line per archived ticket plus the header", String(csvLines.length));
   const runs = await raw("GET", "/superadmin/archive/runs", { token: tok("superadmin") });
