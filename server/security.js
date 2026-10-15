@@ -7,23 +7,14 @@ import { fileURLToPath } from "node:url";
 import jwt from "jsonwebtoken";
 
 // --- Passwords -----------------------------------------------------------------
-// scrypt (memory-hard, so graphics cards and custom chips gain little), a fresh random 16-byte salt per
-// password, and the cost settings stored inside every hash:
-//
-//     scrypt$<N>$<r>$<p>$<salt hex>$<hash hex>
-//
-// Because the settings travel with the hash, the cost can be raised later: needsRehash() tells the sign-in
-// code to quietly store a stronger hash the next time the person types their correct password. Older formats
-// ("scrypt$<salt>$<hash>" with the old settings, or plaintext from very early seed data) are still accepted
-// once and upgraded the same way.
-export const SCRYPT_PARAMS = { N: 32768, r: 8, p: 3 }; // OWASP's recommended N = 2^15, r = 8, p = 3 (32 MiB)
-const LEGACY_PARAMS = { N: 16384, r: 8, p: 1 };
-const KEY_LENGTH = 64;
-const MAX_MEMORY = 128 * 1024 * 1024;
+// Stored as "scrypt$<salt hex>$<hash hex>". Older plaintext rows are accepted
+// once and upgraded to a hash at the next successful login.
+const SCRYPT = { N: 16384, r: 8, p: 1 };
+const KEY_LENGTH = 32;
 
-function scrypt(password, salt, params, keyLength) {
+function scrypt(password, salt) {
   return new Promise((resolve, reject) => {
-    crypto.scrypt(String(password), salt, keyLength, { ...params, maxmem: MAX_MEMORY }, (error, key) => {
+    crypto.scrypt(String(password), salt, KEY_LENGTH, SCRYPT, (error, key) => {
       if (error) reject(error);
       else resolve(key);
     });
@@ -34,58 +25,22 @@ export const isHashed = (stored) => typeof stored === "string" && stored.startsW
 
 export async function hashPassword(password) {
   const salt = crypto.randomBytes(16);
-  const key = await scrypt(password, salt, SCRYPT_PARAMS, KEY_LENGTH);
-  const { N, r, p } = SCRYPT_PARAMS;
-  return `scrypt$${N}$${r}$${p}$${salt.toString("hex")}$${key.toString("hex")}`;
-}
-
-function parseHash(stored) {
-  const parts = stored.split("$");
-  if (parts.length === 6) {
-    const [, N, r, p, saltHex, hashHex] = parts;
-    return { params: { N: Number(N), r: Number(r), p: Number(p) }, saltHex, hashHex };
-  }
-  if (parts.length === 3 && /^[0-9a-f]+$/.test(parts[1]) && /^[0-9a-f]+$/.test(parts[2])) {
-    return { params: LEGACY_PARAMS, saltHex: parts[1], hashHex: parts[2] };
-  }
-  return null;
+  const key = await scrypt(password, salt);
+  return `scrypt$${salt.toString("hex")}$${key.toString("hex")}`;
 }
 
 export async function verifyPassword(password, stored) {
-  if (!stored || typeof password !== "string") return false;
+  if (!stored) return false;
   if (!isHashed(stored)) {
-    // Plaintext row from the earliest seed data: constant-time compare, then it gets hashed.
+    // Legacy plaintext row: constant-time compare.
     const a = Buffer.from(String(password));
     const b = Buffer.from(String(stored));
     return a.length === b.length && crypto.timingSafeEqual(a, b);
   }
-  const parsed = parseHash(stored);
-  if (!parsed || !/^[0-9a-f]+$/.test(parsed.saltHex) || !/^[0-9a-f]+$/.test(parsed.hashHex)) return false;
-  const expected = Buffer.from(parsed.hashHex, "hex");
-  const key = await scrypt(password, Buffer.from(parsed.saltHex, "hex"), parsed.params, expected.length);
+  const [, saltHex, hashHex] = stored.split("$");
+  const key = await scrypt(password, Buffer.from(saltHex, "hex"));
+  const expected = Buffer.from(hashHex, "hex");
   return key.length === expected.length && crypto.timingSafeEqual(key, expected);
-}
-
-/** True when a stored password should be re-hashed with today's settings (plaintext, old format, weaker cost). */
-export function needsRehash(stored) {
-  if (!isHashed(stored)) return true;
-  const parsed = parseHash(stored);
-  if (!parsed) return false; // a locked marker such as scrypt$locked$locked is never rehashed
-  return (
-    parsed.params.N < SCRYPT_PARAMS.N ||
-    parsed.params.r < SCRYPT_PARAMS.r ||
-    parsed.params.p < SCRYPT_PARAMS.p ||
-    parsed.hashHex.length < KEY_LENGTH * 2
-  );
-}
-
-// An unknown ID must take as long as a wrong password, otherwise the response time tells an attacker which
-// IDs exist. Verifying against this throw-away hash costs the same.
-let decoy = null;
-export async function spendPasswordTime(password) {
-  decoy ??= await hashPassword(crypto.randomBytes(12).toString("hex"));
-  await verifyPassword(password, decoy);
-  return false;
 }
 
 // --- Sessions (JWT) --------------------------------------------------------------
@@ -115,7 +70,7 @@ const SESSION_HOURS = Number(process.env.SESSION_HOURS) || 8;
 
 export function signSession(user) {
   return jwt.sign(
-    { sub: String(user.user_pk), role: user.role, name: user.name, tv: Number(user.token_version) || 0, purpose: "session" },
+    { sub: String(user.user_pk), role: user.role, name: user.name, purpose: "session" },
     secret,
     { expiresIn: `${SESSION_HOURS}h` },
   );

@@ -2,7 +2,6 @@ import "./App.css";
 
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 
-import { evaluatePassword } from "../shared/passwordPolicy.js";
 import { api, hasAuthToken, setAuthToken, setUnauthorizedHandler } from "./api";
 import MfaSettings from "./MfaSettings";
 import ChartSkeleton from "./ChartSkeleton";
@@ -27,7 +26,6 @@ import PhotoPicker from "./PhotoPicker";
 import { realtimeConnected, startRealtime, stopRealtime, subscribeRealtime } from "./realtime";
 import useLoginGuard, { COOLDOWN_SECONDS } from "./useLoginGuard";
 import { TicketDetailsModal } from "./TicketChat";
-import { ChangePasswordModal, PasswordStrength } from "./PasswordStrength";
 
 // Charts and the super admin screens are only needed by a few roles, so they load on demand
 // instead of making every student download the charting library.
@@ -181,7 +179,6 @@ function App() {
   const [profile, setProfile] = useState(null);
   const [myPwRequests, setMyPwRequests] = useState([]);
   const [pwRequests, setPwRequests] = useState([]);
-  const [changePwOpen, setChangePwOpen] = useState(false);
   const [pwForm, setPwForm] = useState({ newPassword: "", confirm: "", reason: "" });
   const [pwSubmitting, setPwSubmitting] = useState(false);
   const [request, setRequest] = useState({
@@ -261,7 +258,7 @@ function App() {
   // Poll for notifications. Anything new pops up as a toast and refreshes the
   // ticket data so statuses stay current without a manual reload.
   useEffect(() => {
-    if (!user || user.mustChangePassword || user.role === "superadmin" || user.role === "report_viewer") return;
+    if (!user || user.role === "superadmin" || user.role === "report_viewer") return;
     let active = true;
     seenNotifications.current = null;
     const load = () =>
@@ -302,14 +299,14 @@ function App() {
 
   // One live connection per signed-in session.
   useEffect(() => {
-    if (!user || user.mustChangePassword) return undefined;
+    if (!user) return undefined;
     startRealtime();
     return stopRealtime;
   }, [user]);
 
   // Load tickets and activities from the database once a user is signed in.
   useEffect(() => {
-    if (!user || user.mustChangePassword) return;
+    if (!user) return;
     let active = true;
     const isPrivateUser =
       user.role === "student" || user.role === "staff";
@@ -356,7 +353,7 @@ function App() {
   // Keep password change requests fresh so users see approval/rejection while
   // they wait, and admins see new requests without reloading the page.
   useEffect(() => {
-    if (!user || user.mustChangePassword) return;
+    if (!user) return;
     let active = true;
     const canReview = ["admin", "superadmin"].includes(user.role);
 
@@ -526,8 +523,8 @@ function App() {
 
   async function submitPasswordChange(event) {
     event.preventDefault();
-    if (!evaluatePassword(pwForm.newPassword, { id: user.id, name: user.name, email: user.email }).ok) {
-      showMessage("Password too weak", "Follow the checklist under the new password field.");
+    if (pwForm.newPassword.length < 6) {
+      showMessage("Password too short", "Use at least 6 characters for the new password.");
       return;
     }
     if (pwForm.newPassword !== pwForm.confirm) {
@@ -843,19 +840,6 @@ function App() {
           </button>
         ))}
       </nav>
-      {user && (user.mustChangePassword || changePwOpen) && (
-        <ChangePasswordModal
-          user={user}
-          forced={Boolean(user.mustChangePassword)}
-          onClose={() => setChangePwOpen(false)}
-          onDone={() => {
-            setChangePwOpen(false);
-            setUser((current) => ({ ...current, mustChangePassword: false }));
-            refreshData();
-            showMessage("Password changed", "Your new password is active.");
-          }}
-        />
-      )}
       {profileOpen && (
         <ProfileModal
           user={user}
@@ -868,10 +852,6 @@ function App() {
           submitting={pwSubmitting}
           onSubmitRequest={submitPasswordChange}
           onProfileChanged={() => api.getProfile(user.userId).then(setProfile).catch(() => {})}
-          onChangePassword={() => {
-            setProfileOpen(false);
-            setChangePwOpen(true);
-          }}
           showMessage={showMessage}
           onClose={() => setProfileOpen(false)}
           onLogout={logout}
@@ -1009,7 +989,7 @@ function AuthScreen({
                 <Field
                   label="ID number"
                   type="text"
-                  placeholder="e.g. 2024-00417"
+                  placeholder="e.g. 2404154"
                   value={credentials.id}
                   onChange={(value) =>
                     setCredentials({ ...credentials, id: value })
@@ -1172,10 +1152,6 @@ function AuthScreen({
                   onChange={(value) =>
                     setSignupForm((current) => ({ ...current, password: value }))
                   }
-                />
-                <PasswordStrength
-                  password={signupForm.password}
-                  context={{ id: signupForm.id, name: signupForm.fullName, email: signupForm.email }}
                 />
                 <button
                   className="button button-primary full-width"
@@ -1365,11 +1341,10 @@ function ChangePasswordForm({ pwForm, setPwForm, submitting, onSubmitRequest, on
       </p>
       <PasswordField
         label="New password"
-        placeholder="At least 10 characters"
+        placeholder="At least 6 characters"
         value={pwForm.newPassword}
         onChange={(value) => setPwForm((current) => ({ ...current, newPassword: value }))}
       />
-      <PasswordStrength password={pwForm.newPassword} />
       <PasswordField
         label="Confirm new password"
         placeholder="Re-type the new password"
@@ -1407,7 +1382,6 @@ function ProfileModal({
   submitting,
   onSubmitRequest,
   onProfileChanged,
-  onChangePassword,
   showMessage,
   onClose,
   onLogout,
@@ -1462,10 +1436,7 @@ function ProfileModal({
                 onClick={() => setView("changePassword")}
                 disabled={isPending}
               >
-                {isPending ? "Request pending approval" : "Ask an admin to reset it"}
-              </button>
-              <button type="button" className="button button-outline full-width" onClick={onChangePassword}>
-                Change password
+                {isPending ? "Request pending approval" : "Change password"}
               </button>
               <button type="button" className="button button-outline full-width" onClick={() => setView("alerts")}>
                 Email and text alerts

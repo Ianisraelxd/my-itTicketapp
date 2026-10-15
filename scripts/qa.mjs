@@ -1,4 +1,3 @@
-import { DEMO_PASSWORD, idFor } from "./demo-accounts.mjs";
 // API quality checks: authentication, access control, input validation, concurrency and speed.
 // Run against a database created from server/schema.sql (never your real data):
 //   API=http://localhost:3001/api node scripts/qa.mjs
@@ -36,19 +35,19 @@ async function raw(method, path, { token, body, headers = {}, rawBody } = {}) {
   return { status: response.status, json, text, headers: response.headers };
 }
 
-async function login(role, password, id = idFor(role)) {
+async function login(role, password, id = "2404154") {
   const response = await raw("POST", "/login", { body: { id, password, role } });
   return response.json;
 }
 
 const accounts = {};
 for (const [name, role, password] of [
-  ["student", "student", DEMO_PASSWORD],
-  ["staff", "staff", DEMO_PASSWORD],
-  ["agent", "agent", DEMO_PASSWORD],
-  ["admin", "admin", DEMO_PASSWORD],
-  ["superadmin", "superadmin", DEMO_PASSWORD],
-  ["viewer", "report_viewer", DEMO_PASSWORD],
+  ["student", "student", "123456student"],
+  ["staff", "staff", "123456employee"],
+  ["agent", "agent", "123456technician"],
+  ["admin", "admin", "123456admin"],
+  ["superadmin", "superadmin", "123456superadmin"],
+  ["viewer", "report_viewer", "123456viewer"],
 ]) {
   accounts[name] = await login(role, password);
   if (!accounts[name]?.token) throw new Error(`Cannot sign in as ${name}: ${JSON.stringify(accounts[name])}. Use a fresh demo database.`);
@@ -100,10 +99,10 @@ section("Authentication");
   for (const [label, body] of [
     ["empty body", {}],
     ["SQL injection id", { id: "' OR 1=1 --", password: "x", role: "student" }],
-    ["SQL injection password", { id: idFor("student"), password: "' OR '1'='1", role: "student" }],
+    ["SQL injection password", { id: "2404154", password: "' OR '1'='1", role: "student" }],
     ["object id", { id: { $ne: 1 }, password: "x", role: "student" }],
-    ["array password", { id: idFor("student"), password: ["a"], role: "student" }],
-    ["number role", { id: idFor("student"), password: "x", role: 5 }],
+    ["array password", { id: "2404154", password: ["a"], role: "student" }],
+    ["number role", { id: "2404154", password: "x", role: 5 }],
     ["role bot", { id: "assistant", password: "scrypt$locked$locked", role: "bot" }],
     ["very long id", { id: "9".repeat(5000), password: "x", role: "student" }],
   ]) {
@@ -116,7 +115,7 @@ section("Authentication");
 section("Sign up");
 {
   const stamp = Date.now();
-  const make = (over = {}) => ({ fullName: "QA User", id: `qa${stamp}${Math.random().toString(36).slice(2, 6)}`, email: "qa@example.com", userType: "Student", password: "Vq7!harbor-Lm", ...over });
+  const make = (over = {}) => ({ fullName: "QA User", id: `qa${stamp}${Math.random().toString(36).slice(2, 6)}`, email: "qa@example.com", userType: "Student", password: "secret12", ...over });
   const good = await raw("POST", "/signup", { body: make() });
   check(good.status === 201, "signup ok", String(good.status));
   const dupBody = make();
@@ -132,11 +131,11 @@ section("Sign up");
   check(badEmail.status === 400, "invalid email rejected", String(badEmail.status));
   const escalate = make({ userType: "Admin" });
   await raw("POST", "/signup", { body: escalate });
-  const asStudent = await login("student", "Vq7!harbor-Lm", escalate.id);
+  const asStudent = await login("student", "secret12", escalate.id);
   check(asStudent?.role === "student" || !asStudent?.token, "signup cannot create an admin", JSON.stringify(asStudent).slice(0, 80));
   const staffSignup = make({ userType: "University Staff" });
   await raw("POST", "/signup", { body: staffSignup });
-  check((await login("staff", "Vq7!harbor-Lm", staffSignup.id))?.role === "staff", "University Staff signup -> staff role");
+  check((await login("staff", "secret12", staffSignup.id))?.role === "staff", "University Staff signup -> staff role");
   const xss = make({ fullName: "<img src=x onerror=alert(1)>" });
   check((await raw("POST", "/signup", { body: xss })).status === 201, "xss-looking name stored as text");
 }
@@ -175,7 +174,7 @@ section("Access control matrix");
   await forbid("superadmin", "POST", "/tickets", ticketBody(), "create tickets");
 
   // other people's tickets
-  const other = await login("staff", DEMO_PASSWORD);
+  const other = await login("staff", "123456employee");
   await forbid("staff", "GET", `/tickets/${enc(code)}/messages`, undefined, "read someone else's ticket chat");
   await forbid("staff", "POST", `/tickets/${enc(code)}/messages`, { text: "hi" }, "write in someone else's ticket chat");
   await forbid("staff", "POST", `/tickets/${enc(code)}/bot`, { choice: "menu" }, "use the bot on someone else's ticket");
@@ -365,16 +364,16 @@ section("Reports, KPIs and archive");
 section("Lockout and account safety");
 {
   const stamp = `lock${Date.now()}`;
-  await raw("POST", "/signup", { body: { fullName: "Lock Test", id: stamp, email: "l@example.com", userType: "Student", password: "Gx4#lantern-Rt" } });
+  await raw("POST", "/signup", { body: { fullName: "Lock Test", id: stamp, email: "l@example.com", userType: "Student", password: "rightpass1" } });
   let last;
-  for (let i = 0; i < 10; i += 1) last = await raw("POST", "/login", { body: { id: stamp, password: "wrong", role: "student" } });
-  check(last.status === 423 || last.status === 429, "10th wrong password -> locked", String(last.status));
-  const stillLocked = await raw("POST", "/login", { body: { id: stamp, password: "Gx4#lantern-Rt", role: "student" } });
+  for (let i = 0; i < 6; i += 1) last = await raw("POST", "/login", { body: { id: stamp, password: "wrong", role: "student" } });
+  check(last.status === 423 || last.status === 429, "6th wrong password -> locked", String(last.status));
+  const stillLocked = await raw("POST", "/login", { body: { id: stamp, password: "rightpass1", role: "student" } });
   check(!stillLocked.json?.token, "correct password refused while locked", String(stillLocked.status));
   const profile = await raw("GET", `/profile/${accounts.student.userId}`, { token: tok("student") });
   check(!/password|mfa_secret|scrypt/i.test(profile.text), "profile never exposes secrets");
   const me = await raw("GET", "/me", { token: tok("student") });
-  check(!/"password"|mfa_secret|scrypt/i.test(me.text), "/me never exposes secrets");
+  check(!/password|mfa_secret|scrypt/i.test(me.text), "/me never exposes secrets");
   const users = await raw("GET", "/users", { token: tok("admin") });
   check(!/password|mfa_secret|scrypt/i.test(users.text) && !users.json?.some((u) => u.roleKey === "bot"), "user list has no secrets and no bot");
 }
@@ -395,7 +394,7 @@ section("Speed (single requests and bulk data)");
   await timed("GET /kpi", () => raw("GET", "/kpi", { token: tok("superadmin") }), 800);
   await timed("GET /kpi/trend", () => raw("GET", "/kpi/trend", { token: tok("superadmin") }), 1500);
   await timed("GET /notifications", () => raw("GET", `/notifications?userId=${accounts.admin.userId}`, { token: tok("admin") }), 300);
-  const logins = await Promise.all(Array.from({ length: 10 }, () => login("student", DEMO_PASSWORD)));
+  const logins = await Promise.all(Array.from({ length: 10 }, () => login("student", "123456student")));
   check(logins.every((l) => l?.token), "10 simultaneous logins");
 }
 

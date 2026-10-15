@@ -4437,13 +4437,3 @@ html[data-theme="dark"] .button-dark {
 .presence-dot.on { background: #2f9e6e; box-shadow: 0 0 0 3px rgba(47, 158, 110, .2) }
 .quick-replies button .icon { margin-right: 6px; vertical-align: -3px }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 1.6s } }
-
-/* password strength + checklist */
-.pw-strength { display: grid; gap: 6px; margin: -4px 0 10px; font-size: 0.85rem; }
-.pw-meter { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
-.pw-meter span { height: 6px; border-radius: 3px; background: var(--line); transition: background 0.2s; }
-.pw-checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
-.pw-checks li { display: flex; align-items: center; gap: 6px; color: var(--muted); }
-.pw-checks li.pw-ok { color: var(--good-fg, #067647); }
-.pw-toggle { font-size: 0.75rem; width: auto; padding: 0 8px; }
-.form-error { color: var(--bad-fg, #b42318); margin: 0; font-size: 0.9rem; }

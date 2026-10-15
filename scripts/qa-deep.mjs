@@ -6,7 +6,6 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 
 import { pool, query } from "../server/db.js";
-import { DEMO_PASSWORD, idFor } from "./demo-accounts.mjs";
 
 const API = (process.env.API || "http://localhost:3001/api").replace(/\/$/, "");
 const failures = [];
@@ -36,7 +35,7 @@ async function raw(method, path, { token, body } = {}) {
   }
   return { status: response.status, json, text };
 }
-const login = async (role, password, id = idFor(role)) => (await raw("POST", "/login", { body: { id, password, role } })).json;
+const login = async (role, password, id = "2404154") => (await raw("POST", "/login", { body: { id, password, role } })).json;
 
 // RFC 6238 code generator (same algorithm as the authenticator apps)
 function totp(secret, offset = 0) {
@@ -53,10 +52,10 @@ function totp(secret, offset = 0) {
 
 const accounts = {};
 for (const [name, role, password] of [
-  ["student", "student", DEMO_PASSWORD],
-  ["agent", "agent", DEMO_PASSWORD],
-  ["admin", "admin", DEMO_PASSWORD],
-  ["superadmin", "superadmin", DEMO_PASSWORD],
+  ["student", "student", "123456student"],
+  ["agent", "agent", "123456technician"],
+  ["admin", "admin", "123456admin"],
+  ["superadmin", "superadmin", "123456superadmin"],
 ]) accounts[name] = await login(role, password);
 const tok = (name) => accounts[name].token;
 const room = (await raw("GET", "/locations", { token: tok("student") })).json[0].id;
@@ -103,7 +102,7 @@ section("Archive pipeline keeps reports and ticket numbers intact");
   check(csvBytes[0] === 0xef && csvBytes[1] === 0xbb && csvBytes[2] === 0xbf, "the CSV starts with a byte-order mark (opens correctly in Excel)");
   check(csvLines[0].startsWith('\uFEFF"Ticket","Subject","Category"') && /"Assigned agent"/.test(csvLines[0]) && !/ticket_pk|created_by|assigned_to/.test(csvLines[0]), "readable column names", csvLines[0].slice(0, 80));
   const csvRow = csvLines[1] ?? "";
-  check(/"#HD\d{3}"/.test(csvRow) && /"Carlo Mendoza"/.test(csvRow) && /"Maria Santos"/.test(csvRow), "names instead of ID numbers", csvRow.slice(0, 160));
+  check(/"#HD\d{3}"/.test(csvRow) && /"Agent User"/.test(csvRow) && /"Student User"/.test(csvRow), "names instead of ID numbers", csvRow.slice(0, 160));
   check(/"2025-03-01 10:00"/.test(csvRow) && /"2025-03-01 12:00"/.test(csvRow) && !/T\d\d:\d\d:\d\d\.\d{3}Z/.test(csvRow), "dates formatted as year-month-day hour:minute");
   check(csvLines.length >= 5 && csvLines.filter((line) => line.length > 0).length === 5, "one line per archived ticket plus the header", String(csvLines.length));
   const runs = await raw("GET", "/superadmin/archive/runs", { token: tok("superadmin") });
@@ -119,17 +118,17 @@ section("Two-step verification (TOTP)");
 {
   const stamp = `mfa${Date.now()}`;
   // Two-step verification is for staff accounts, so make this tester an agent first.
-  await raw("POST", "/signup", { body: { fullName: "MFA Tester", id: stamp, email: "m@example.com", userType: "University Staff", password: "Mf8$orchard-Jk" } });
-  const created = await login("staff", "Mf8$orchard-Jk", stamp);
+  await raw("POST", "/signup", { body: { fullName: "MFA Tester", id: stamp, email: "m@example.com", userType: "University Staff", password: "mfapass12" } });
+  const created = await login("staff", "mfapass12", stamp);
   await raw("PATCH", `/users/${created.userId}/role`, { token: tok("admin"), body: { role: "agent" } });
-  const who = await login("agent", "Mf8$orchard-Jk", stamp);
+  const who = await login("agent", "mfapass12", stamp);
   const setup = await raw("POST", "/mfa/setup", { token: who.token });
   check(setup.status === 200 && setup.json.secret, "MFA setup returns a secret", String(setup.status));
   const wrong = await raw("POST", "/mfa/enable", { token: who.token, body: { code: "000000" } });
   check(wrong.status === 400 || wrong.status === 401, "wrong code does not enable MFA", String(wrong.status));
   const enable = await raw("POST", "/mfa/enable", { token: who.token, body: { code: totp(setup.json.secret) } });
   check(enable.status === 200, "right code enables MFA", `${enable.status} ${enable.text.slice(0, 80)}`);
-  const first = await login("agent", "Mf8$orchard-Jk", stamp);
+  const first = await login("agent", "mfapass12", stamp);
   check(first.mfaRequired && first.mfaToken && !first.token, "login now asks for a code");
   const badCode = await raw("POST", "/login/mfa", { body: { mfaToken: first.mfaToken, code: "123456" } });
   check(badCode.status >= 400 && !badCode.json?.token, "wrong code refused", String(badCode.status));
@@ -145,19 +144,19 @@ section("Two-step verification (TOTP)");
 section("Password change request end to end");
 {
   const stamp = `pw${Date.now()}`;
-  await raw("POST", "/signup", { body: { fullName: "Pw Tester", id: stamp, email: "p@example.com", userType: "Student", password: "Ol6&cobalt-Wn" } });
-  const who = await login("student", "Ol6&cobalt-Wn", stamp);
-  const request = await raw("POST", "/password-requests", { token: who.token, body: { newPassword: "Nw9*pewter-Ds", reason: "test" } });
+  await raw("POST", "/signup", { body: { fullName: "Pw Tester", id: stamp, email: "p@example.com", userType: "Student", password: "oldpass12" } });
+  const who = await login("student", "oldpass12", stamp);
+  const request = await raw("POST", "/password-requests", { token: who.token, body: { newPassword: "newpass12", reason: "test" } });
   check(request.status === 201, "request filed", String(request.status));
-  check((await login("student", "Nw9*pewter-Ds", stamp))?.token === undefined, "new password does not work before approval");
+  check((await login("student", "newpass12", stamp))?.token === undefined, "new password does not work before approval");
   const pending = await raw("GET", "/password-requests", { token: tok("admin") });
   check(pending.json.some((r) => r.id === request.json.id), "admin sees the request");
   const stranger = await raw("PATCH", `/password-requests/${enc(request.json.id)}/status`, { token: tok("student"), body: { status: "Approved" } });
   check(stranger.status === 403, "a student cannot approve it", String(stranger.status));
   const approve = await raw("PATCH", `/password-requests/${enc(request.json.id)}/status`, { token: tok("admin"), body: { status: "Approved", note: "ok" } });
   check(approve.status === 200, "admin approves", String(approve.status));
-  check((await login("student", "Nw9*pewter-Ds", stamp))?.token, "new password works after approval");
-  check(!(await login("student", "Ol6&cobalt-Wn", stamp))?.token, "old password stops working");
+  check((await login("student", "newpass12", stamp))?.token, "new password works after approval");
+  check(!(await login("student", "oldpass12", stamp))?.token, "old password stops working");
   const again = await raw("PATCH", `/password-requests/${enc(request.json.id)}/status`, { token: tok("admin"), body: { status: "Approved" } });
   check(again.status === 409, "cannot decide twice", String(again.status));
 }
@@ -166,11 +165,11 @@ section("Password change request end to end");
 section("Roles and admin management");
 {
   const stamp = `role${Date.now()}`;
-  await raw("POST", "/signup", { body: { fullName: "Role Tester", id: stamp, email: "r@example.com", userType: "University Staff", password: "Rl3%meadow-Qz" } });
-  const target = await login("staff", "Rl3%meadow-Qz", stamp);
+  await raw("POST", "/signup", { body: { fullName: "Role Tester", id: stamp, email: "r@example.com", userType: "University Staff", password: "rolepass12" } });
+  const target = await login("staff", "rolepass12", stamp);
   const toAgent = await raw("PATCH", `/users/${target.userId}/role`, { token: tok("admin"), body: { role: "agent" } });
   check(toAgent.status === 200 && toAgent.json.roleName === "Agent", "admin makes staff an agent", toAgent.text.slice(0, 100));
-  check((await login("agent", "Rl3%meadow-Qz", stamp))?.role === "agent", "they sign in as an agent now");
+  check((await login("agent", "rolepass12", stamp))?.role === "agent", "they sign in as an agent now");
   check((await raw("PATCH", `/users/${target.userId}/role`, { token: tok("admin"), body: { role: "admin" } })).status === 400, "admin cannot use this to create admins");
   const skills = await raw("PATCH", `/users/${target.userId}/skills`, { token: tok("admin"), body: { skills: ["Hardware", "Nonsense"] } });
   check(skills.status === 400, "unknown skill names are rejected", String(skills.status));
@@ -179,10 +178,10 @@ section("Roles and admin management");
 
   const grant = await raw("PUT", `/superadmin/manage-admins/${target.userId}`, { token: tok("superadmin"), body: { action: "grant" } });
   check(grant.status === 200, "super admin grants admin", `${grant.status} ${grant.text.slice(0, 100)}`);
-  check((await login("admin", "Rl3%meadow-Qz", stamp))?.role === "admin", "they can sign in as admin");
+  check((await login("admin", "rolepass12", stamp))?.role === "admin", "they can sign in as admin");
   const revoke = await raw("PUT", `/superadmin/manage-admins/${target.userId}`, { token: tok("superadmin"), body: { action: "revoke" } });
   check(revoke.status === 200, "super admin revokes");
-  check(!(await login("admin", "Rl3%meadow-Qz", stamp))?.token, "admin sign-in stops working");
+  check(!(await login("admin", "rolepass12", stamp))?.token, "admin sign-in stops working");
   check((await raw("PUT", `/superadmin/manage-admins/${target.userId}`, { token: tok("admin"), body: { action: "grant" } })).status === 403, "an admin cannot grant admin rights");
   check((await raw("PUT", `/superadmin/manage-admins/${target.userId}`, { token: tok("superadmin"), body: { action: "explode" } })).status === 400, "unknown action -> 400");
   check((await raw("PUT", `/superadmin/manage-admins/${accounts.superadmin.userId}`, { token: tok("superadmin"), body: { action: "revoke" } })).status >= 400, "the super admin cannot revoke themselves");

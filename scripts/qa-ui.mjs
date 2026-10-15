@@ -5,7 +5,6 @@
 import fs from "node:fs";
 
 import puppeteer from "puppeteer-core";
-import { DEMO_PASSWORD, idFor } from "./demo-accounts.mjs";
 
 const BASE = (process.argv[2] || "http://localhost:5173").replace(/\/$/, "");
 const BROWSER = process.env.CHROME_PATH ||
@@ -18,12 +17,12 @@ if (!BROWSER) throw new Error("No browser found. Set CHROME_PATH.");
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const ROLES = [
-  ["student", DEMO_PASSWORD],
-  ["staff", DEMO_PASSWORD],
-  ["agent", DEMO_PASSWORD],
-  ["admin", DEMO_PASSWORD],
-  ["superadmin", DEMO_PASSWORD],
-  ["report_viewer", DEMO_PASSWORD],
+  ["student", "123456student"],
+  ["staff", "123456employee"],
+  ["agent", "123456technician"],
+  ["admin", "123456admin"],
+  ["superadmin", "123456superadmin"],
+  ["report_viewer", "123456viewer"],
 ];
 const SCREENS = {
   desktop: { width: 1440, height: 900 },
@@ -53,7 +52,7 @@ for (const [screenName, viewport] of Object.entries(SCREENS)) {
     });
 
     await page.goto(BASE, { waitUntil: "networkidle0" });
-    await page.type("input[type=text]", idFor(role));
+    await page.type("input[type=text]", "2404154");
     await page.type("input[type=password]", password);
     await page.select("select", role);
     await page.click("button[type=submit]");

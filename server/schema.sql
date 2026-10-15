@@ -33,7 +33,6 @@ DROP TABLE IF EXISTS ticket_events;
 DROP TABLE IF EXISTS ticket_assignments;
 DROP TABLE IF EXISTS tickets;
 DROP TABLE IF EXISTS locations;
-DROP TABLE IF EXISTS password_history;
 DROP TABLE IF EXISTS users;
 
 CREATE TABLE users (
@@ -45,7 +44,7 @@ CREATE TABLE users (
   role_name  VARCHAR(120) NOT NULL,
   email      VARCHAR(160) NULL,
   skills     VARCHAR(255) NOT NULL DEFAULT '',  -- comma-separated ticket categories an agent is recommended for
-  failed_logins  INT NOT NULL DEFAULT 0,        -- wrong passwords in a row (5 = cooldown, 10 = lock)
+  failed_logins  INT NOT NULL DEFAULT 0,        -- wrong passwords in a row (5 locks the account)
   locked_until   DATETIME NULL,                 -- set while the account is locked
   mfa_enabled    TINYINT(1) NOT NULL DEFAULT 0, -- two-step verification (authenticator app)
   mfa_secret     VARCHAR(64) NULL,
@@ -53,11 +52,6 @@ CREATE TABLE users (
   last_seen_at   TIMESTAMP NULL,                -- last API call by an agent/admin (presence for the assistant)
   phone          VARCHAR(32) NULL,              -- optional, for text-message alerts
   email_alerts   TINYINT(1) NOT NULL DEFAULT 1, -- 0 = no alert emails
-  must_change_password TINYINT(1) NOT NULL DEFAULT 0, -- 1 = must choose a new password before doing anything else
-  password_changed_at  TIMESTAMP NULL,           -- NULL = never changed since the account was seeded
-  lock_level   TINYINT NOT NULL DEFAULT 0,       -- progressive lockout: how many times in a row the account was locked
-  last_failed_at TIMESTAMP NULL,                 -- when the last wrong password was typed
-  token_version INT NOT NULL DEFAULT 0,          -- raised on a password change: signs every other session out
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_user_role (id_number, role)
 );
@@ -144,18 +138,29 @@ CREATE TABLE password_requests (
 -- Seed data (mirrors the hardcoded values previously in App.jsx)
 -- ---------------------------------------------------------------------------
 
--- The accounts are created by the server on the first start (server/seed.js): realistic IDs, random strong passwords.
+INSERT INTO users (id_number, password, name, role, role_name, email) VALUES
+  ('2404154', '123456student',    'Student User', 'student',    'Student',                    'student@campus.edu'),
+  ('2404154', '123456employee',   'Staff User','staff',   'University Staff',        'employee@campus.edu'),
+  ('2404154', '123456technician', 'Agent User','agent','Agent',                'technician@campus.edu'),
+  ('2404154', '123456admin',      'Users Admin',  'admin',      'Student / Staff Admin',   'admin@campus.edu'),
+  ('2404154', '123456superadmin', 'Super Admin',  'superadmin', 'Super Admin',                'superadmin@campus.edu');
 
 INSERT INTO activities (actor_name, actor_role, action, created_at) VALUES
   ('System', 'System', 'Database initialized', '2026-08-30 10:30:00');
 
 -- Extran agents with different skills, so recommendations are visible.
+INSERT INTO users (id_number, password, name, role, role_name, email, skills) VALUES
+  ('2404155', '123456technician', 'Software Agent', 'agent', 'Agent', 'software.tech@campus.edu', 'Software,Account / Login'),
+  ('2404156', '123456technician', 'Network Agent',  'agent', 'Agent', 'network.tech@campus.edu',  'Network / Internet');
+UPDATE users SET skills = 'Hardware,Printer' WHERE id_number = '2404154' AND role = 'agent';
 
+-- Read-only account for dashboards (kept after the agents so existing user ids stay the same).
+INSERT INTO users (id_number, password, name, role, role_name, email) VALUES
+  ('2404154', '123456viewer', 'Report Viewer', 'report_viewer', 'Report Viewer', 'viewer@campus.edu');
 
-
-
-
-
+-- The HelpDesk Assistant chatbot posts in ticket conversations. Its password is not a valid hash, so nobody can sign in as it.
+INSERT INTO users (id_number, password, name, role, role_name, email) VALUES
+  ('assistant', 'scrypt$locked$locked', 'HelpDesk Assistant', 'bot', 'Assistant Bot', NULL);
 
 -- Who had each ticket and how it got to them (manual, auto, expired); used to rotate between specialists.
 CREATE TABLE ticket_assignments (
@@ -382,13 +387,3 @@ SELECT * FROM (
     'priority p1 p2 p3 p4 urgent assign agent how long ticket sla'
 ) AS seed
 WHERE NOT EXISTS (SELECT 1 FROM kb_articles);
-
--- The last few password hashes of each person, so a password cannot be reused.
-CREATE TABLE password_history (
-  history_pk    INT AUTO_INCREMENT PRIMARY KEY,
-  user_pk       INT NOT NULL,
-  password_hash VARCHAR(255) NOT NULL,
-  created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  KEY idx_pwhist_user (user_pk, history_pk),
-  CONSTRAINT fk_pwhist_user FOREIGN KEY (user_pk) REFERENCES users(user_pk) ON DELETE CASCADE
-);

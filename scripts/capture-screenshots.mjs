@@ -8,7 +8,6 @@ import os from "node:os";
 import path from "node:path";
 
 import puppeteer from "puppeteer-core";
-import { DEMO_PASSWORD, idFor } from "./demo-accounts.mjs";
 
 const BASE = (process.argv[2] || "http://localhost:5175").replace(/\/$/, "");
 const OUT = path.resolve("docs/screenshots");
@@ -61,7 +60,7 @@ async function clickText(page, selector, text) {
 
 async function login(page, role, password) {
   await page.goto(BASE, { waitUntil: "networkidle0" });
-  await page.type("input[type=text]", idFor(role));
+  await page.type("input[type=text]", "2404154");
   await page.type("input[type=password]", password);
   await page.select("select", role);
   await page.click("button[type=submit]");
@@ -149,8 +148,8 @@ async function openTicket(page, subjectPart) {
 
 // Direct API calls (the API needs a signed-in user, so sign in as the account that acts).
 const ACCOUNTS = {
-  agent: ["agent", DEMO_PASSWORD],
-  superadmin: ["superadmin", DEMO_PASSWORD],
+  agent: ["agent", "123456technician"],
+  superadmin: ["superadmin", "123456superadmin"],
 };
 const tokens = {};
 async function api(route, body, method = "POST", as = "superadmin") {
@@ -159,7 +158,7 @@ async function api(route, body, method = "POST", as = "superadmin") {
     const response = await fetch(`${BASE}/api/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: idFor(role), role, password }),
+      body: JSON.stringify({ id: "2404154", role, password }),
     });
     tokens[as] = (await response.json()).token;
   }
@@ -226,7 +225,7 @@ await addPhotoTo("Projector in Lab 1");
 // ------------------------------------------------------------------ student (light)
 {
   const { context, page } = await open();
-  await login(page, "student", DEMO_PASSWORD);
+  await login(page, "student", "123456student");
   await shot(page, "03-student-dashboard");
 
   await nav(page, "Submit Request");
@@ -300,7 +299,7 @@ await addPhotoTo("Projector in Lab 1");
   await shot(page, "37-help-articles");
 
   // Profile > Email and text alerts
-  await page.evaluate(() => [...document.querySelectorAll(".sidebar button")].find((b) => b.textContent.includes("Maria Santos")).click());
+  await page.evaluate(() => [...document.querySelectorAll(".sidebar button")].find((b) => b.textContent.includes("Student User")).click());
   await sleep(600);
   await clickText(page, ".profile-actions button", "Email and text alerts");
   await sleep(900);
@@ -320,7 +319,7 @@ await addPhotoTo("Projector in Lab 1");
 // ------------------------------------------------------------------ student (dark)
 {
   const { context, page } = await open({ theme: "dark" });
-  await login(page, "student", DEMO_PASSWORD);
+  await login(page, "student", "123456student");
   await shot(page, "12-student-dashboard-dark");
   await nav(page, "My Requests");
   await openTicket(page, "Projector in Lab 1");
@@ -331,7 +330,7 @@ await addPhotoTo("Projector in Lab 1");
 // ------------------------------------------------------------------ phone
 {
   const { context, page } = await open({ viewport: MOBILE });
-  await login(page, "student", DEMO_PASSWORD);
+  await login(page, "student", "123456student");
   await shot(page, "14-mobile-dashboard");
   await nav(page, "My Requests");
   await openTicket(page, "Projector in Lab 1");
@@ -347,7 +346,7 @@ await addPhotoTo("Projector in Lab 1");
 // ------------------------------------------------------------------ agent
 {
   const { context, page } = await open();
-  await login(page, "agent", DEMO_PASSWORD);
+  await login(page, "agent", "123456technician");
   await shot(page, "18-agent-dashboard");
   await nav(page, "Assigned Requests");
   await shot(page, "19-agent-queue");
@@ -366,7 +365,7 @@ await addPhotoTo("Projector in Lab 1");
 // ------------------------------------------------------------------ admin
 {
   const { context, page } = await open();
-  await login(page, "admin", DEMO_PASSWORD);
+  await login(page, "admin", "123456admin");
   await nav(page, "Manage Requests");
   await shot(page, "21-admin-manage-requests");
 
@@ -405,7 +404,7 @@ await addPhotoTo("Projector in Lab 1");
   await sleep(500);
   await page.click(".chat-launcher");
   await sleep(700);
-  await clickText(page, ".chat-contact", "Carlo Mendoza");
+  await clickText(page, ".chat-contact", "Agent User");
   await sleep(1200);
   await page.type(".chat-window .chat-compose textarea", "Great, thank you! Please update the ticket when it is done.");
   await page.keyboard.press("Enter");
@@ -417,7 +416,7 @@ await addPhotoTo("Projector in Lab 1");
 // ------------------------------------------------------------------ super admin
 {
   const { context, page } = await open();
-  await login(page, "superadmin", DEMO_PASSWORD);
+  await login(page, "superadmin", "123456superadmin");
   // Pick this month's KPIs the way a super admin would, then show the scorecard.
   const thisMonth = new Date().toISOString().slice(0, 7);
   await api(
@@ -479,7 +478,7 @@ await addPhotoTo("Projector in Lab 1");
 }
 {
   const { context, page } = await open({ theme: "dark" });
-  await login(page, "superadmin", DEMO_PASSWORD);
+  await login(page, "superadmin", "123456superadmin");
   await nav(page, "Report Manager", 3200);
   await page.setViewport({ ...DESKTOP, height: 3000 });
   await sleep(1200);

@@ -8,7 +8,6 @@ import { fileURLToPath } from "node:url";
 import mysql from "mysql2/promise";
 
 import { dbSsl } from "./db.js";
-import { replaceOldDefaultPasswords, seedAccounts } from "./seed.js";
 
 const DB_NAME = process.env.DB_NAME || "helpdesk";
 const here = (file) => fileURLToPath(new URL(file, import.meta.url));
@@ -46,7 +45,6 @@ export const MIGRATIONS = [
   { file: "2026-10-performance.sql", done: (c) => indexExists(c, "tickets", "idx_ticket_status") },
   { file: "2026-10-features.sql", done: (c) => tableExists(c, "kb_articles") },
   { file: "2026-10-idempotency.sql", done: (c) => columnExists(c, "tickets", "client_token") },
-  { file: "2026-10-security.sql", done: (c) => columnExists(c, "users", "token_version") },
 ];
 
 export async function ensureSchema({ log = console.log } = {}) {
@@ -73,8 +71,7 @@ export async function ensureSchema({ log = console.log } = {}) {
         .replace(/CREATE DATABASE IF NOT EXISTS helpdesk/, `CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\``)
         .replace(/USE helpdesk;/, `USE \`${DB_NAME}\`;`);
       await conn.query(sql);
-      log("Database ready.");
-      await seedAccounts(conn, { log });
+      log("Database ready. Demo accounts were added (see README, Demo accounts).");
       return { created: true, migrated: [] };
     }
 
@@ -85,27 +82,7 @@ export async function ensureSchema({ log = console.log } = {}) {
       await conn.query(fs.readFileSync(here(`./migrations/${migration.file}`), "utf8"));
       migrated.push(migration.file);
     }
-    // Accounts that still use the old shared demo passwords get new random ones (only looked at once).
-    await replaceOldDefaultPasswords(conn, { log });
     return { created: false, migrated };
-  } finally {
-    await conn.end();
-  }
-}
-
-/** Wipes everything and starts again from schema.sql with fresh accounts (npm run db:init --yes). */
-export async function resetDatabase({ log = console.log } = {}) {
-  const server = await connect(undefined);
-  await server.query(`CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
-  await server.end();
-  const conn = await connect(DB_NAME);
-  try {
-    const sql = fs
-      .readFileSync(here("./schema.sql"), "utf8")
-      .replace(/CREATE DATABASE IF NOT EXISTS helpdesk/, `CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\``)
-      .replace(/USE helpdesk;/, `USE \`${DB_NAME}\`;`);
-    await conn.query(sql);
-    await seedAccounts(conn, { log });
   } finally {
     await conn.end();
   }

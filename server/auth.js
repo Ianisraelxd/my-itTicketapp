@@ -13,8 +13,6 @@ import { query } from "./db.js";
 import { verifyToken } from "./security.js";
 
 const PUBLIC_ROUTES = new Set(["GET /health", "POST /login", "POST /login/mfa", "POST /signup", "POST /forgot-password", "GET /events"]);
-// Everything a person with a temporary password may still do.
-const CHANGE_PASSWORD_ROUTES = new Set(["GET /me", "POST /me/password", "POST /password-check"]);
 const IDENTITY_FIELDS = ["userId", "actorId", "senderId", "createdBy", "reviewedBy"];
 const REVIEWERS = ["admin", "superadmin"];
 const STAFF = ["agent", "admin", "superadmin", "report_viewer"];
@@ -94,28 +92,18 @@ export async function authenticate(req, res, next) {
     if (!payload) return res.status(401).json({ error: "Please sign in again." });
 
     const rows = await query(
-      "SELECT user_pk, name, role, role_name, must_change_password, token_version FROM users WHERE user_pk = ? LIMIT 1",
+      "SELECT user_pk, name, role, role_name FROM users WHERE user_pk = ? LIMIT 1",
       [payload.sub],
     );
     if (!rows[0]) return res.status(401).json({ error: "Please sign in again." });
-    // A password change raises token_version, which ends every session that was signed before it.
-    if ((Number(payload.tv) || 0) !== Number(rows[0].token_version)) {
-      return res.status(401).json({ error: "Your password was changed. Please sign in again." });
-    }
 
     const user = {
       userId: rows[0].user_pk,
       name: rows[0].name,
       role: rows[0].role,
       roleName: rows[0].role_name,
-      mustChangePassword: Boolean(rows[0].must_change_password),
     };
     req.user = user;
-
-    // A new account must choose its own password before it can do anything else.
-    if (user.mustChangePassword && !CHANGE_PASSWORD_ROUTES.has(`${req.method} ${req.path}`)) {
-      return res.status(403).json({ error: "Please choose a new password first.", code: "password_change_required" });
-    }
 
     // Presence: staff who are using the app count as available (see staffAvailability in bot.js).
     if (["agent", "admin"].includes(user.role)) {

@@ -12,10 +12,9 @@
     "preview": "vite preview",
     "server": "node server/index.js",
     "test": "node --test server/",
-    "db:init": "node scripts/db-init.mjs",
+    "db:init": "\"C:/xampp/mysql/bin/mysql.exe\" -u root -p < server/schema.sql",
     "screenshots": "node scripts/capture-screenshots.mjs",
     "qa": "node scripts/qa.mjs",
-    "qa:security": "node scripts/qa-security.mjs",
     "qa:ui": "node scripts/qa-ui.mjs"
   },
   "dependencies": {
