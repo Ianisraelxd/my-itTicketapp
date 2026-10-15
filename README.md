@@ -303,6 +303,15 @@ SQL for an existing database: `server/migrations/2026-10-features.sql` (applied 
 - Another wrong attempt after that shows **Forgot password?**. For now it accepts an email address and explains that password reset by email is a feature for the next version; nothing is changed.
 - **10 wrong passwords** in a row lock the account for 15 minutes (a super admin can clear it). There is also a limit on sign-in and sign-up attempts per address.
 
+### Password rules
+
+A new password (when creating an account, and in the password change request) must follow these rules; the same file, `shared/passwordPolicy.js`, is used by the sign-up and request forms (live checklist and strength meter) and by the server, which refuses a weak password with the rule that failed:
+
+- 10 to 128 characters, with at least three of: lowercase, UPPERCASE, numbers, symbols.
+- Not a common password (a built-in list that also catches variants such as `P@ssw0rd` and a number added at the end), no repeated characters or runs (`aaaa`, `12345`, `qwerty`), and it must not contain the person's name, ID or email.
+
+Passwords are stored as scrypt hashes. Signing in is not affected: the demo accounts keep their shared passwords (see [Demo accounts](#demo-accounts)); the rules apply only when a password is chosen.
+
 ---
 
 ## Security and governance

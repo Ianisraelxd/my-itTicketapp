@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { registerAttachmentRoutes } from "./attachments.js";
+import { passwordProblem } from "../shared/passwordPolicy.js";
 import { authenticate, verifyReportViewer, verifySuperAdmin } from "./auth.js";
 import { startAutoClose, CLOSE_DAYS } from "./autoclose.js";
 import { registerBackupRoutes, startBackupSchedule } from "./backup.js";
@@ -189,9 +190,9 @@ app.post("/api/signup", wrap(async (req, res) => {
     });
   }
 
-  if (String(password).length < 6) {
-    return res.status(400).json({ error: "Password must be at least 6 characters." });
-  }
+  // Password rules (shared with the sign-up page, see shared/passwordPolicy.js)
+  const weak = passwordProblem(password, { id: trimmedId, name: trimmedName, email: trimmedEmail });
+  if (weak) return res.status(400).json({ error: weak });
   await query(
     "INSERT INTO users (id_number, password, name, role, role_name, email) VALUES (?, ?, ?, ?, ?, ?)",
     [trimmedId, await hashPassword(password), trimmedName, role, roleName, trimmedEmail],
@@ -1498,17 +1499,16 @@ app.post("/api/password-requests", wrap(async (req, res) => {
   if (!userId || typeof newPassword !== "string" || !newPassword) {
     return res.status(400).json({ error: "userId and newPassword are required." });
   }
-  if (newPassword.length < 6 || newPassword.length > 128) {
-    return res.status(400).json({ error: "New password must be 6 to 128 characters." });
-  }
 
   const accounts = await query(
-    "SELECT user_pk, name FROM users WHERE user_pk = ? LIMIT 1",
+    "SELECT user_pk, id_number, name, email FROM users WHERE user_pk = ? LIMIT 1",
     [userId],
   );
   if (accounts.length === 0) {
     return res.status(404).json({ error: "Account not found." });
   }
+  const weak = passwordProblem(newPassword, { id: accounts[0].id_number, name: accounts[0].name, email: accounts[0].email });
+  if (weak) return res.status(400).json({ error: weak });
 
   const pending = await query(
     "SELECT code FROM password_requests WHERE user_pk = ? AND status = 'Pending' LIMIT 1",

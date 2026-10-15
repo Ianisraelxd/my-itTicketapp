@@ -57,7 +57,7 @@ const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwA
 section("Sign-in cooldown and forgot password");
 {
   const id = `cool${Date.now()}`;
-  await raw("POST", "/signup", { body: { fullName: "Cool Down", id, email: "c@example.com", userType: "Student", password: "rightpass1" } });
+  await raw("POST", "/signup", { body: { fullName: "Cool Down", id, email: "c@example.com", userType: "Student", password: "Gx4#lantern-Rt" } });
   const attempt = (password = "wrong") => raw("POST", "/login", { body: { id, password, role: "student" } });
   let last;
   for (let i = 1; i <= 4; i += 1) {
@@ -66,12 +66,12 @@ section("Sign-in cooldown and forgot password");
   }
   last = await attempt();
   check(last.status === 401 && last.json.cooldownSeconds === 10, "5th wrong attempt starts a 10 second cooldown", JSON.stringify(last.json));
-  const during = await attempt("rightpass1");
+  const during = await attempt("Gx4#lantern-Rt");
   check(during.status === 429 && during.json.retryAfter >= 1 && during.json.retryAfter <= 10 && !during.json.token, "even the right password waits during the cooldown", `${during.status} ${during.text.slice(0, 100)}`);
   await sleep(10500);
   const after = await attempt();
   check(after.status === 401, "after 10 seconds a wrong password is an ordinary failure", String(after.status));
-  const correct = await attempt("rightpass1");
+  const correct = await attempt("Gx4#lantern-Rt");
   check(correct.status === 200 && correct.json.token, "and the right password works again", String(correct.status));
   // Four more wrong passwords bring the count back to five (a new cooldown), and five more after it ends make ten.
   for (let i = 0; i < 5; i += 1) await attempt();
@@ -79,7 +79,7 @@ section("Sign-in cooldown and forgot password");
   let lastTry;
   for (let i = 0; i < 5; i += 1) lastTry = await attempt();
   check(lastTry.status === 423, "10 failures in a row lock the account for 15 minutes", String(lastTry.status));
-  const stillLocked = await attempt("rightpass1");
+  const stillLocked = await attempt("Gx4#lantern-Rt");
   check(stillLocked.status === 423 && !stillLocked.json.token, "even the right password is refused while locked", String(stillLocked.status));
 
   const before = (await query("SELECT COUNT(*) AS n FROM users"))[0].n;

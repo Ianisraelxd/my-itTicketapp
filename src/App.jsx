@@ -2,7 +2,9 @@ import "./App.css";
 
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
 
+import { evaluatePassword } from "../shared/passwordPolicy.js";
 import { api, hasAuthToken, setAuthToken, setUnauthorizedHandler } from "./api";
+import { PasswordStrength } from "./PasswordStrength";
 import MfaSettings from "./MfaSettings";
 import ChartSkeleton from "./ChartSkeleton";
 import ChatInput from "./ChatInput";
@@ -523,8 +525,8 @@ function App() {
 
   async function submitPasswordChange(event) {
     event.preventDefault();
-    if (pwForm.newPassword.length < 6) {
-      showMessage("Password too short", "Use at least 6 characters for the new password.");
+    if (!evaluatePassword(pwForm.newPassword, { id: user.id, name: user.name, email: user.email }).ok) {
+      showMessage("Password too weak", "Follow the checklist under the new password field.");
       return;
     }
     if (pwForm.newPassword !== pwForm.confirm) {
@@ -1153,6 +1155,10 @@ function AuthScreen({
                     setSignupForm((current) => ({ ...current, password: value }))
                   }
                 />
+                <PasswordStrength
+                  password={signupForm.password}
+                  context={{ id: signupForm.id, name: signupForm.fullName, email: signupForm.email }}
+                />
                 <button
                   className="button button-primary full-width"
                   type="submit"
@@ -1341,10 +1347,11 @@ function ChangePasswordForm({ pwForm, setPwForm, submitting, onSubmitRequest, on
       </p>
       <PasswordField
         label="New password"
-        placeholder="At least 6 characters"
+        placeholder="At least 10 characters"
         value={pwForm.newPassword}
         onChange={(value) => setPwForm((current) => ({ ...current, newPassword: value }))}
       />
+      <PasswordStrength password={pwForm.newPassword} />
       <PasswordField
         label="Confirm new password"
         placeholder="Re-type the new password"

@@ -115,13 +115,18 @@ section("Authentication");
 section("Sign up");
 {
   const stamp = Date.now();
-  const make = (over = {}) => ({ fullName: "QA User", id: `qa${stamp}${Math.random().toString(36).slice(2, 6)}`, email: "qa@example.com", userType: "Student", password: "secret12", ...over });
+  const make = (over = {}) => ({ fullName: "QA User", id: `qa${stamp}${Math.random().toString(36).slice(2, 6)}`, email: "qa@example.com", userType: "Student", password: "Vq7!harbor-Lm", ...over });
   const good = await raw("POST", "/signup", { body: make() });
   check(good.status === 201, "signup ok", String(good.status));
   const dupBody = make();
   await raw("POST", "/signup", { body: dupBody });
   check((await raw("POST", "/signup", { body: dupBody })).status === 409, "duplicate signup -> 409");
   check((await raw("POST", "/signup", { body: make({ password: "123" }) })).status === 400, "short password -> 400");
+  for (const weak of ["password12345", "Password123!", "alllowercaseletters", "qwertyuiop12A!", "aaaaaaaaaa1A!"]) {
+    check((await raw("POST", "/signup", { body: make({ password: weak }) })).status === 400, `weak password refused: ${weak}`);
+  }
+  const own = make();
+  check((await raw("POST", "/signup", { body: { ...own, password: `${own.id}-Zk!9xq` } })).status === 400, "password containing the ID is refused");
   check((await raw("POST", "/signup", { body: make({ fullName: "" }) })).status === 400, "empty name -> 400");
   const longName = await raw("POST", "/signup", { body: make({ fullName: "N".repeat(5000) }) });
   check(longName.status === 400, "5000-char name rejected", String(longName.status));
@@ -131,11 +136,11 @@ section("Sign up");
   check(badEmail.status === 400, "invalid email rejected", String(badEmail.status));
   const escalate = make({ userType: "Admin" });
   await raw("POST", "/signup", { body: escalate });
-  const asStudent = await login("student", "secret12", escalate.id);
+  const asStudent = await login("student", "Vq7!harbor-Lm", escalate.id);
   check(asStudent?.role === "student" || !asStudent?.token, "signup cannot create an admin", JSON.stringify(asStudent).slice(0, 80));
   const staffSignup = make({ userType: "University Staff" });
   await raw("POST", "/signup", { body: staffSignup });
-  check((await login("staff", "secret12", staffSignup.id))?.role === "staff", "University Staff signup -> staff role");
+  check((await login("staff", "Vq7!harbor-Lm", staffSignup.id))?.role === "staff", "University Staff signup -> staff role");
   const xss = make({ fullName: "<img src=x onerror=alert(1)>" });
   check((await raw("POST", "/signup", { body: xss })).status === 201, "xss-looking name stored as text");
 }
@@ -364,11 +369,11 @@ section("Reports, KPIs and archive");
 section("Lockout and account safety");
 {
   const stamp = `lock${Date.now()}`;
-  await raw("POST", "/signup", { body: { fullName: "Lock Test", id: stamp, email: "l@example.com", userType: "Student", password: "rightpass1" } });
+  await raw("POST", "/signup", { body: { fullName: "Lock Test", id: stamp, email: "l@example.com", userType: "Student", password: "Gx4#lantern-Rt" } });
   let last;
   for (let i = 0; i < 6; i += 1) last = await raw("POST", "/login", { body: { id: stamp, password: "wrong", role: "student" } });
   check(last.status === 423 || last.status === 429, "6th wrong password -> locked", String(last.status));
-  const stillLocked = await raw("POST", "/login", { body: { id: stamp, password: "rightpass1", role: "student" } });
+  const stillLocked = await raw("POST", "/login", { body: { id: stamp, password: "Gx4#lantern-Rt", role: "student" } });
   check(!stillLocked.json?.token, "correct password refused while locked", String(stillLocked.status));
   const profile = await raw("GET", `/profile/${accounts.student.userId}`, { token: tok("student") });
   check(!/password|mfa_secret|scrypt/i.test(profile.text), "profile never exposes secrets");
