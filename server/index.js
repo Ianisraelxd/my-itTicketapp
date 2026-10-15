@@ -296,7 +296,7 @@ const isLocked = (account) => Boolean(account.locked_until && new Date(account.l
 // Change your own password (this is also the forced change after the first sign-in). Needs the current
 // password, follows the password policy, cannot reuse one of the last 5 passwords, signs every other
 // session out and answers with a fresh session token for this one.
-const PASSWORD_HISTORY = 5;
+const PASSWORD_HISTORY = 5; // must stay a plain integer: it is written into the SQL
 const passwordLimit = rateLimit({ max: Number(process.env.RATE_LIMIT_PASSWORD) || 10, key: (req) => req.user?.userId ?? req.ip, message: "Too many tries. Please wait a minute." });
 app.post("/api/me/password", passwordLimit, wrap(async (req, res) => {
   const { currentPassword, newPassword } = req.body ?? {};
@@ -312,10 +312,11 @@ app.post("/api/me/password", passwordLimit, wrap(async (req, res) => {
   if (newPassword === currentPassword) {
     return res.status(400).json({ error: "The new password must be different from your current one." });
   }
-  const history = await query("SELECT password_hash FROM password_history WHERE user_pk = ? ORDER BY history_pk DESC LIMIT ?", [
-    account.user_pk,
-    PASSWORD_HISTORY,
-  ]);
+  // (LIMIT is written into the SQL as a checked integer: MySQL 8 and TiDB refuse a ? there.)
+  const history = await query(
+    `SELECT history_pk, password_hash FROM password_history WHERE user_pk = ? ORDER BY history_pk DESC LIMIT ${PASSWORD_HISTORY}`,
+    [account.user_pk],
+  );
   for (const row of history) {
     if (await verifyPassword(newPassword, row.password_hash)) {
       return res.status(400).json({ error: `You used that password recently. Choose one you have not used in your last ${PASSWORD_HISTORY} passwords.` });
@@ -328,10 +329,14 @@ app.post("/api/me/password", passwordLimit, wrap(async (req, res) => {
     [hashed, account.user_pk],
   );
   await query("INSERT INTO password_history (user_pk, password_hash) VALUES (?, ?)", [account.user_pk, hashed]);
-  await query(
-    "DELETE FROM password_history WHERE user_pk = ? AND history_pk NOT IN (SELECT history_pk FROM (SELECT history_pk FROM password_history WHERE user_pk = ? ORDER BY history_pk DESC LIMIT ?) AS keep)",
-    [account.user_pk, account.user_pk, PASSWORD_HISTORY],
+  // keep only the newest PASSWORD_HISTORY hashes
+  const kept = await query(
+    `SELECT history_pk FROM password_history WHERE user_pk = ? ORDER BY history_pk DESC LIMIT ${PASSWORD_HISTORY}`,
+    [account.user_pk],
   );
+  if (kept.length === PASSWORD_HISTORY) {
+    await query("DELETE FROM password_history WHERE user_pk = ? AND history_pk < ?", [account.user_pk, kept[kept.length - 1].history_pk]);
+  }
   await query("INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)", [account.name, account.role_name, "Changed their password"]);
   const [fresh] = await query("SELECT user_pk, role, name, token_version FROM users WHERE user_pk = ?", [account.user_pk]);
   res.json({ ok: true, token: signSession(fresh) });
