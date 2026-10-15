@@ -15,6 +15,7 @@ import useKpiTrend from "./useKpiTrend";
 import ReportFilters from "./ReportFilters";
 import { defaultReportFilters } from "./reportDefaults";
 import useReportData from "./useReportData";
+import useTicketFilters from "./TicketFilters";
 import { SettingsModal } from "./SettingsModal";
 import { APP_VERSION, motionAllowed } from "./settings";
 import { playSound } from "./sounds";
@@ -1641,14 +1642,14 @@ function UserDashboard({ setPage, tickets, ticketAssignments = {}, userName }) {
     </>
   );
 }
-function TicketTable({ tickets, showAssignmentMeta = false, onOpen, loading = false }) {
+function TicketTable({ tickets, showAssignmentMeta = false, onOpen, loading = false, filtering = false }) {
   if (loading) return <TableSkeleton columns={6} />;
   const hasMeta = showAssignmentMeta || tickets.some((ticket) => ticket.assignedAgent || ticket.progress);
 
   if (!tickets || tickets.length === 0) {
     return (
       <div className="table-wrap empty-state">
-        <p>No requests yet. Submit your first support request to get started.</p>
+        <p>{filtering ? "No tickets match these filters." : "No requests yet. Submit your first support request to get started."}</p>
       </div>
     );
   }
@@ -1803,6 +1804,7 @@ function SelectField({ label, value, options, onChange, placeholder }) {
 function MyRequests({ tickets, ticketAssignments = {}, setPage, me, refreshData, showMessage, loading = false }) {
   const [openId, setOpenId] = useState(null);
   const openTicket = tickets.find((ticket) => ticket.id === openId);
+  const { visible: shownTickets, controls: filterControls, active: filtering } = useTicketFilters(tickets, CATEGORY_OPTIONS);
   return (
     <>
       <PageHeader
@@ -1818,6 +1820,7 @@ function MyRequests({ tickets, ticketAssignments = {}, setPage, me, refreshData,
           </button>
         }
       />
+      {filterControls}
       <section className="panel">
         <div className="panel-heading">
           <div>
@@ -1828,7 +1831,8 @@ function MyRequests({ tickets, ticketAssignments = {}, setPage, me, refreshData,
         </div>
         <TicketTable
           loading={loading}
-          tickets={tickets.map((ticket) => ({
+          filtering={filtering}
+          tickets={shownTickets.map((ticket) => ({
             ...ticket,
             ...ticketTracking(ticket, ticketAssignments[ticket.id]),
           }))}
@@ -2006,10 +2010,11 @@ function AgentRequests({
   const recommendedCount = tickets.filter(
     (ticket) => skillFit(mySkills, ticket.category) === "match" && !finished(ticket),
   ).length;
+  const { visible: filtered, controls: filterControls } = useTicketFilters(sorted, CATEGORY_OPTIONS);
   const visible =
     view === "recommended"
-      ? sorted.filter((ticket) => skillFit(mySkills, ticket.category) === "match")
-      : sorted;
+      ? filtered.filter((ticket) => skillFit(mySkills, ticket.category) === "match")
+      : filtered;
 
   return (
     <>
@@ -2045,6 +2050,7 @@ function AgentRequests({
           </button>
         </div>
       </section>
+      {filterControls}
       <section className="panel">
         <div className="panel-heading">
           <div>
@@ -2181,6 +2187,7 @@ function ManageRequests({
   const [viewDialog, setViewDialog] = useState(null);
   const [chatId, setChatId] = useState(null);
   const chatTicket = tickets.find((ticket) => ticket.id === chatId);
+  const { visible: shownTickets, controls: filterControls } = useTicketFilters(tickets, CATEGORY_OPTIONS);
   const agents = users.filter((user) =>
     /agent/i.test(user.role || ""),
   );
@@ -2236,6 +2243,7 @@ function ManageRequests({
         description="Review, assign, and monitor submitted tickets."
       />
       <CancellationQueue me={me} showMessage={showMessage} refreshData={refreshData} />
+      {filterControls}
       <section className="panel">
         <div className="table-wrap">
           <table>
@@ -2257,7 +2265,12 @@ function ManageRequests({
                   <td colSpan="8">No tickets have been created yet.</td>
                 </tr>
               )}
-              {tickets.map((ticket) => {
+              {tickets.length > 0 && shownTickets.length === 0 && (
+                <tr>
+                  <td colSpan="8">No tickets match these filters.</td>
+                </tr>
+              )}
+              {shownTickets.map((ticket) => {
                 const assignment = ticketAssignments[ticket.id] || {};
                 const tracking = ticketTracking(ticket, assignment);
                 return (
