@@ -18,7 +18,7 @@ Copy `server/.env.example` to `server/.env` and set at least:
 | `TRUST_PROXY=1` | When a proxy (Render, Railway, Nginx, Caddy, Cloudflare) sits in front, so the sign-in limiter sees the visitor and not the proxy. |
 | `FORCE_HTTPS=true` | Sends plain http visitors to https and adds the HSTS header. Only behind a proxy that sets `X-Forwarded-Proto`. |
 
-Change or delete the demo accounts (see the README) before real people use it.
+The first start creates accounts with random passwords that are printed once in the server log (on Render: open the service Logs and copy them, or set `SEED_DEMO=false`, `ADMIN_ID`, `ADMIN_NAME`, `ADMIN_EMAIL` to create a single administrator). A database that still has the old shared demo passwords gets new ones at the next deploy, printed once in the log: sign in with those and choose your own password.
 
 ## 3. HTTPS
 
@@ -58,7 +58,7 @@ Browsers only treat the site as secure over HTTPS, and the sign-in token must ne
 
 - [ ] HTTPS works and `FORCE_HTTPS=true` is set
 - [ ] `JWT_SECRET` and a database password are set
-- [ ] Demo passwords changed or accounts removed
+- [ ] Initial passwords copied from the log and changed (or `SEED_DEMO=false`)
 - [ ] `APP_URL` and the `SMTP_*` settings are set if you want email alerts (send yourself a test)
 - [ ] A copy of `backups/daily/` and `server/uploads/` is saved somewhere else
 - [ ] Two-step verification is on for the super admin and the admins (Profile > Two-step verification)

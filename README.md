@@ -301,14 +301,32 @@ SQL for an existing database: `server/migrations/2026-10-features.sql` (applied 
 
 - After **5 wrong attempts** the sign-in page locks for **10 seconds** with a countdown.
 - Another wrong attempt after that shows **Forgot password?**. For now it accepts an email address and explains that password reset by email is a feature for the next version; nothing is changed.
-- **10 wrong passwords** in a row lock the account for 15 minutes (a super admin can clear it). There is also a limit on sign-in and sign-up attempts per address.
+- **Progressive account lockout**: every 10th wrong password locks the account, and each lock is longer than the last (a super admin can clear it at any time):
+
+  | Lock | 1st | 2nd | 3rd | 4th | 5th and later |
+  | ---- | --- | --- | --- | --- | ------------- |
+  | Time | 5 minutes | 15 minutes | 1 hour | 6 hours | 24 hours |
+
+  After a lock ends, 5 more wrong passwords lock it again for the next step. A correct password, or 24 hours without a failed attempt, starts over. From the 4th lock the admins get a notification. There is also a limit on sign-in and sign-up attempts per address.
+- An unknown ID gets exactly the same answer, and takes about the same time, as a wrong password, so the form cannot be used to find out which IDs exist.
+
+### Password policy
+
+![Choosing a new password](docs/screenshots/41-forced-password-change.png)
+
+- **10 to 128 characters**, with at least three of: lowercase, UPPERCASE, numbers, symbols.
+- Not a common password (a built-in blocklist that also catches `P@ssw0rd`-style variants and a number added at the end), no repeated characters or runs (`aaaa`, `12345`, `qwerty`), and it must not contain your name, ID or email.
+- The sign-up, change-password and password-request forms show a live checklist and strength meter; the server enforces the same rules (`shared/passwordPolicy.js` is one file used by both).
+- **Change password** (profile) asks for the current password, cannot reuse any of your last 5 passwords, and signs every other device out. **Ask an admin to reset it** is still there for people who cannot sign in.
+- Passwords are stored as salted **scrypt** hashes (`scrypt$32768$8$3$salt$hash`: cost 32768, block size 8, parallelism 3). The settings are saved inside each hash, so they can be raised later; an older hash is upgraded to the current settings the next time its owner signs in.
+- Accounts created by the system (the demo accounts, or the first administrator) get a **random 16-character password** and must **choose their own at the first sign-in**; until they do, the server refuses everything else.
 
 ---
 
 ## Security and governance
 
 **Sign-in and sessions**
-- Passwords are stored as **scrypt hashes**. Older plaintext rows from the seed data are upgraded to a hash the first time they are used.
+- Passwords are stored as salted **scrypt hashes** (see [Password policy](#password-policy)); older plaintext or weaker hashes are upgraded the first time they are used. Changing a password ends every other session.
 - Logging in returns a **JWT session token** (8 hours). Every API call except login, signup, forgot-password and the health check must send it (`Authorization: Bearer ...`), and the user is re-read from the database on each request, so a revoked admin loses access immediately.
 - The server stamps the caller's id on every "acting user" field (`userId`, `actorId`, `senderId`, `createdBy`, `reviewedBy`), so one user can't act as another by editing a request. Requesters only ever receive their own tickets and password requests.
 - The session survives a page refresh (it lives in `sessionStorage`) and ends when the tab closes or you log out.
@@ -410,6 +428,7 @@ That is all. The script installs the packages the first time, starts MySQL from 
 | `API=http://localhost:3001/api npm run qa` | About 140 API checks: sign-in, access control, validation, parallel requests, speed. |
 | `DB_NAME=helpdesk_demo API=http://localhost:3002/api node scripts/qa-deep.mjs` | Archiving (and its CSV), two-step verification, password requests, role changes. |
 | `DB_NAME=helpdesk_demo API=http://localhost:3002/api node scripts/qa-features.mjs` | Sign-in cooldown, history, photos, help articles, auto-close, live updates, email alerts, backups and restore, satisfaction KPI, duplicate clicks. Start that server with `MAIL_MODE=log AUTO_CLOSE_CHECK_SECONDS=2 RATE_LIMIT_AUTH=2000 RATE_LIMIT_TICKETS=1000 RATE_LIMIT_MESSAGES=1000`. |
+| `npm run qa:security` | Password policy, hashing, forced change, session invalidation and the progressive lockout (needs a demo database, see the top of `scripts/qa-security.mjs`). |
 | `npm run qa:ui -- http://localhost:3001` | Opens every page for every role on desktop and phone sizes and reports errors and overflow. |
 
 Run the checks on a demo database (they create test tickets and accounts), never on real data.
@@ -432,18 +451,29 @@ Free-plan limits: the site sleeps after about 15 minutes without visitors (the f
 
 ## Demo accounts
 
-Most seed accounts share the ID `2404154`; select the matching role on the login screen. The two extra agents exist so skill recommendations can be tried out. **Change these passwords before real people use the system.**
+A new database gets these eight accounts. **No password is written in the code**: each account gets a random 16-character password, shown **once** in the server window and saved in `server/initial-credentials.txt` (gitignored; delete it after use). Everyone must choose their own password at the first sign-in. Pick the matching role on the login screen.
 
-| Role                                       | ID        | Password             |
-| ------------------------------------------ | --------- | -------------------- |
-| Student                                    | `2404154` | `123456student`      |
-| University Staff                           | `2404154` | `123456employee`     |
-| Agent (Hardware, Printer)                  | `2404154` | `123456technician`   |
-| Software Agent (Software, Account / Login) | `2404155` | `123456technician`   |
-| Network Agent (Network / Internet)         | `2404156` | `123456technician`   |
-| Student / Staff Admin                      | `2404154` | `123456admin`        |
-| Super Admin                                | `2404154` | `123456superadmin`   |
-| Report Viewer (read-only)                  | `2404154` | `123456viewer`       |
+| Role                                       | ID           | Name               |
+| ------------------------------------------ | ------------ | ------------------ |
+| Student                                    | `2024-00417` | Maria Santos       |
+| University Staff                           | `EMP-2031`   | Jose Reyes         |
+| Agent (Hardware, Printer)                  | `AGT-1001`   | Carlo Mendoza      |
+| Software Agent (Software, Account / Login) | `AGT-1002`   | Angela Cruz        |
+| Network Agent (Network / Internet)         | `AGT-1003`   | Miguel Ramos       |
+| Student / Staff Admin                      | `ADM-0001`   | Patricia Lim       |
+| Super Admin                                | `SUP-0001`   | Ricardo Villanueva |
+| Report Viewer (read-only)                  | `RPT-0001`   | Elena Garcia       |
+
+Settings for the first start (put them in `server/.env`):
+
+| Setting | Effect |
+| ------- | ------ |
+| `SEED_DEMO=false` | create only one super admin (`ADMIN_ID`, `ADMIN_NAME`, `ADMIN_EMAIL`, optional `ADMIN_PASSWORD`) instead of the eight demo accounts: use this for a real deployment |
+| `SEED_PASSWORD=...` | one fixed password for every seeded account (must pass the policy; for tests and demos only) |
+| `SEED_MUST_CHANGE=false` | skip the forced change at the first sign-in (tests only) |
+
+**Upgrading an older database:** accounts that still use the old shared passwords (`123456student` and so on) are found at the next server start and given new random passwords, which must be changed at the first sign-in. The new passwords are printed once in the server log and saved in `server/initial-credentials.txt`; accounts whose owners chose their own password are left alone. `npm run db:init -- --yes` wipes the database and starts again with fresh accounts.
+
 
 ---
 
@@ -591,7 +621,7 @@ The **archive exports** (JSON and CSV in `backups/archives/`) are separate: they
 What is in place is described in [Security and governance](#security-and-governance). Still to do before a real deployment (see also [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)):
 
 - Serve the app over **HTTPS** (`FORCE_HTTPS=true` behind a proxy that sets `X-Forwarded-Proto`) and set a strong `JWT_SECRET`. Never commit `server/.env`; it is gitignored.
-- **Change or remove the demo accounts** and turn on two-step verification for the super admin and the admins.
+- Start a real deployment with `SEED_DEMO=false` (one administrator, random password) and turn on two-step verification for the super admin and the admins.
 - Move the session token to an `HttpOnly` cookie and add CSRF protection if you want it out of reach of page scripts.
 - The rate limits are kept in memory, so they are per server process; behind several processes use a shared store.
 - Photos and backups are files on the server's disk: keep copies elsewhere, and on free hosts that erase their disk they are lost at every restart.

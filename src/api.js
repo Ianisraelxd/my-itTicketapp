@@ -145,6 +145,7 @@ export const api = {
     request("/login/mfa", { method: "POST", body: JSON.stringify(payload) }),
 
   me: () => request("/me"),
+  changePassword: (payload) => request("/me/password", { method: "POST", body: JSON.stringify(payload) }),
 
   mfaSetup: () => request("/mfa/setup", { method: "POST", body: "{}" }),
   mfaEnable: (code) => request("/mfa/enable", { method: "POST", body: JSON.stringify({ code }) }),

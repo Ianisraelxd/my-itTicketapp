@@ -356,7 +356,7 @@ export function registerSuperAdminRoutes(app, { wrap, notify }) {
           "You were given read-only access to the dashboards. Log in again as a Report Viewer.",
         );
       case "unlock":
-        await query("UPDATE users SET failed_logins = 0, locked_until = NULL WHERE user_pk = ?", [target.user_pk]);
+        await query("UPDATE users SET failed_logins = 0, lock_level = 0, last_failed_at = NULL, locked_until = NULL WHERE user_pk = ?", [target.user_pk]);
         await log(`Overrode the lockout on ${target.name}`);
         return res.json({ ok: true, action });
       case "reset_mfa":

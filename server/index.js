@@ -17,11 +17,14 @@ import { createBot, shapeMessage } from "./bot.js";
 import { pool, query } from "./db.js";
 import { calculatePriority } from "./priority.js";
 import { rateLimit } from "./ratelimit.js";
+import { evaluatePassword, passwordProblem } from "../shared/passwordPolicy.js";
+import { ALERT_FROM_LEVEL, COOLDOWN_SECONDS, describeMinutes, onWrongPassword } from "./lockout.js";
 import { ensureSchema } from "./setup.js";
 import { registerKpiRoutes } from "./kpi.js";
 import {
   hashPassword,
-  isHashed,
+  needsRehash,
+  spendPasswordTime,
   newTotpSecret,
   otpauthUrl,
   signMfaChallenge,
@@ -174,8 +177,10 @@ app.post("/api/signup", wrap(async (req, res) => {
   if (trimmedEmail.length > 160 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
     return res.status(400).json({ error: "Please enter a valid email address." });
   }
-  if (password.length > 128) return res.status(400).json({ error: "Password must be 128 characters or fewer." });
+  const weak = passwordProblem(password, { id: trimmedId, name: trimmedName, email: trimmedEmail });
+  if (weak) return res.status(400).json({ error: weak });
 
+  const hashedPassword = await hashPassword(password);
   const role = ["staff", "university staff"].includes(selectedRole) ? "staff" : "student";
   const roleName = role === "staff" ? "University Staff" : "Student";
 
@@ -189,13 +194,12 @@ app.post("/api/signup", wrap(async (req, res) => {
     });
   }
 
-  if (String(password).length < 6) {
-    return res.status(400).json({ error: "Password must be at least 6 characters." });
-  }
   await query(
-    "INSERT INTO users (id_number, password, name, role, role_name, email) VALUES (?, ?, ?, ?, ?, ?)",
-    [trimmedId, await hashPassword(password), trimmedName, role, roleName, trimmedEmail],
+    "INSERT INTO users (id_number, password, name, role, role_name, email, password_changed_at) VALUES (?, ?, ?, ?, ?, ?, NOW())",
+    [trimmedId, hashedPassword, trimmedName, role, roleName, trimmedEmail],
   );
+  const [created] = await query("SELECT user_pk FROM users WHERE id_number = ? AND role = ?", [trimmedId, role]);
+  if (created) await query("INSERT INTO password_history (user_pk, password_hash) VALUES (?, ?)", [created.user_pk, hashedPassword]);
 
   res.status(201).json({
     ok: true,
@@ -203,17 +207,13 @@ app.post("/api/signup", wrap(async (req, res) => {
   });
 }));
 
-// Wrong passwords in a row: the 5th starts a short cooldown (the sign-in page warns for 10 seconds
-// and then offers "Forgot password?"), and the 10th locks the account for 15 minutes.
-const COOLDOWN_AFTER = 5;
-const COOLDOWN_SECONDS = 10;
-const MAX_FAILED_LOGINS = 10;
-const LOCK_MINUTES = 15;
+// Wrong passwords: the 5th starts a 10 second cooldown (the sign-in page shows a countdown), the 10th locks the
+// account, and every further lock is longer (5 minutes, 15, 1 hour, 6 hours, 24 hours): see server/lockout.js.
 
 // Everything a client needs after signing in.
 async function sessionFor(account) {
   await query(
-    "UPDATE users SET failed_logins = 0, locked_until = NULL, last_login_at = NOW() WHERE user_pk = ?",
+    "UPDATE users SET failed_logins = 0, lock_level = 0, last_failed_at = NULL, locked_until = NULL, last_login_at = NOW() WHERE user_pk = ?",
     [account.user_pk],
   );
   await query(
@@ -225,40 +225,59 @@ async function sessionFor(account) {
     userId: account.user_pk,
     id: account.id_number,
     name: account.name,
+    email: account.email,
     role: account.role,
     roleName: account.role_name,
     mfaEnabled: Boolean(account.mfa_enabled),
+    mustChangePassword: Boolean(account.must_change_password),
   };
 }
 
-// Counts a wrong password / code. Returns "lock" (15 minutes), "cooldown" (10 seconds) or false.
+// Counts a wrong password / code and applies the progressive lockout. Returns what happened.
 async function recordFailure(account) {
-  const failed = Number(account.failed_logins) + 1;
-  if (failed === COOLDOWN_AFTER) {
+  const result = onWrongPassword(account);
+  if (result.action === "lock") {
     await query(
-      "UPDATE users SET failed_logins = ?, locked_until = DATE_ADD(NOW(), INTERVAL ? SECOND) WHERE user_pk = ?",
-      [failed, COOLDOWN_SECONDS, account.user_pk],
+      "UPDATE users SET failed_logins = ?, lock_level = ?, last_failed_at = NOW(), locked_until = DATE_ADD(NOW(), INTERVAL ? MINUTE) WHERE user_pk = ?",
+      [result.failed, result.level, result.minutes, account.user_pk],
     );
-    return "cooldown";
+    await query("INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)", [
+      account.name,
+      account.role_name,
+      `Account locked for ${describeMinutes(result.minutes)} after repeated wrong passwords (lock number ${result.level})`,
+    ]);
+    if (result.level >= ALERT_FROM_LEVEL) {
+      await notify(await adminIds(), {
+        type: "security_lock",
+        title: "Someone keeps guessing a password",
+        body: `${account.name} (${account.id_number}) was locked for ${describeMinutes(result.minutes)}: lock number ${result.level} without a successful sign-in.`,
+      });
+    }
+  } else if (result.action === "cooldown") {
+    await query(
+      "UPDATE users SET failed_logins = ?, lock_level = ?, last_failed_at = NOW(), locked_until = DATE_ADD(NOW(), INTERVAL ? SECOND) WHERE user_pk = ?",
+      [result.failed, result.level, COOLDOWN_SECONDS, account.user_pk],
+    );
+  } else {
+    await query("UPDATE users SET failed_logins = ?, lock_level = ?, last_failed_at = NOW() WHERE user_pk = ?", [
+      result.failed,
+      result.level,
+      account.user_pk,
+    ]);
   }
-  if (failed >= MAX_FAILED_LOGINS) {
-    await query(
-      "UPDATE users SET failed_logins = 0, locked_until = DATE_ADD(NOW(), INTERVAL ? MINUTE) WHERE user_pk = ?",
-      [LOCK_MINUTES, account.user_pk],
-    );
-    await query(
-      "INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)",
-      [account.name, account.role_name, `Account locked for ${LOCK_MINUTES} minutes after ${MAX_FAILED_LOGINS} failed sign-ins`],
-    );
-    return "lock";
-  }
-  await query("UPDATE users SET failed_logins = ? WHERE user_pk = ?", [failed, account.user_pk]);
-  return false;
+  return result;
 }
+
+const lockedReply = (res, result) =>
+  res.status(423).json({
+    error: `Too many wrong passwords. This account is locked for ${describeMinutes(result.minutes)}.`,
+    lockedMinutes: result.minutes,
+    lockLevel: result.level,
+  });
 
 const lockSeconds = (account) => Math.max(1, Math.ceil((new Date(account.locked_until) - new Date()) / 1000));
 
-// A lock this short is the cooldown, not the 15-minute lock.
+// A lock this short is the cooldown, not a real lock.
 const isCooldown = (account) => lockSeconds(account) <= COOLDOWN_SECONDS + 5;
 
 const cooldownReply = (res, account) =>
@@ -273,6 +292,57 @@ const lockMessage = (account) => {
 };
 
 const isLocked = (account) => Boolean(account.locked_until && new Date(account.locked_until) > new Date());
+
+// Change your own password (this is also the forced change after the first sign-in). Needs the current
+// password, follows the password policy, cannot reuse one of the last 5 passwords, signs every other
+// session out and answers with a fresh session token for this one.
+const PASSWORD_HISTORY = 5;
+const passwordLimit = rateLimit({ max: Number(process.env.RATE_LIMIT_PASSWORD) || 10, key: (req) => req.user?.userId ?? req.ip, message: "Too many tries. Please wait a minute." });
+app.post("/api/me/password", passwordLimit, wrap(async (req, res) => {
+  const { currentPassword, newPassword } = req.body ?? {};
+  if (typeof currentPassword !== "string" || typeof newPassword !== "string" || !currentPassword || !newPassword) {
+    return res.status(400).json({ error: "Enter your current password and a new password." });
+  }
+  const [account] = await query(`SELECT ${ACCOUNT_COLUMNS} FROM users WHERE user_pk = ?`, [req.user.userId]);
+  if (!account || !(await verifyPassword(currentPassword, account.password))) {
+    return res.status(403).json({ error: "Your current password is not correct." });
+  }
+  const weak = passwordProblem(newPassword, { id: account.id_number, name: account.name, email: account.email });
+  if (weak) return res.status(400).json({ error: weak });
+  if (newPassword === currentPassword) {
+    return res.status(400).json({ error: "The new password must be different from your current one." });
+  }
+  const history = await query("SELECT password_hash FROM password_history WHERE user_pk = ? ORDER BY history_pk DESC LIMIT ?", [
+    account.user_pk,
+    PASSWORD_HISTORY,
+  ]);
+  for (const row of history) {
+    if (await verifyPassword(newPassword, row.password_hash)) {
+      return res.status(400).json({ error: `You used that password recently. Choose one you have not used in your last ${PASSWORD_HISTORY} passwords.` });
+    }
+  }
+
+  const hashed = await hashPassword(newPassword);
+  await query(
+    "UPDATE users SET password = ?, must_change_password = 0, password_changed_at = NOW(), token_version = token_version + 1, failed_logins = 0, lock_level = 0, locked_until = NULL WHERE user_pk = ?",
+    [hashed, account.user_pk],
+  );
+  await query("INSERT INTO password_history (user_pk, password_hash) VALUES (?, ?)", [account.user_pk, hashed]);
+  await query(
+    "DELETE FROM password_history WHERE user_pk = ? AND history_pk NOT IN (SELECT history_pk FROM (SELECT history_pk FROM password_history WHERE user_pk = ? ORDER BY history_pk DESC LIMIT ?) AS keep)",
+    [account.user_pk, account.user_pk, PASSWORD_HISTORY],
+  );
+  await query("INSERT INTO activities (actor_name, actor_role, action) VALUES (?, ?, ?)", [account.name, account.role_name, "Changed their password"]);
+  const [fresh] = await query("SELECT user_pk, role, name, token_version FROM users WHERE user_pk = ?", [account.user_pk]);
+  res.json({ ok: true, token: signSession(fresh) });
+}));
+
+// What the website needs to explain the rules (the same file the server enforces).
+app.post("/api/password-check", wrap(async (req, res) => {
+  const [account] = await query("SELECT id_number, name, email FROM users WHERE user_pk = ?", [req.user.userId]);
+  const result = evaluatePassword(req.body?.password, { id: account?.id_number, name: account?.name, email: account?.email });
+  res.json({ ok: result.ok, score: result.score, problems: result.problems });
+}));
 
 // "Forgot password" is announced for the next version: the request is accepted and nothing is changed.
 // It never says whether the email belongs to an account.
@@ -289,7 +359,7 @@ app.post("/api/forgot-password", wrap(async (req, res) => {
 }));
 
 const ACCOUNT_COLUMNS =
-  "user_pk, id_number, password, name, role, role_name, failed_logins, locked_until, mfa_enabled, mfa_secret";
+  "user_pk, id_number, password, name, role, role_name, email, failed_logins, locked_until, lock_level, last_failed_at, must_change_password, token_version, mfa_enabled, mfa_secret";
 
 app.post("/api/login", wrap(async (req, res) => {
   const { id, password, role } = req.body ?? {};
@@ -305,18 +375,17 @@ app.post("/api/login", wrap(async (req, res) => {
     return isCooldown(account) ? cooldownReply(res, account) : res.status(423).json({ error: lockMessage(account) });
   }
   if (!account || !(await verifyPassword(password, account.password))) {
-    const outcome = account ? await recordFailure(account) : false;
-    if (outcome === "lock") {
-      return res.status(423).json({ error: `Too many failed attempts. The account is locked for ${LOCK_MINUTES} minutes.` });
-    }
+    // An unknown ID spends the same time as a wrong password, so the speed of the answer reveals nothing.
+    const outcome = account ? await recordFailure(account) : await spendPasswordTime(password);
+    if (outcome?.action === "lock") return lockedReply(res, outcome);
     return res.status(401).json({
       error: "Incorrect ID, password, or selected role.",
-      ...(outcome === "cooldown" ? { cooldownSeconds: COOLDOWN_SECONDS } : {}),
+      ...(outcome?.action === "cooldown" ? { cooldownSeconds: COOLDOWN_SECONDS } : {}),
     });
   }
 
-  // Upgrade an old plaintext password to a hash the first time it is used.
-  if (!isHashed(account.password)) {
+  // Quietly upgrade a plaintext or older hash to today's settings the first time the right password is typed.
+  if (needsRehash(account.password)) {
     await query("UPDATE users SET password = ? WHERE user_pk = ?", [await hashPassword(password), account.user_pk]);
   }
 
@@ -340,12 +409,10 @@ app.post("/api/login/mfa", wrap(async (req, res) => {
 
   if (!verifyTotp(account.mfa_secret, code)) {
     const outcome = await recordFailure(account);
-    if (outcome === "lock") {
-      return res.status(423).json({ error: `Too many failed attempts. The account is locked for ${LOCK_MINUTES} minutes.` });
-    }
+    if (outcome.action === "lock") return lockedReply(res, outcome);
     return res.status(401).json({
       error: "That code is not correct. Check the app and try again.",
-      ...(outcome === "cooldown" ? { cooldownSeconds: COOLDOWN_SECONDS } : {}),
+      ...(outcome.action === "cooldown" ? { cooldownSeconds: COOLDOWN_SECONDS } : {}),
     });
   }
   res.json(await sessionFor(account));
@@ -354,11 +421,11 @@ app.post("/api/login/mfa", wrap(async (req, res) => {
 // Who am I? Lets the app restore a session after a page refresh.
 app.get("/api/me", wrap(async (req, res) => {
   const rows = await query(
-    "SELECT user_pk AS userId, id_number AS id, name, role, role_name AS roleName, email, mfa_enabled FROM users WHERE user_pk = ?",
+    "SELECT user_pk AS userId, id_number AS id, name, role, role_name AS roleName, email, mfa_enabled, must_change_password FROM users WHERE user_pk = ?",
     [req.user.userId],
   );
   const me = rows[0];
-  res.json({ ...me, mfaEnabled: Boolean(me.mfa_enabled), mfa_enabled: undefined });
+  res.json({ ...me, mfaEnabled: Boolean(me.mfa_enabled), mfa_enabled: undefined, mustChangePassword: Boolean(me.must_change_password), must_change_password: undefined });
 }));
 
 // --- Two-step verification (TOTP authenticator app) ----------------------------------
@@ -1498,16 +1565,18 @@ app.post("/api/password-requests", wrap(async (req, res) => {
   if (!userId || typeof newPassword !== "string" || !newPassword) {
     return res.status(400).json({ error: "userId and newPassword are required." });
   }
-  if (newPassword.length < 6 || newPassword.length > 128) {
-    return res.status(400).json({ error: "New password must be 6 to 128 characters." });
-  }
 
   const accounts = await query(
-    "SELECT user_pk, name FROM users WHERE user_pk = ? LIMIT 1",
+    "SELECT user_pk, id_number, name, email, password FROM users WHERE user_pk = ? LIMIT 1",
     [userId],
   );
   if (accounts.length === 0) {
     return res.status(404).json({ error: "Account not found." });
+  }
+  const weak = passwordProblem(newPassword, { id: accounts[0].id_number, name: accounts[0].name, email: accounts[0].email });
+  if (weak) return res.status(400).json({ error: weak });
+  if (await verifyPassword(newPassword, accounts[0].password)) {
+    return res.status(400).json({ error: "The new password must be different from your current one." });
   }
 
   const pending = await query(
@@ -1592,10 +1661,11 @@ app.patch("/api/password-requests/:id/status", wrap(async (req, res) => {
 
   // Approving applies the requested password to the account.
   if (status === "Approved") {
-    await query("UPDATE users SET password = ? WHERE user_pk = ?", [
-      requestRow.new_password,
-      requestRow.user_pk,
-    ]);
+    await query(
+      "UPDATE users SET password = ?, must_change_password = 0, password_changed_at = NOW(), token_version = token_version + 1, failed_logins = 0, lock_level = 0, locked_until = NULL WHERE user_pk = ?",
+      [requestRow.new_password, requestRow.user_pk],
+    );
+    await query("INSERT INTO password_history (user_pk, password_hash) VALUES (?, ?)", [requestRow.user_pk, requestRow.new_password]);
   }
 
   await query(
