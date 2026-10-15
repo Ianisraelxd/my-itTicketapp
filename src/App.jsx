@@ -39,7 +39,7 @@ const SuperAdminPanel = lazy(() => import("./SuperAdminPanel"));
 const navFor = {
   user: [
     ["userDashboard", "dashboard", "Dashboard"],
-    ["requestPage", "+", "Submit Request"],
+    ["requestPage", "plus", "Submit Request"],
     ["myRequestsPage", "list", "My Requests"],
     ["helpPage", "book", "Help Articles"],
     ["notificationsPage", "bell", "Notifications"],

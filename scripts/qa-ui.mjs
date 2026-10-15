@@ -97,11 +97,16 @@ for (const [screenName, viewport] of Object.entries(SCREENS)) {
           .slice(0, 3)
           .map((el) => `${el.tagName.toLowerCase()}.${String(el.className).slice(0, 30)}`);
         const empty = document.querySelector(".page")?.textContent.trim().length === 0;
-        return { overflow, wide, unnamed, empty };
+        // every menu item must show an icon (an unknown icon name renders nothing)
+        const noIcon = [...document.querySelectorAll(".sidebar .nav-list button, .bottom-nav button")]
+          .filter((b) => b.getClientRects().length && !b.querySelector("svg"))
+          .map((b) => b.textContent.trim());
+        return { overflow, wide, unnamed, empty, noIcon };
       });
       if (audit.overflow > 1) note("horizontal overflow", `${audit.overflow}px (${audit.wide.join(", ")})`);
       if (audit.unnamed.length) note("controls without a name", audit.unnamed.join(", "));
       if (audit.empty) note("blank page", "");
+      if (audit.noIcon.length) note("menu item without an icon", audit.noIcon.join(", "));
     }
     await context.close();
   }
